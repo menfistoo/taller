@@ -387,12 +387,14 @@ reviewed visually rather than as a list of hex codes.
 The hub is outside every project repository and outside the Docker image that
 gets deployed, so the hub `tokens.css` cannot be the file the browser loads.
 
-**`resolve()` generates `<project>/static/css/tokens.css`** — a verbatim copy of
-the brand's `tokens.css` with a generated-file header — and commits it as a
-`main`-side generated file alongside `resolved.json` (§7.2). It is refreshed on
-exactly the same triggers, including an amend to the brand, which fans out to
-every project using that brand. The application links it; the Docker image
-contains it; nothing at runtime depends on the hub existing.
+**`render_tokens(ruleset)` produces `<project>/static/css/tokens.css`** — a
+verbatim copy of the brand's `tokens.css` with a generated-file header — and
+`commit_to_main()` writes it as a `main`-side generated file alongside
+`resolved.json` (§4.6, §7.2). Same separation as the snapshot: the renderer is
+pure, the writer commits. Refreshed on exactly the same triggers, including an
+amend to the brand, which fans out to every project using that brand. The
+application links it; the Docker image contains it; nothing at runtime depends on
+the hub existing.
 
 The constitution gate **exempts that one generated path** and flags colour and
 font values anywhere else. Precisely:
@@ -568,10 +570,25 @@ hosted GitHub runner cannot resolve a `RuleSet`, cannot read the brand
 all — which would make §9.4, §13's required check, and §15.5's defence-in-depth
 argument false.
 
-**`resolve()` therefore writes a snapshot to `<project>/.taller/resolved.json`,
-committed to the project repository.** It contains the full `RuleSet` with slice
+**A snapshot of the `RuleSet` is therefore committed to the project repository at
+`<project>/.taller/resolved.json`.** It contains the full `RuleSet` with slice
 text included, plus the brand's parsed tokens. CI's gates load the snapshot
 instead of resolving.
+
+**Three functions, deliberately separated,** so that `resolve()` stays pure
+(§4.4) and `constitution.py` never depends on `tickets.py` (§10.2):
+
+| Function | Does | Touches |
+|---|---|---|
+| `resolve(path) -> RuleSet` | Reads the hub, profile and project. **Pure. Writes nothing.** | reads only |
+| `render_snapshot(ruleset) -> bytes` | Serialises a `RuleSet` deterministically | nothing |
+| `render_tokens(ruleset) -> bytes` | Renders the project's `tokens.css` from the brand (§4.2.1) | nothing |
+| `gitio.commit_to_main(project, files, msg)` | Writes and commits the bytes to `main` | filesystem, git, network |
+
+Only `commit_to_main()` writes. `taller resolve` is the composition of the four.
+Determinism means `render_snapshot(resolve(p))` reproduces the committed bytes
+exactly, which is what makes the tamper check below possible **without rewriting
+the file it is checking**.
 
 | Property | Consequence |
 |---|---|
@@ -580,7 +597,7 @@ instead of resolving.
 | Carries `hub_sha` | Verdicts from CI are as traceable as local ones |
 
 **Where it is written and by whom.** The snapshot is a `main`-side generated file,
-like the three ticket files (§7.2), and `tickets.commit_to_main()` is the only
+like the three ticket files (§7.2), and `gitio.commit_to_main()` is the only
 writer. It is refreshed:
 
 | When | Scope |
@@ -602,17 +619,29 @@ notices.
 by discarding both sides and running `resolve()` again. A ticket branch never
 carries its own snapshot: it inherits `main`'s.
 
-**Tamper check.** `resolve()` is pure and deterministic over the filesystem
-(§4.4), so the snapshot is reproducible. Two checks, because CI validates against
-a file a pull request can edit — a branch that raised `max_file_lines`, emptied
-`paths.ui`, deleted the `never` slice text or appended an override would
-otherwise get a green CI run against its own weakened rules, and a hand-edited
-snapshot keeps the correct `hub_sha`:
+**Tamper check.** CI validates against a file a pull request can edit — a branch
+that raised `max_file_lines`, emptied `paths.ui`, deleted the `never` slice text
+or appended an override would otherwise get a green CI run against its own
+weakened rules, and a hand-edited snapshot keeps the correct `hub_sha`.
 
-| Where | Check | Rule id |
+**The two checks are ordered, not simultaneous.** Once the hub moves the bytes
+necessarily differ, so an unordered pair would raise a BLOCKER on every ticket in
+flight during a routine amend — which §14 expects to be a warning at ⑦, not a
+block:
+
+| Condition | Verdict | Rule id |
 |---|---|---|
-| Locally (hub present) | Re-resolve and compare **byte for byte**; also compare `hub_sha` against the hub `HEAD` | `constitution.resolved-snapshot-modified` (BLOCKER), `constitution.resolved-snapshot-stale` (HIGH) |
-| In CI (no hub) | Any diff touching `resolved.json` on a ticket branch is a finding, since a ticket branch must never carry its own snapshot | `constitution.resolved-snapshot-modified` (BLOCKER) |
+| `hub_sha` ≠ hub `HEAD` | **Stale** — checked first. The bytes are *expected* to differ; no tamper conclusion is drawn. | `constitution.resolved-snapshot-stale` (HIGH, `command: taller resolve`) |
+| `hub_sha` = hub `HEAD` **and** bytes ≠ `render_snapshot(resolve(path))` | **Modified** — the snapshot cannot legitimately differ from a same-version resolution | `constitution.resolved-snapshot-modified` (BLOCKER, `escalate`) |
+
+The comparison is against an **in-memory** render; nothing is written, so the
+check cannot launder the file it is testing.
+
+In CI there is no hub, so neither comparison is possible. CI instead rejects any
+diff touching `resolved.json` on a ticket branch — a branch must never carry its
+own snapshot (§7.2) — reporting `constitution.resolved-snapshot-modified`
+(BLOCKER). That is sufficient, because the local ordered check runs at stage ②
+before any pull request exists and its verdict is committed with the work.
 
 CI cannot verify the snapshot's *content*, but it can verify that the branch did
 not change it — which is sufficient, because the local byte-for-byte check runs
@@ -850,7 +879,7 @@ verdict. A `full` ticket's `gates` would additionally contain `security`,
 | `gates/*.md` | branch | ⑤, ⑥ | Belongs to the work; merges with the PR |
 
 The two generated files are `main`-side for the same reason as the ticket files,
-and `tickets.commit_to_main()` is the only writer of any of the five. They are
+and `gitio.commit_to_main()` is the only writer of any of the five. They are
 marked `merge=ours` in `.gitattributes` and regenerated rather than merged
 (§4.6), so §7.3's rebase-safety argument holds: none of the five can conflict
 with application code.
@@ -868,7 +897,7 @@ It is outside the project tree and outside the hub repository, so it never
 interferes with the owner's running application, the ticket worktree, or `cont`'s
 live SQLite WAL files.
 
-`tickets.commit_to_main(project, files, message)`:
+`gitio.commit_to_main(project, files, message)`:
 
 1. Take the project lock (§10.3).
 2. `git -C <wt> fetch && git -C <wt> merge --ff-only origin/main`.
@@ -880,7 +909,7 @@ live SQLite WAL files.
 
 | Failure | Behaviour |
 |---|---|
-| Fast-forward merge refused (owner committed on `main`, or the remote moved) | **Rebase** the ticket-file commits onto `origin/main` and retry once. Safe because these commits only ever touch `.taller/work/**/{ticket.md,status.yml,notes.md}`, so they cannot conflict with application code. |
+| Fast-forward merge refused (owner committed on `main`, or the remote moved) | **Rebase** the five `main`-side paths (§7.2) onto `origin/main` and retry once. Four are under `.taller/`, so they cannot conflict with application code. The fifth, `static/css/tokens.css`, sits inside the application's static tree, so a brand amend can collide with a branch that also touched it — it is generated, so the conflict is resolved by **discarding both sides and re-running `render_tokens()`**, exactly as for `resolved.json` (§4.6). No generated file is ever merged. |
 | Rebase also fails, or the push is rejected | Commit stays local. `sync: pending` written to `status.yml`. The cockpit shows the ticket as unsynced with the reason. Work continues. |
 | `sync: pending` present at the next `commit_to_main` | Retry the push first. `taller doctor` reports any ticket left `pending`. |
 
@@ -888,7 +917,8 @@ Commit-and-push is not atomic, and §10.3's atomic replace covers files only —
 hence `sync` as an explicit, visible state rather than an assumed invariant.
 
 `main` requires a pull request, with the owner's admin bypass retained and used
-**only** by this function, for the three `main`-side files.
+**only** by this function, for the five `main`-side paths of §7.2 — nothing else,
+ever.
 
 ### 7.4 `Finding` and verdict format
 
@@ -1344,7 +1374,8 @@ programas/taller/
 │   ├── constitution.py            resolve() -> RuleSet; snapshot write  (§4.4, §4.6)
 │   ├── overrides.py               parse, match, downgrade               (§4.5)
 │   ├── registry.py                ~/.taller/projects.json
-│   ├── tickets.py                 CRUD, transition, commit_to_main      (§7)
+│   ├── gitio.py                   main worktree, commit_to_main         (§7.3)
+│   ├── tickets.py                 CRUD, transition                      (§7)
 │   ├── locking.py                 project + hub + registry locks        (§10.3)
 │   ├── models.py                  alias resolution, probe, fallback
 │   ├── spend.py                   transcript parsing, weighting         (§7.5)
@@ -1366,9 +1397,10 @@ Python gates.
 | Unit | Does | Interface | Depends on |
 |---|---|---|---|
 | `registry.py` | Read/write the project registry | `list_projects()`, `add_project()`, `get_project(path)` | filesystem, `locking` |
-| `constitution.py` | Resolve both chains; write and load the snapshot | `resolve(path) -> RuleSet`, `write_snapshot()`, `load_snapshot(path)` | `registry`, `overrides`, filesystem |
+| `constitution.py` | Resolve both chains; render and load generated artefacts | `resolve(path) -> RuleSet` (**pure, writes nothing**), `render_snapshot(rs) -> bytes`, `render_tokens(rs) -> bytes`, `load_snapshot(path) -> RuleSet` | `registry`, `overrides`, filesystem (reads only) |
+| `gitio.py` | The `main` worktree and the only write path to it | `ensure_main_worktree(p)`, `commit_to_main(p, files, msg) -> SyncState` | git, network, `locking` |
 | `overrides.py` | Parse `overrides.md`; downgrade matching findings | `parse(text) -> [Override]`, `apply(findings, ruleset) -> [Finding]` | nothing but its arguments |
-| `tickets.py` | Create, read, update, list, transition tickets | `create()`, `load(id)`, `save(t)`, `list(p)`, `transition(t, stage)`, `commit_to_main(p, files, msg)` | filesystem, `gh`, `locking` |
+| `tickets.py` | Create, read, update, list, transition tickets | `create()`, `load(id)`, `save(t)`, `list(p)`, `transition(t, stage)` | filesystem, `gh`, `locking`, `gitio` |
 | `locking.py` | Serialise writes | `project_lock(p)`, `hub_lock()`, `registry_lock()` — context managers | filesystem |
 | `models.py` | Resolve aliases, probe, apply fallback | `resolve(role, ruleset)`, `probe()` | `RuleSet` |
 | `spend.py` | Attribute and weight transcript usage | `for_ticket(t) -> Spend` (§7.5) | transcript files |
@@ -1398,12 +1430,19 @@ seconds fails with a clear message rather than waiting or forcing.
 
 | Phase | Contents | Effort | Delivers |
 |---|---|---|---|
-| **A** | Hub, `~/.taller-run/`, slice vocabulary, both resolution chains, `overrides.md`, snapshot, `taller.yml` inheritance, onboarding, brands | ~3 sessions | G1, G3, G8 |
-| **D** | Tickets, `status.yml`, locking, `commit_to_main` with `sync`, issue mirroring | ~1 session | G5 |
+| **A** | Hub, `~/.taller-run/`, slice vocabulary, both resolution chains, `overrides.md`, snapshot + `tokens.css` rendering, `taller.yml` inheritance, **`locking.py`**, **`main` worktree + `commit_to_main()`**, onboarding, brands | ~3 sessions | G1, G3, G8 |
+| **D** | Tickets, `status.yml`, `sync` handling, transitions, issue mirroring | ~1 session | G5 |
 | **B** | Chief, routing, lanes, model roster, `models probe`, `spend.py` | ~2 sessions | G2, G6, G7 |
 | **C** | Gates — constitution first, then size/tests/smoke, then the three LLM gates. `scan()` mode. `project adopt` removes the superseded `code-review/`, `security-review/`, `design-review/` directories. | ~2–3 sessions | G4 |
 | **F** | GitHub wiring, `taller-ci.yml`, branch ruleset, staging environment | ~1 session | — |
 | **E** | Cockpit | ~2–3 sessions | G7 made visible |
+
+**Why `locking.py` and `commit_to_main()` are in A, not D.** `project adopt`
+(§11.3) must write the first snapshot and the first `tokens.css`, and §7.2 makes
+`commit_to_main()` the only writer of either. Phase A therefore cannot ship
+onboarding without them. They live in `gitio.py` rather than `tickets.py` so that
+the phase boundary matches a module boundary: A delivers the write path, D
+delivers tickets on top of it.
 
 Criterion-to-phase mapping lives in **one place only**, §16. This table names
 goals, never criterion numbers, so the two cannot drift.
@@ -1489,7 +1528,7 @@ question list, by calling the same library code.
 |---|---|
 | `.github/workflows/taller-ci.yml` | Three model-free gates against `.taller/resolved.json`. Replaces `code-review.yml`, `security.yml`, `design-review.yml`. Always runs; two check names (§9.4). |
 | Pull request template | Generated from `ticket.md` and gate verdicts. |
-| Branch protection | Ruleset: require a pull request, require `taller-ci` green. Admin bypass retained for `tickets.commit_to_main()` only. |
+| Branch protection | Ruleset: require a pull request, require `taller-ci` green. Admin bypass retained for `gitio.commit_to_main()` only. |
 | Issue ↔ ticket | Issue opened at ①, referenced by the pull request, closed at ⑫. |
 
 ### 13.1 Staging
@@ -1573,12 +1612,13 @@ Particular attention:
   at both profile and project level (assert neither can remove the hub floor);
   list-replace elsewhere; missing module; unknown profile; `brand: none`; a slice
   provided by three files in profile order.
-- Snapshot: `write_snapshot()` then `load_snapshot()` round-trips a `RuleSet`
-  including slice text and brand tokens; `mode` is `"local"` from `resolve()` and
-  `"ci"` from `load_snapshot()`; a stale `hub_sha` produces
-  `constitution.resolved-snapshot-stale` in `local` mode and **not** in `ci` mode;
-  a byte-altered snapshot produces `constitution.resolved-snapshot-modified` in
-  `local` mode even when its `hub_sha` is correct.
+- Snapshot: `render_snapshot()` then `load_snapshot()` round-trips a `RuleSet`
+  including slice text and brand tokens; `render_snapshot()` is byte-stable across
+  two calls; `resolve()` writes **no** file (assert the tree is unchanged after a
+  call); `mode` is `"local"` from `resolve()` and `"ci"` from `load_snapshot()`.
+- Snapshot check ordering: `hub_sha` behind the hub `HEAD` gives **stale** only,
+  never modified, even though the bytes differ; `hub_sha` current plus altered
+  bytes gives **modified**; the check writes nothing.
 - Brand delivery: `resolve()` regenerates `static/css/tokens.css` verbatim from
   the hub brand; the constitution gate exempts that path and flags an identical
   value placed anywhere else; adopting a project whose tokens live in another file
@@ -1648,8 +1688,9 @@ before every phase exists:
 | Check | Requires |
 |---|---|
 | `resolve()` succeeds; no unreasoned, expired or non-permitted override | A |
-| `resolved.json` present, not stale, and **byte-identical to a fresh `resolve()`** | A |
-| `static/css/tokens.css` present and byte-identical to the hub brand's | A |
+| `resolved.json` present, not stale, and byte-identical to an **in-memory** `render_snapshot(resolve(path))` — nothing written | A |
+| `static/css/tokens.css` present and byte-identical to an in-memory `render_tokens()` | A |
+| No ticket branch carries its own `resolved.json` or `tokens.css` | A |
 | Registry valid; every registered path exists; every `main` worktree present | A/D |
 | Every `status.yml` parses; no ticket left `sync: pending` | D |
 | Every configured model reachable (`models probe`) | B |
@@ -1729,6 +1770,9 @@ counts them and the Health screen shows them trending down.
 | **Rule ids carry default severities and a `remediation` (§9.7)** | Severity left to the implementer; severity alone deciding who acts | The fixer, the summary and §4.5's downgrade all key off severity. And severity alone routed a suite that would not run and an application that would not boot into an LLM fixer for two rounds — environment failures where that is the wrong response and buys nothing. |
 | **The fixer may never modify a test file** | Trusting the fixer's judgement | The cheapest way to make a failing test pass is to change the test. A system allowed to do that cannot be trusted by the person relying on it. |
 | **Tamper check: local byte-for-byte re-resolution; CI rejects a branch that carries a snapshot** | Trusting the committed snapshot; relying on the diff being visible | `resolve()` is deterministic, so the snapshot is reproducible — and without the check a branch could raise its own thresholds or delete the `never` text and CI would pass it. `hub_sha` stays correct under a hand edit, so staleness alone catches nothing. Showing a diff in review is not checking it. |
+| **`resolve()` is pure; `render_*()` serialise; only `commit_to_main()` writes** | `resolve()` writing and committing the snapshot | A committing `resolve()` would be neither pure nor network-free, would make `constitution.py` depend on `tickets.py`, and would let the tamper check rewrite the very file it is testing — so it could never fail. |
+| **Stale is checked before modified** | Both checks at once | Once the hub moves the bytes necessarily differ, so an unordered pair raised a BLOCKER on every ticket in flight during a routine amend — which §14 treats as a warning. |
+| **`locking.py` and `commit_to_main()` (in `gitio.py`) ship in Phase A** | Both in Phase D with the tickets | `project adopt` is a Phase A deliverable and must write the first snapshot and `tokens.css`, which only `commit_to_main()` may do. Putting them in `gitio.py` makes the phase boundary a module boundary. |
 | **Generated `static/css/tokens.css` inside each project; `adopt` lifts existing tokens into the hub** | The hub `tokens.css` as the deployed file; flagging a project's existing token definitions | The hub is outside the repository and outside the Docker image, so the browser could never load it. And left alone, `cont`'s seven `--app-*` definitions in `admin.css` would each have been reported as a hardcoded value — 33 findings on a baseline of 26. |
 | **Smoke isolates data, port and auth; a 3xx is not a render** | A fixed port; whatever database the app config points at; accepting any 2xx/3xx | A fixed port collides with the owner's dev server and with a second ticket. Booting against the live SQLite file risks the WAL that §7.3 and §13.1 both protect. And a hotel app redirects an unauthenticated request to a login page — 302 would have passed while rendering nothing, which destroys the fast lane's only safety argument. |
 | **Criterion 6 measured from the ticket's own verdict** | A `taller scan` count ratchet | A ratchet passes a ticket that removes one hardcoded value and adds another: the count stays flat while a new value reaches `main`, which is exactly what G4 forbids. |
