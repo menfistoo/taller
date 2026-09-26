@@ -1,0 +1,39 @@
+# Line endings are pinned to LF, deliberately and load-bearingly.
+#
+# Taller compares generated files byte-for-byte against an in-memory render to
+# detect tampering (spec 4.6). `atomic_write_text` always writes LF. With
+# `core.autocrlf = true` — the default on Windows — git would hand those files
+# back as CRLF on checkout, and the tamper check would report
+# `constitution.resolved-snapshot-modified` at BLOCKER on a repository nobody
+# had touched.
+#
+# Verified on this machine: a file committed as b"alpha\nbeta\n" returned from
+# the worktree as b"alpha\r\nbeta\r\n".
+#
+# Every project Taller scaffolds gets this file too, for the same reason.
+
+*               text=auto eol=lf
+
+*.py            text eol=lf
+*.md            text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+*.json          text eol=lf
+*.toml          text eol=lf
+*.css           text eol=lf
+*.html          text eol=lf
+*.js            text eol=lf
+*.cfg           text eol=lf
+.gitattributes  text eol=lf
+.gitignore      text eol=lf
+
+# Generated files the tamper check reads. Never merged; regenerated instead
+# (spec 4.6), so a merge driver of "ours" keeps a conflict from ever arising.
+.taller/resolved.json               text eol=lf merge=ours
+.taller/constitution/00-index.md    text eol=lf merge=ours
+
+*.png           binary
+*.jpg           binary
+*.ico           binary
+*.pdf           binary
+*.svg           text eol=lf
