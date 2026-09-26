@@ -3,7 +3,7 @@
 **Date:** 2026-09-26
 **Status:** Approved by owner (design phase complete) · revised after spec review, iteration 3
 **Owner:** Catia Schubert
-**Pilot project:** `C:\Users\catia\cont` (payment-reconciliation)
+**Pilot:** a throwaway greenfield project first, then one existing repository (§10.4)
 
 ---
 
@@ -36,61 +36,64 @@ plan, written separately, in the order given in §10.4. The first plan to be
 written covers **Phase A only**.
 
 **Language:** this document, all code, identifiers, comments, and commit messages
-are in English. Application UI strings are in Spanish. This follows the owner's
-existing convention and is configuration, not a constant (§5.1).
+are in English. **The application's own UI language is configuration, not a
+constant** — asked at `taller setup` and stored as `language.ui` (§5.1). This
+specification uses English throughout; the tool has no opinion.
 
 ---
 
 ## 1. Problem statement
 
-The owner runs several production Flask applications for a hotel business and
-builds them with Claude Code. Five concrete problems, measured on 2026-09-26.
+Taller addresses five problems that appear in any estate of several projects
+built with an AI coding agent. **Appendix A** quantifies each one against a real
+estate of ten repositories, as evidence that they are real rather than
+hypothetical. That appendix is an example, not the scope: Taller ships knowing
+nothing about any particular estate (§4.0).
 
 ### 1.1 Context is re-declared per project
 
-```
-8 CLAUDE.md files across programas/ and cont/ .... 143,487 chars ≈ 36,000 tokens
-Front office/CLAUDE.md ............................. 9,466 chars ┐ byte-identical
-Front-office-modules/CLAUDE.md ..................... 9,466 chars ┘
-PuroBeachClub/CLAUDE.md ........................... 27,406 chars ≈  7,000 tokens
-PuroBeachClub/context/*.md (3 files) .............. 64,388 chars ≈ 16,000 tokens
-```
+Each project carries its own `CLAUDE.md` describing a stack, conventions and
+security rules that are largely identical across projects sharing that stack. The
+file is loaded in full at the start of every session and into every subagent that
+reads it. A CSS fix loads the security policy; a database migration loads the
+brand rules. Nothing is loaded by need.
 
-`PuroBeachClub/CLAUDE.md` is loaded in full at the start of every session and
-into every subagent that reads it — roughly 7,000 tokens of preamble before the
-owner types a word, and ~23,000 if an agent also reads `context/`. A CSS fix
-loads the security policy. A database migration loads the brand rules.
+*Measured: 8 files, 143,487 characters, of which two are byte-identical; the
+largest is ~7,000 tokens of preamble before the first word is typed (A.1).*
 
 ### 1.2 Review infrastructure is copied, not shared
 
-`code-review/`, `security-review/` and `design-review/` directories are
-duplicated across HK, PuroBeach, PuroBeachClub, cont, and archive/Vouchers.
-The same agent definitions exist in five or six places and drift independently.
+Review agent definitions and CI workflows are copied into each repository, then
+drift independently. Improving one improves one.
+
+*Measured: `code-review/`, `security-review/` and `design-review/` duplicated
+across six projects (A.2).*
 
 ### 1.3 Sessions have no memory, so work has no home
 
-The `PuroBeachClub` repository root contains 40+ ad-hoc planning documents
-(`PHASE4_CHECKPOINT.md`, `SESSION_SUMMARY.md`, `REFACTORING_PLAN.md`,
-`REFACTORING_PLAN_ORIGINAL.md`, `CONSOLIDATED_REFACTORING_PLAN.md`, …) and
-~60 single-use scripts (`fix_*.py`, `check_*.py`, `debug_*.py`). These are the
-artefacts of each session inventing its own filing system because no shared one
-exists.
+An agent session cannot remember the previous one, so each invents its own filing
+system: plan documents at the repository root, single-use scripts beside
+application code, and no durable record of what was decided or why.
+
+*Measured: 40+ ad-hoc planning documents and ~60 single-use `fix_*.py` /
+`check_*.py` / `debug_*.py` scripts in one repository root (A.3).*
 
 ### 1.4 Rules exist but nothing enforces them
 
-`cont/static/css/admin.css` defines seven design tokens
-(`--app-primary`, `--app-primary-dark`, `--app-accent`, `--app-success`,
-`--app-warning`, `--app-danger`, `--app-bg-soft`). `cont/templates/` nonetheless
-contains **26 hardcoded hex values**, including `#dc3545`, `#198754` and
-`#ffc107` — which are already `--app-danger`, `--app-success` and
-`--app-warning`. The convention is documented and bypassed.
+Conventions are written down and bypassed, because nothing mechanical checks
+them. Design tokens are defined and then duplicated as literal values a few files
+away.
+
+*Measured: seven CSS custom properties defined, and 26 hardcoded hex values in
+templates — three of which duplicate tokens that already exist (A.4).*
 
 ### 1.5 No staging environment
 
-Zero occurrences of "staging" across the repositories. Deployment is Docker
-Compose (`web` + Caddy) to a private Linux server reachable over LAN and
-Tailscale. Changes go from a branch to production with no intermediate place to
-exercise them.
+Changes go from a branch to production with no intermediate place to exercise
+them, so "approved" means a diff was read rather than a running application was
+seen.
+
+*Measured: zero occurrences of "staging" across ten repositories (A.5).*
 
 ---
 
@@ -98,16 +101,21 @@ exercise them.
 
 ### Goals
 
+Every goal is stated so that it can be measured on **any** project, not on a
+particular one.
+
 | # | Goal | Measured by | Phase |
 |---|---|---|---|
-| G1 | Cut always-loaded context | `cont` preamble ≤ 800 tokens (from ~7,000) | A |
+| G0 | **A new project starts correct** | `taller project new` produces a repository that passes `taller doctor` with no check skipped, boots under the smoke gate, and carries its first tickets | A |
+| G1 | Cut always-loaded context | Any adopted project's always-loaded preamble ≤ 800 tokens | A |
 | G2 | One orchestrator the owner talks to | Owner states intent once per ticket | B |
-| G3 | Shared rules, declared once | Front office + Front-office-modules authored local content each < 2,000 chars | A |
+| G3 | Shared rules, declared once | Any two projects on the same profile each have < 2,000 characters of authored local content | A |
 | G4 | Enforced conventions | No new unsuppressed hardcoded colour or font value reaches `main` | C |
 | G5 | Work survives session death | Any ticket resumable from disk after a killed session | D |
 | G6 | Visible cost | Every ticket records weighted token spend by model | B |
 | G7 | Owner keeps final control | Checkpoints 2 (review) and 4 (release) unconditional; 1 (design) and 3 (staging) lane-dependent. Nothing reaches production unapproved. | B |
-| G8 | Uniform across projects | Identical `.taller/` shape, stages, ticket format and commands regardless of stack or brand | A |
+| G8 | Uniform across projects | Identical `.taller/` shape, stages, ticket format and commands regardless of stack, brand or language | A |
+| G9 | **Knows nothing about its owner until told** | The plugin repository contains no occurrence of the domain vocabulary list (§15.6); a fresh hub is empty (§4.0) | A |
 
 ### Non-goals
 
@@ -117,9 +125,11 @@ exercise them.
 - **Not multi-user.** Single operator. No auth in the cockpit; it binds to
   `127.0.0.1`.
 - **Not a Spec Kit installation.** Ideas adopted (§17), toolchain not.
-- **Not a refactor of existing applications.** Taller *generates tickets* to
-  clean up `PuroBeachClub` and the 26 existing hex values in `cont`; it does not
-  perform that cleanup as part of its own construction.
+- **Not a refactor of existing applications.** On adoption Taller *generates
+  tickets* for the violations it finds; it does not perform that cleanup as part of
+  its own construction.
+- **Not pre-loaded with anyone's world.** No default brand, no default UI
+  language, no profile named after a line of business (§4.0, G9).
 - **Not a billing system.** Spend is measured in weighted tokens. A currency
   figure is produced only if the owner supplies a pricing table (§7.5).
 
@@ -168,11 +178,12 @@ prose of at most 40 lines summarising each slice in one sentence. It is
 ### 3.2 Three artifacts, plus runtime state
 
 ```
-programas/taller/          ① THE PLUGIN — the machinery.
-                              Generic; no hotel- or brand-specific knowledge.
+programas/taller/          ① THE PLUGIN — the machinery, plus an inert
+                              CATALOGUE of generic stack templates (§4.0).
+                              No domain-, brand- or language-specific knowledge.
 
 ~/.taller/                 ② THE HUB — rules, brands, registry. A git repository.
-                              Contains ONLY versioned content.
+                              STARTS EMPTY. You fill it (§4.0).
 
 ~/.taller-run/             ③ RUNTIME STATE — locks, worktrees, wizard scratch.
                               NOT a git repository, never versioned.
@@ -194,8 +205,8 @@ destroy the worktree Taller commits through.
 | Issues, pull requests, CI, branch protection | GitHub via `gh` CLI |
 
 The GitHub MCP server currently fails authentication (HTTP 401, stale token).
-Taller uses the `gh` CLI, which is authenticated as `menfistoo` and working. The
-design has no dependency on the GitHub MCP server.
+Taller uses the `gh` CLI. `taller setup` verifies its authentication and token
+scopes (§4.7). The design has no dependency on any GitHub MCP server.
 
 ### 3.4 Dependencies
 
@@ -218,7 +229,7 @@ lacks; each exposes the subset that makes sense for its context.
 
 | Surface | Commands | Why |
 |---|---|---|
-| **`taller` CLI** (Python console script) | `project new`, `project adopt`, `brand new`, `brand edit`, `ticket new\|show\|list\|transition\|approve\|reject\|resume\|close`, `models probe`, `resolve`, `scan`, `stage`, `doctor`, `cockpit` | Runs outside a session — a terminal, a script, CI, or the deployment host. |
+| **`taller` CLI** (Python console script) | `setup`, `project new\|adopt\|discover\|brief`, `brand new\|edit`, `ticket new\|show\|list\|transition\|approve\|reject\|resume\|close`, `models probe`, `resolve`, `scan`, `stage`, `doctor`, `cockpit` | Runs outside a session — a terminal, a script, CI, or the deployment host. |
 | **Slash commands** (in-session) | `/taller:new`, `/taller:approve`, `/taller:reject`, `/taller:resume`, `/taller:amend`, `/taller:status`, `/taller:onboard` | Need the conversation: they dispatch agents and interpret the owner's intent. |
 
 **Naming is disjoint.** Project lifecycle is always `taller project …`; ticket
@@ -231,13 +242,65 @@ conversational act whose reason must reach `notes.md`.
 
 ## 4. The hub
 
+### 4.0 The hub starts empty; the plugin ships a catalogue
+
+Taller arrives knowing nothing about whoever installs it. There is no default
+brand, no default UI language, no profile named after anyone's business, and no
+project registered. A freshly installed hub is:
+
+```
+~/.taller/
+├── taller.yml          mechanical defaults only — models, effort, weights,
+│                       thresholds, a universal secrets glob. No language. No brand.
+├── projects.json       []
+├── brands/             empty
+├── modules/            empty
+└── profiles/           empty
+```
+
+The plugin separately ships a **catalogue** — generic, inert, and copied into the
+hub only when something needs it:
+
+```
+programas/taller/templates/catalogue/
+├── modules/
+│   ├── stack/flask-sqlite.md      stack/static-site.md      stack/python-packaged.md
+│   ├── security/web-app.md        security/minimal.md
+│   ├── conventions/python.md      conventions/js.md
+│   ├── ux/bootstrap.md
+│   └── never.md
+├── profiles/
+│   ├── flask-sqlite.yml    static-site.yml    python-packaged.yml
+└── scaffolds/
+    ├── flask-sqlite/       static-site/       python-packaged/     (§11.5)
+```
+
+| Property | Why |
+|---|---|
+| **Named for stacks, never for domains** | `flask-sqlite`, not anyone's line of business |
+| **Inert until copied** | Nothing in the catalogue is resolved, loaded or enforced. `taller setup` and `taller project new` copy entries into the hub on demand. |
+| **No `brand` and no `language` defaults** | A catalogue profile has `brand: null` and no `language` key. Both are asked, never assumed — a non-English UI is an answer, not the tool's opinion. |
+| **Editable once copied** | A copied module is yours. The catalogue is a starting point, not an upstream you track. |
+
+The distinction matters: *empty* means **it knows nothing about you**, not **it can
+do nothing**. A first `taller project new` needs a scaffold to create from, and
+that is what the catalogue provides.
+
+**Growth rule.** A catalogue entry enters the hub when a project needs it. A
+*new* module — one the catalogue does not contain — is authored only when **two**
+projects in that hub need it. This layer is indirection and becomes a maintenance
+burden if it grows speculatively.
+
+**Once you have populated it,** a hub looks like this — everything below arrived
+by your choice, from the catalogue or from discovery (§4.7):
+
 ```
 ~/.taller/                         git repository — versioned content ONLY
 ├── taller.yml                     DEFAULT config: models, effort, budget,
 │                                  thresholds, language, weights, paths floor
 ├── projects.json                  registry: path, profile, brand, last seen
 ├── brands/
-│   ├── purobeach/
+│   ├── <your-brand>/
 │   │   ├── tokens.css             THE source of truth for colour + font VALUES
 │   │   ├── brand.md               which token to use when (names, never values)
 │   │   └── assets/                logo, favicon, fonts, images
@@ -245,7 +308,7 @@ conversational act whose reason must reach `notes.md`.
 ├── modules/                       each file declares the slice it provides
 │   ├── stack/flask-sqlite.md          → stack
 │   ├── stack/static-js.md             → stack
-│   ├── stack/python-app.md            → stack
+│   ├── stack/python-packaged.md            → stack
 │   ├── security/web-app.md            → security
 │   ├── security/minimal.md            → security
 │   ├── conventions/python.md          → conventions
@@ -253,7 +316,7 @@ conversational act whose reason must reach `notes.md`.
 │   ├── ux/bootstrap-es.md             → ux
 │   └── never.md                       → never
 ├── profiles/
-│   ├── flask-hotel.yml    static-tool.yml    python-app.yml
+│   ├── flask-sqlite.yml    static-site.yml    python-packaged.yml
 └── templates/new-project/         stack skeletons
 
 ~/.taller-run/                     NOT versioned
@@ -270,9 +333,13 @@ conversational act whose reason must reach `notes.md`.
 A profile names the modules a project inherits, its default brand, and config
 that is stack-specific rather than global.
 
+A profile in the hub is a **copy** of a catalogue entry that you have since
+edited — the `brand` and `language` keys below are `null` and absent in the
+catalogue, and were filled in by onboarding:
+
 ```yaml
-# ~/.taller/profiles/flask-hotel.yml
-name: flask-hotel
+# ~/.taller/profiles/flask-sqlite.yml   (as populated; catalogue ships brand: null)
+name: flask-sqlite
 description: Flask + SQLite WAL + Jinja2 + Bootstrap 5 + Docker + Caddy
 modules:
   - stack/flask-sqlite
@@ -281,7 +348,7 @@ modules:
   - conventions/js
   - ux/bootstrap-es
   - never
-brand: purobeach
+brand: <your-brand>          # null in the catalogue; set by onboarding
 language: {code: en, ui: es, commits: en}
 paths:
   security_sensitive:          # APPENDS to the hub floor (§4.4)
@@ -312,11 +379,11 @@ smoke:                         # §9.6
 ```
 
 ```yaml
-# ~/.taller/profiles/static-tool.yml
-name: static-tool
+# ~/.taller/profiles/static-site.yml
+name: static-site
 description: Static HTML/JS page with a Python helper script, no server
 modules: [stack/static-js, security/minimal, conventions/js, ux/bootstrap-es, never]
-brand: precios                 # its own brand — see "own logo.png", §4.1
+brand: <another-brand>         # a project may have a brand of its own
 language: {code: en, ui: es, commits: en}
 paths:
   security_sensitive: []       # inherits only the hub floor (§5.1)
@@ -332,12 +399,12 @@ smoke:
 ```
 
 ```yaml
-# ~/.taller/profiles/python-app.yml
-name: python-app
+# ~/.taller/profiles/python-packaged.yml
+name: python-packaged
 description: Packaged Python desktop application (PyInstaller)
-modules: [stack/python-app, security/minimal, conventions/python, never]
+modules: [stack/python-packaged, security/minimal, conventions/python, never]
 brand: none
-language: {code: en, ui: none, commits: en}   # wisper has no UI
+language: {code: en, ui: none, commits: en}   # a package with no UI
 paths:
   security_sensitive: ["build.py", "*.spec"]
   ui: []
@@ -349,19 +416,14 @@ smoke:
   timeout_s: 20
 ```
 
-`language.ui: none` disables every UI-language rule, so `wisper` is never checked
-for Spanish strings.
+`language.ui: none` disables every UI-language rule, so a project with no user
+interface is never checked for UI-string language.
 
-The three initial profiles map to the owner's three existing project shapes:
-
-| Profile | Existing projects |
-|---|---|
-| `flask-hotel` | cont, PuroBeachClub, HK, SSTT, Front office, Front-office-modules |
-| `static-tool` | Creador de precios (static HTML/JS + Python helper, own `logo.png`) |
-| `python-app` | wisper (PyInstaller desktop app, no UI) |
-
-**YAGNI constraint:** no module is created until **two** projects need it. No
-fourth profile until a real project requires one.
+The catalogue ships three profiles because three distinct shapes cover most small
+estates: a server-rendered web application with a database, a static page with a
+helper script, and a packaged program with no UI. A worked mapping of ten real
+repositories onto them is in **A.6** — as an illustration, not as a definition.
+See §4.0 for the growth rule.
 
 ### 4.2 Brands
 
@@ -374,8 +436,9 @@ where, by name.
 
 | Start from | Mechanism |
 |---|---|
-| Existing CSS | Reads `--*` custom properties from a named file and proposes them as the palette. `cont/static/css/admin.css` yields 7. |
-| A logo image | Extracts dominant colours from e.g. `Creador de precios/logo.png` and proposes a palette. |
+| **A brand guide PDF** | The authoritative source when one exists. Extracts the palette and typography and proposes them. Preferred over any CSS file, because a CSS file is an implementation that may already have drifted from the guide (A.4 documents an estate with one guide and five disagreeing palettes). |
+| Existing CSS | Reads `--*` custom properties from a named file and proposes them as the palette. |
+| A logo image | Extracts dominant colours from a `logo.png` / `logo.svg` and proposes a palette. |
 | Scratch | Guided: primary, accent, semantic (success/warning/danger), surfaces, typography, spacing scale. |
 
 It then collects typography and assets, writes `tokens.css` and `brand.md`, and
@@ -404,10 +467,11 @@ font values anywhere else. Precisely:
 | `static/css/tokens.css` (generated) | Exempt — it is the definition |
 | Anything else | `brand.hardcoded-color` / `brand.hardcoded-font` |
 
-**What this means for `cont` at adoption.** `cont` defines its seven `--app-*`
-tokens in `static/css/admin.css` (§1.4). That is not the generated path, so left
-alone those seven definitions would each become a HIGH finding — the adoption
-would report 33 violations instead of 26. `taller project adopt` therefore:
+**What this means at adoption.** A project that already defines its tokens in some
+other stylesheet — the common case (A.4) — is not using the generated path, so left
+alone every one of those definitions would become a HIGH finding: adoption would
+report *more* violations than the project has, by flagging its own design system.
+`taller project adopt` therefore:
 
 1. Reads the `:root` block from `admin.css` — this is exactly the
    `brand new --from-css` path of §4.2 — and lifts those seven tokens into the
@@ -567,7 +631,7 @@ CI cannot see the hub. The hub is a local-only git repository (§13.2), so a
 hosted GitHub runner cannot resolve a `RuleSet`, cannot read the brand
 `tokens.css`, cannot know `paths.layers` or `thresholds`, and cannot record
 `hub_sha`. Without a fix, the constitution and size gates could not run in CI at
-all — which would make §9.4, §13's required check, and §15.5's defence-in-depth
+all — which would make §9.4, §13's required check, and §15.7's defence-in-depth
 argument false.
 
 **A snapshot of the `RuleSet` is therefore committed to the project repository at
@@ -607,7 +671,7 @@ writer. It is refreshed:
 | stage ② of every ticket | that project, on `main`, before the branch exists |
 | `taller resolve` | on demand |
 
-An amend to `security/web-app.md` therefore writes to all six `flask-hotel`
+An amend to `security/web-app.md` therefore writes to all six `flask-sqlite`
 projects: six project locks, six commits, six pushes, six `sync` states. That is
 the honest cost of one shared rule and the reason `/taller:amend` reports which
 projects it touched. The alternative — refreshing one project — leaves the other
@@ -645,6 +709,52 @@ branch did not change it — which is sufficient, because the local ordered chec
 runs at stage ② before any pull request exists and its verdict is committed with
 the work.
 
+### 4.7 `taller setup` — how projects and brands are found
+
+A hub starts empty (§4.0), and registering ten projects by hand is something
+nobody does twice. `taller setup` populates it by discovery. It is re-runnable and
+writes nothing before its final approval.
+
+| Round | Does |
+|---|---|
+| **1 · Connect** | Runs `gh auth status`; reports the account and token scopes, and prints the exact `gh auth refresh -s <scope>` command if `repo` or `workflow` is missing. Asks for the deployment host (§13.1) if there is one. |
+| **2 · Locate** | Asks for one or more **project roots** on disk. Proposes the parent directory of the current repository as a starting guess. |
+| **3 · Discover projects** | Walks the roots for `.git` directories; lists remote repositories with `gh repo list`; matches the two by remote URL. |
+| **4 · Discover brands** | Clusters design tokens and locates brand guides across the projects chosen in round 3. |
+| **5 · Language & conventions** | Asks for `language` — code, UI and commit-message languages. **No default.** |
+| **6 · Review** | Everything it is about to write: projects to register with a guessed profile each, brands to create, catalogue entries to copy. Approve / edit / cancel. |
+
+**Round 3 sorts what it finds into four buckets,** each with a different offer:
+
+| Bucket | Offer |
+|---|---|
+| Local **and** remote | Register. A stack guess is shown for correction. |
+| Local, **no remote** | Register, and offer to create a private remote. |
+| **Remote, not cloned** | List it. Offer to clone — **default no**, since a listed repository is not necessarily wanted. |
+| Local, remote **does not resolve** | Flag it. A renamed or deleted repository leaves a stale `origin`, which is worth knowing before Taller starts pushing to it. |
+
+**Round 4 turns brand creation into brand confirmation.** For every project being
+registered it:
+
+1. Extracts `--*` custom properties from CSS and clusters projects by palette.
+2. Locates candidate brand assets — `logo.*`, `favicon.*`, and **brand guide PDFs**.
+3. Reports the clusters and proposes a brand per cluster, for naming.
+
+So the question is never "invent a brand" but *"these projects share an identical
+set of tokens, and this PDF looks authoritative — what is this brand called?"* A.4
+documents an estate where this found one brand guide, five disagreeing palettes
+across six projects of the same business, and one project with no tokens at all —
+none of which would have surfaced from a blank `brand new` prompt.
+
+**Pickers, not typed slugs.** Wherever the spec says a profile or brand is chosen
+— §11.1 steps ② and ③, `brand edit`, the cockpit — it is a numbered list of what
+exists plus `create new…` and, for brands, `none`. Never a free-text field whose
+value has to be spelled correctly to match a directory name.
+
+**Keeping it fresh.** `taller project discover` re-runs rounds 3 and 4 and reports
+what is new, moved, or gone. `taller doctor` already fails on a registered path
+that no longer exists (§15.4).
+
 ---
 
 ## 5. Per-project layout
@@ -669,7 +779,7 @@ The project write lock lives at `~/.taller-run/locks/<project>.lock`, not in the
 repository (§10.3). Only `product`, `architecture`, `never` (append) and
 `overrides` are authored locally; the other five slices come from the hub. A
 project with no deviations has a `taller.yml` of zero lines and an `overrides.md`
-with an empty list — the target state for Front office and Front-office-modules.
+with an empty list — the target state for any two projects sharing a profile.
 
 ### 5.1 taller.yml
 
@@ -703,11 +813,12 @@ effort:
 
 fallback: worker              # unreachable model degrades, never crashes
 
-language: {code: en, ui: es, commits: en}
+language: null                # NO DEFAULT. Asked at `taller setup`, round 5.
+                              # e.g. {code: en, ui: es, commits: en}
 
 paths:
   security_sensitive:         # GLOBAL FLOOR — profiles and projects append (§4.4)
-    - ".env*"
+    - ".env*"                 # universal; nothing here assumes a stack or a domain
     - "**/*secret*"
     - "**/*credential*"
 
@@ -734,7 +845,7 @@ thresholds:
 ```
 
 ```yaml
-# <project>/.taller/taller.yml — e.g. cont, stricter about file size
+# <project>/.taller/taller.yml — e.g. a project stricter about file size
 thresholds:
   max_file_lines: 400
 paths:
@@ -892,8 +1003,8 @@ Roughly a dozen times per ticket, making it the most frequent write in the
 system. Taller maintains a **long-lived worktree of `main`** at
 `~/.taller-run/worktrees/<project>-main/`, created at `taller project adopt`.
 It is outside the project tree and outside the hub repository, so it never
-interferes with the owner's running application, the ticket worktree, or `cont`'s
-live SQLite WAL files.
+interferes with the owner's running application, the ticket worktree, or a live
+database's write-ahead log.
 
 `gitio.commit_to_main(project, files, message)`:
 
@@ -1093,9 +1204,9 @@ fast lane excludes — yet "add a label to a template" is an archetypal fast
 ticket. The mitigation is mechanical and cheap: the constitution gate reports
 `constitution.new-ui-literal` at `MEDIUM` for every new user-visible literal in a
 changed template (a new text node, or a new `placeholder`/`title`/`aria-label`/
-`alt` attribute) when `language.ui != none`. It does not judge the language —
+`alt` attribute) when `language.ui` is set and not `none`. It does not judge the language —
 that is not decidable — it simply puts the new string in front of the owner at
-⑦. Spanish-only UI is therefore *reviewed* but not *enforced* in the fast lane,
+⑦. Single-language UI is therefore *reviewed* but not *enforced* in the fast lane,
 and that is a deliberate trade, not an oversight.
 
 ### 8.3 Git conventions
@@ -1107,12 +1218,13 @@ and that is a deliberate trade, not an oversight.
 | Scope | One ticket, one branch, one pull request. |
 | `main` | Always deployable. |
 
-This replaces the mixed convention in `cont` (`feat/caja-module` alongside
-`feature/shift-control`).
+One convention replaces whatever mix an adopted repository arrived with — A.6
+records an estate using `feat/` and `feature/` interchangeably.
 
-**Note on `v2`:** `cont` has a long-lived `v2` branch. Long-lived branches drift
-until merging them becomes its own project. Under Taller, `v2` would become a
-series of tickets merged individually. An observation; out of scope.
+**Note on long-lived branches.** An adopted repository may arrive with a divergent
+long-lived branch. Such branches drift until merging them becomes its own project.
+Under Taller it becomes a series of tickets merged individually. An observation;
+out of scope (§18).
 
 ---
 
@@ -1135,8 +1247,8 @@ constitution, size, tests — and those three are exactly the three that run in 
 (§9.4). Smoke is also model-free but belongs to stage ⑥.
 
 The constitution gate is **fully mechanical**: every rule has a decidable test.
-Identifying whether a string is Spanish is a heuristic, so that rule lives in the
-UX gate. A gate that sometimes needed a model could not honour §9.4's promise of
+Identifying which language a string is written in is a heuristic, so that rule
+lives in the UX gate. A gate that sometimes needed a model could not honour §9.4's promise of
 no per-push cost.
 
 **Mechanical definitions:**
@@ -1228,7 +1340,7 @@ implementer. Configuration comes from `smoke` in the profile or project
 | `import` | Import `module` in a subprocess with `timeout_s`. Any exception is a finding. |
 | `none` | Gate reports `result: pass` with `metrics: {skipped: true}`. Declared explicitly, never inferred. |
 
-**A 200 is required, not a 3xx.** A hotel application redirects an
+**A 200 is required, not a 3xx.** An application with a login redirects an
 unauthenticated request to a login page and returns 302 — which would pass a
 naive check while rendering nothing. Since §8.2's whole fast-lane argument is
 "⑥ is the only step that renders a template", the gate requires **HTTP 200 with a
@@ -1367,11 +1479,15 @@ programas/taller/
 │   ├── taller-new.md      taller-status.md    taller-approve.md
 │   ├── taller-reject.md   taller-resume.md    taller-amend.md
 │   └── taller-onboard.md
+├── templates/catalogue/           INERT generic stock (§4.0)
+│   ├── modules/    profiles/    scaffolds/<profile>/manifest.yml + files
 ├── src/taller/                    THE single implementation (§3.5)
 │   ├── cli.py                     argument parsing only
 │   ├── constitution.py            resolve() -> RuleSet; snapshot write  (§4.4, §4.6)
 │   ├── overrides.py               parse, match, downgrade               (§4.5)
 │   ├── registry.py                ~/.taller/projects.json
+│   ├── discovery.py               disk + gh scan, palette clustering    (§4.7)
+│   ├── scaffold.py                catalogue copy, manifest substitution (§11.5)
 │   ├── gitio.py                   main worktree, commit_to_main         (§7.3)
 │   ├── tickets.py                 CRUD, transition                      (§7)
 │   ├── locking.py                 project + hub + registry locks        (§10.3)
@@ -1395,6 +1511,8 @@ Python gates.
 | Unit | Does | Interface | Depends on |
 |---|---|---|---|
 | `registry.py` | Read/write the project registry | `list_projects()`, `add_project()`, `get_project(path)` | filesystem, `locking` |
+| `discovery.py` | Find candidate projects and brands | `scan_disk(roots)`, `scan_remote()`, `reconcile()` → buckets (§4.7), `cluster_palettes(projects)`, `find_brand_assets(path)` | filesystem, `gh` |
+| `scaffold.py` | Materialise a catalogue scaffold | `load(profile)`, `render(manifest, answers) -> {path: bytes}` | catalogue files only |
 | `constitution.py` | Resolve both chains; render and load generated artefacts | `resolve(path) -> RuleSet` (**pure, writes nothing**), `render_snapshot(rs) -> bytes`, `render_tokens(rs) -> bytes`, `load_snapshot(path) -> RuleSet` | `registry`, `overrides`, filesystem (reads only) |
 | `gitio.py` | The `main` worktree and the only write path to it | `ensure_main_worktree(p)`, `commit_to_main(p, files, msg) -> SyncState` | git, network, `locking` |
 | `overrides.py` | Parse `overrides.md`; downgrade matching findings | `parse(text) -> [Override]`, `apply(findings, ruleset) -> [Finding]` | nothing but its arguments |
@@ -1426,9 +1544,14 @@ seconds fails with a clear message rather than waiting or forcing.
 
 ### 10.4 Build order
 
+**The pilot is a greenfield project first.** Phase A proves itself by running
+`taller project new` on an empty hub into a throwaway repository, and only then by
+adopting an existing one. Greenfield is the cheaper proof and the primary entry
+point (G0); adoption is the harder case and goes second.
+
 | Phase | Contents | Effort | Delivers |
 |---|---|---|---|
-| **A** | Hub, `~/.taller-run/`, slice vocabulary, both resolution chains, `overrides.md`, snapshot + `tokens.css` rendering, `taller.yml` inheritance, **`locking.py`**, **`main` worktree + `commit_to_main()`**, onboarding, brands | ~3 sessions | G1, G3, G8 |
+| **A** | Empty-hub contract + catalogue, `~/.taller-run/`, slice vocabulary, both resolution chains, `overrides.md`, snapshot + `tokens.css` rendering, `taller.yml` inheritance, **`locking.py`**, **`main` worktree + `commit_to_main()`**, `taller setup` discovery, **`project new` + scaffolds**, `project adopt`, `project brief`, brands | ~4 sessions | G0, G1, G3, G8, G9 |
 | **D** | Tickets, `status.yml`, `sync` handling, transitions, issue mirroring | ~1 session | G5 |
 | **B** | Chief, routing, lanes, model roster, `models probe`, `spend.py` | ~2 sessions | G2, G6, G7 |
 | **C** | Gates — constitution first, then size/tests/smoke, then the three LLM gates. `scan()` mode. `project adopt` removes the superseded `code-review/`, `security-review/`, `design-review/` directories. | ~2–3 sessions | G4 |
@@ -1453,22 +1576,71 @@ complete.
 
 ## 11. Onboarding
 
-### 11.1 Two entry points, one wizard
+### 11.1 One question list, two entry points
 
-`taller project new <name>` and `taller project adopt` run the same question
-list. `adopt` arrives with more answers pre-filled.
+`taller project new <name>` and `taller project adopt` run the **same twelve
+questions**, in four short rounds. `adopt` arrives with more of them pre-filled
+from the repository; `new` has nothing to derive from, so it needs *more*
+conversation, not less.
 
-| Step | Question | Source |
+**Round 1 — what it is**
+
+| | Question | Feeds |
 |---|---|---|
-| ① | What is this, in your words? | Owner |
-| ② | Profile? `[flask-hotel]` · static-tool · python-app · custom | Owner, inferred default |
-| ③ | Brand? `[purobeach]` · new brand… · none | Owner, inferred default |
-| ④ | What must never break? | **Owner only** — no scan can answer this |
-| ⑤ | Confirm derived facts, including the `smoke` configuration | Machine proposes, owner corrects |
-| ⑥ | Summary of everything to be created | **Owner approval** |
+| ① | In one sentence, what does this do? | `product.md` |
+| ② | **What does it deliberately NOT do?** | `never.md` |
+| ③ | What must never break? | `product.md`; seeds `paths.security_sensitive` |
 
-**Nothing is written into the project before step ⑥.** The single exception is
-the resume file at `~/.taller-run/onboarding/<name>.yml`, outside any project.
+② is the question that keeps a tool from quietly becoming a different, larger
+tool. Nothing in the repository can answer it and it is never asked by default.
+
+**Round 2 — who and where**
+
+| | Question | Feeds |
+|---|---|---|
+| ④ | Who uses it — you alone, a team with roles, or the public? | The auth architecture, and whether the security module is `web-app` or `minimal`. Changing this later is a rewrite, so it is asked before any code exists. |
+| ⑤ | Reached from where — this machine, a private network, a VPN, or the internet? | Reverse proxy, TLS, compose files, staging |
+| ⑥ | Used on a phone? | The `ux` slice; whether mobile is a gate concern |
+
+**Round 3 — data**
+
+| | Question | Feeds |
+|---|---|---|
+| ⑦ | What does it store? | Schema scaffold |
+| ⑧ | **Does any of it involve money, personal data, or credentials?** | Sets `paths.security_sensitive`, makes the security gate mandatory on those paths, and scaffolds audit logging |
+
+**Round 4 — shape**
+
+| | Question | Feeds |
+|---|---|---|
+| ⑨ | Profile — a picker over the hub, plus the catalogue, plus `create new…` | Stack, modules |
+| ⑩ | Brand — a picker over the hub, plus `new brand…`, plus `none` | `tokens.css` |
+| ⑪ | Deploys where? | compose, staging, and the `smoke.boot` command |
+| ⑫ | **What is the smallest version that is actually useful to you?** | Becomes the **first three to five tickets** |
+
+⑫ exists so that onboarding does not end with an empty project and a blank
+prompt. It ends with a board that already has work on it.
+
+**Then review.** A one-page **project brief** is rendered as a standalone HTML
+file and opened locally — what it is, what it is not, who uses it, what must never
+break, the stack, the brand swatch (§4.2), the deploy target, and the first
+tickets. Approve, edit a specific answer, or cancel.
+
+**Nothing is written into the project before the brief is approved.** The single
+exception is the resume file at `~/.taller-run/onboarding/<name>.yml`, outside any
+project.
+
+### 11.1.1 The brief is re-runnable
+
+`taller project brief` reopens the same twelve questions with the current answers
+filled in. Changes are written as constitution amendments (§9.8), so they carry
+history and can be reverted.
+
+This exists because a week into a project the answers are better than they were on
+day one — particularly ② and ⑧ — and a constitution that cannot be corrected stops
+describing the program. That drift is the mechanism behind the pattern in A.3,
+where a repository accumulates `PLAN.md`, `PLAN_ORIGINAL.md` and
+`CONSOLIDATED_PLAN.md` because no document was allowed to be the current one.
 
 ### 11.2 Derive facts, interview intent
 
@@ -1478,8 +1650,8 @@ test layout, git history, and a candidate `smoke.boot` command (`run_local.py`,
 `wsgi.py`, `docker-compose.yml`). It asks the owner only what is not in the code:
 purpose, users, what must never break, brand intent, priorities.
 
-For `cont` this is 6–8 questions rather than 40, and the answers are the ones no
-repository scan could produce.
+On adoption this leaves six to eight questions rather than twelve, and the ones
+left are exactly those no repository scan could answer.
 
 ### 11.3 Properties
 
@@ -1491,8 +1663,51 @@ repository scan could produce.
   is already shared**, so adoption reduces text rather than adding it.
 - `adopt` creates the `main` worktree (§7.3), writes the first snapshot (§4.6),
   and registers the project.
-- `adopt` on a project with superseded `code-review/`, `security-review/` or
-  `design-review/` directories proposes their removal (Phase C).
+- `adopt` on a project with superseded review directories — copied-in agent
+  definitions or CI workflows that the gates now supersede — proposes their
+  removal (Phase C).
+- Both entry points work on a repository with **no** existing `CLAUDE.md`, no
+  design tokens, and no git history. Nothing is inferred from their absence except
+  that there is nothing to lift.
+
+### 11.5 What `taller project new` creates
+
+The catalogue ships one scaffold per profile (§4.0). A scaffold is a **template
+directory plus a substitution manifest**, not generated code — so it is auditable,
+and editable by the owner without touching Python.
+
+```
+templates/catalogue/scaffolds/flask-sqlite/
+├── manifest.yml               which files, which substitutions, which are stubs
+├── app.py.j2                  wsgi.py.j2 · run_local.py.j2
+├── routes/__init__.py.j2
+├── database.py.j2             WAL, sqlite3.Row, get_db() context manager
+├── templates/base.html.j2     links static/css/tokens.css
+├── requirements.txt.j2        pinned
+├── docker-compose.yml.j2      docker-compose.staging.yml.j2 · Caddyfile.j2
+├── .github/workflows/taller-ci.yml
+├── tests/conftest.py.j2       fixture database — never a live file
+├── .gitignore                 *.db, *-wal, *-shm, venv/, .env
+└── README.md.j2
+```
+
+`manifest.yml` declares, per file, whether it is copied verbatim, substituted, or
+**omitted** when an answer makes it irrelevant — no Docker files when ⑪ says local
+only, no auth scaffolding when ④ says single operator, no audit logging when ⑧ says
+no money or personal data. A scaffold is shaped by the answers, not pasted whole.
+
+Taller then adds what every project gets regardless of profile:
+
+| Added | From |
+|---|---|
+| `.taller/constitution/` | The twelve answers |
+| `.taller/resolved.json` | `resolve()` + `commit_to_main()` (§4.6) |
+| `static/css/tokens.css` | `render_tokens()` (§4.2.1) — omitted when brand is `none` |
+| `CLAUDE.md` | Stub pointing at `00-index.md` |
+| `.taller/work/0001…000N` | The first tickets, from answer ⑫ |
+
+Finally: `git init`, one commit, and — **only if asked** — `gh repo create
+--private`. No remote is created without the owner saying so (§13.2).
 
 ---
 
@@ -1699,7 +1914,41 @@ before every phase exists:
 
 The dry-run rule keeps `taller doctor` free to run.
 
-### 15.5 Acknowledged limitation
+### 15.5 The greenfield path is tested end to end
+
+`taller project new` is the primary entry point (G0), so it gets the heaviest
+integration test, not the lightest:
+
+1. Point `HOME` at an empty temporary directory — **a hub with nothing in it.**
+2. Run `project new` with scripted answers to the twelve questions, once per
+   catalogue profile.
+3. Assert `taller doctor` passes with **no check skipped**.
+4. Assert the smoke gate boots the result and returns 200 with a body.
+5. Assert the first tickets exist and one runs ① → ⑩.
+6. Assert `manifest.yml` omissions held: no compose files when the answer was
+   local-only, no auth scaffolding when the answer was single-operator, no audit
+   logging when the answer was no money or personal data.
+
+Step 1 is the important one. A test that runs against a populated hub would pass
+while `project new` silently depended on something a real first-time install does
+not have.
+
+### 15.6 The plugin is tested for ignorance
+
+A **domain vocabulary list** lives in `tests/domain_vocabulary.txt`: brand names,
+business-specific nouns, project names, and words in any language other than the
+plugin's own English. A test asserts that **no file in the plugin repository
+contains any of them**, excluding that list itself and the fixtures under
+`tests/fixtures/`.
+
+This makes G9 checkable rather than promised. The catalogue is inside the plugin
+(§4.0), so it is covered too: a catalogue entry that acquired a brand default or a
+non-English UI string turns the test red.
+
+A second test asserts a **fresh hub is empty** — no brands, no profiles, no
+modules, no registered projects, and `language: null`.
+
+### 15.7 Acknowledged limitation
 
 The three LLM gates are non-deterministic. Fixture tests reduce the risk; they do
 not eliminate it. A gate will occasionally miss a real problem. This is why owner
@@ -1712,26 +1961,49 @@ than one perfect filter.
 
 **This table is the only phase↔criterion mapping in the document.**
 
-| # | Criterion | Baseline (2026-09-26) | Target | Phase |
-|---|---|---|---|---|
-| 1 | `cont` always-loaded preamble | ~7,000 tokens | ≤ 800 tokens | A |
-| 2 | Front office + Front-office-modules **authored** local content | 9,466 chars each, identical | < 2,000 chars each | A |
-| 3 | Ticket resumable after a killed session | not possible | every ticket | D |
-| 4 | Tickets with a recorded `weighted_tokens` figure | 0 | every ticket | B |
-| 5 | Owner approval checkpoints before production | informal | 2 unconditional + 2 lane-dependent, enforced | B |
-| 6 | Tickets reaching ⑩ merge with an unsuppressed `brand.hardcoded-*` finding in their own constitution verdict | unmeasurable | 0 | C |
-| 7 | Review directories duplicated across projects | 6 projects | 0 | C |
-| 8 | `taller scan` produces Health figures for every project | not possible | all registered projects | C |
-| 9 | CI workflows per repository | 3 | 1 | F |
-| 10 | Staging environment | none | one per Flask project | F |
-| 11 | `taller doctor` green on `cont`, no check skipped | n/a | passes | F |
+Every criterion is stated against **any** project, so the same table applies to a
+greenfield project and to an adopted one. Appendix A gives the numbers that the
+adoption criteria were calibrated from.
 
-**Criterion 2** counts authored local content — `product.md`, `architecture.md`,
+**Greenfield — the pilot path (§10.4):**
+
+| # | Criterion | Target | Phase |
+|---|---|---|---|
+| 1 | A fresh install has an empty hub: no brand, no profile, no project, no `language` | verified on a clean machine | A |
+| 2 | `taller project new` on an empty hub produces a repository that **passes `taller doctor` with no check skipped** | passes | A |
+| 3 | That repository **boots under the smoke gate** on its first commit | passes | A |
+| 4 | It carries the first tickets from answer ⑫, and one of them runs ① → ⑩ end to end | passes | B |
+| 5 | The plugin repository contains **no occurrence of the domain vocabulary list** (§15.6) | 0 | A |
+
+**Adoption:**
+
+| # | Criterion | Baseline (A) | Target | Phase |
+|---|---|---|---|---|
+| 6 | An adopted project's always-loaded preamble | up to ~7,000 tokens | ≤ 800 tokens | A |
+| 7 | Authored local content, for any two projects sharing a profile | 9,466 chars each, identical | < 2,000 chars each | A |
+| 8 | `taller setup` registers every discovered project and reports every unresolvable remote | manual, one at a time | one pass | A |
+| 9 | Brands created by confirming a discovered cluster rather than typed from scratch | 0 | every brand with a discoverable palette | A |
+| 10 | Review directories duplicated across projects | 6 projects | 0 | C |
+
+**Mechanics, independent of how the project arrived:**
+
+| # | Criterion | Target | Phase |
+|---|---|---|---|
+| 11 | Ticket resumable after a killed session | every ticket | D |
+| 12 | Tickets with a recorded `weighted_tokens` figure | every ticket | B |
+| 13 | Owner approval checkpoints before production | 2 unconditional + 2 lane-dependent, enforced | B |
+| 14 | Tickets reaching ⑩ merge with an unsuppressed `brand.hardcoded-*` finding in their own constitution verdict | 0 | C |
+| 15 | `taller scan` produces Health figures for every registered project | all | C |
+| 16 | CI workflows per repository | 1 | F |
+| 17 | Staging environment per project whose profile defines one | one each | F |
+| 18 | `taller doctor` green on every registered project, no check skipped | passes | F |
+
+**Criterion 7** counts authored local content — `product.md`, `architecture.md`,
 `never.md`, `overrides.md` — and **excludes the generated `00-index.md`** (~40
 lines by design) and `resolved.json` (generated). Without those exclusions the
 criterion would be arithmetically unreachable.
 
-**Criterion 6** measures G4 exactly, against the ticket's own verdict rather than
+**Criterion 14** measures G4 exactly, against the ticket's own verdict rather than
 a repository count. A ratchet on a scan total would pass a ticket that removes one
 hardcoded value and adds another — the count stays flat while a new value reached
 `main`, which is precisely what G4 forbids. The verdict is already on disk
@@ -1740,15 +2012,15 @@ hardcoded value and adds another — the count stays flat while a new value reac
 downgraded by an active override (§4.5) are excluded, because §4.5 exists to admit
 reasoned exceptions.
 
-The `taller scan` total remains the **trend figure** on the Health screen — how
-many of the 26 are left — which is a different and also useful question.
+The `taller scan` total remains the **trend figure** on the Health screen, which
+is a different and also useful question.
 
-**Criterion 11** is Phase F because doctor checks CI (§15.4), which does not
-exist until F.
+**Criterion 18** is Phase F because doctor checks CI (§15.4), which does not exist
+until F.
 
-**Consequences, not deliverables** — tracked, not gated on: the 26 existing hex
-values in `cont/templates/` and the 40+ root `.md` files in `PuroBeachClub` are
-pre-existing. Taller **generates tickets** for them (§2, §18); `taller scan`
+**Consequences, not deliverables** — tracked, not gated on: pre-existing
+violations in an adopted project (A.3, A.4) are not Taller's to fix as part of its
+own construction. Taller **generates tickets** for them (§2, §18); `taller scan`
 counts them and the Health screen shows them trending down.
 
 ---
@@ -1757,10 +2029,19 @@ counts them and the Health screen shows them trending down.
 
 | Decision | Rejected | Reason |
 |---|---|---|
+| **The hub starts empty; the plugin ships an inert generic catalogue** | Shipping profiles, a brand and a UI language as defaults | The first draft shipped a profile with a line of business in its name, a named brand as a profile default, and one human's UI language as a hub default — while claiming on the same page to contain no domain-specific knowledge. "Empty" must mean *knows nothing about you*, not *can do nothing*, so the catalogue exists but is inert until copied. |
+| **A domain-vocabulary test (§15.6) and an empty-hub test** | Promising genericity in prose | G9 is otherwise unfalsifiable. The catalogue lives inside the plugin, so it is covered too. |
+| **Evidence moved to Appendix A** | A problem statement built from one person's repositories | The measurements are the reason the thresholds are not guesses, but as §1 they made the document read as a cleanup project for one estate — which is how `project new` ended up the least-specified part of a tool whose main job is starting new projects. |
+| **Greenfield is the pilot, adoption second** | Piloting on an existing repository | `project new` is the primary entry point (G0). It is also the cheaper proof: an empty hub and a throwaway directory, with no existing mess to confuse a framework failure with a project failure. |
+| **`taller setup` discovers projects and brands** | A registry populated one `project adopt` at a time | Nobody registers ten projects by hand twice. Discovery also surfaces what manual registration never would — a broken remote, an uncloned active project, a stack the catalogue does not cover, and six projects of one business carrying five disagreeing palettes (A.6, A.4). |
+| **Brands created by confirming a discovered cluster; brand guide PDF preferred over CSS** | `brand new` from a blank prompt; CSS as the source of truth | A stylesheet is an implementation that may already have drifted. A.4 found one authoritative guide and five palettes that disagreed with it and with each other. |
+| **Twelve questions in four rounds, including "what does it NOT do" and "what is the smallest useful version"** | The same six questions for `new` and `adopt` | `project new` has nothing to derive from, so it needs *more* conversation, not less. The scope-boundary question is what keeps a tool from becoming a different, larger tool; the smallest-useful-version question is what stops onboarding ending at an empty project and a blank prompt. |
+| **The brief is re-runnable, and changes are amendments** | Answered once at creation | A week in, the answers are better than they were on day one. A constitution that cannot be corrected stops describing the program — which is the mechanism behind A.3. |
+| **Scaffolds are template directories with a `manifest.yml`** | Generated by code | Auditable, and the owner can edit a scaffold without touching Python. The manifest also omits files the answers make irrelevant, so a scaffold is shaped rather than pasted. |
 | Superpowers as the engine, Taller as the addition | Adopt Spec Kit wholesale; build from scratch | Spec Kit is agent-agnostic, so it cannot use Claude Code subagents — the team structure would be lost. It adds a second toolchain (Python CLI + `uv`) and is verbose by design, conflicting with the cost goal. From scratch means re-implementing working brainstorm/plan skills. |
 | Tickets as files, GitHub Issues as a mirror | Issues as the store; local SQLite | Agents are the heaviest readers. Files cost no API ceremony and no network. SQLite is a second source of truth that never appears in a pull request diff. |
 | **A committed `resolved.json` snapshot** | Give the hub a remote + deploy key; restrict CI to hub-independent checks | CI cannot see a local-only hub, so two of its three gates could not run and no verdict could record `hub_sha`. A snapshot keeps §13.2's local-only default intact, needs no secrets, and makes rule changes visible in the pull request diff. |
-| `ticket.md` + `status.yml` + `notes.md` on `main`, via a long-lived `main` worktree, with an explicit `sync` state | Everything on the branch; assuming push always succeeds | In-flight tickets must be visible from `main`; a rejected branch must not destroy its rejection reason; nothing may disturb `cont`'s live SQLite WAL files; and commit+push is not atomic, so the failure had to become visible rather than assumed away. |
+| `ticket.md` + `status.yml` + `notes.md` on `main`, via a long-lived `main` worktree, with an explicit `sync` state | Everything on the branch; assuming push always succeeds | In-flight tickets must be visible from `main`; a rejected branch must not destroy its rejection reason; nothing may disturb a live database's write-ahead log; and commit+push is not atomic, so the failure had to become visible rather than assumed away. |
 | Runtime state in `~/.taller-run/`, outside the hub repo | Locks and worktrees inside `~/.taller/` | A nested worktree lets a hub amendment sweep a project checkout into the hub, and a hub revert can destroy the worktree Taller commits through. |
 | Two separate resolution chains — config and slice text | One "later wins" chain over both | Markdown prose cannot set `thresholds`; a single chain misled about precedence and left `paths` with no project override. |
 | Slice text appends; only `overrides.md` suppresses, by rule id, with a reason | Project prose overriding hub prose | Append-vs-override was ambiguous on whether a project can delete a hub prohibition. It cannot. |
@@ -1772,8 +2053,8 @@ counts them and the Health screen shows them trending down.
 | **`resolve()` is pure; `render_*()` serialise; only `commit_to_main()` writes** | `resolve()` writing and committing the snapshot | A committing `resolve()` would be neither pure nor network-free, would make `constitution.py` depend on `tickets.py`, and would let the tamper check rewrite the very file it is testing — so it could never fail. |
 | **Stale is checked before modified** | Both checks at once | Once the hub moves the bytes necessarily differ, so an unordered pair raised a BLOCKER on every ticket in flight during a routine amend — which §14 treats as a warning. |
 | **`locking.py` and `commit_to_main()` (in `gitio.py`) ship in Phase A** | Both in Phase D with the tickets | `project adopt` is a Phase A deliverable and must write the first snapshot and `tokens.css`, which only `commit_to_main()` may do. Putting them in `gitio.py` makes the phase boundary a module boundary. |
-| **Generated `static/css/tokens.css` inside each project; `adopt` lifts existing tokens into the hub** | The hub `tokens.css` as the deployed file; flagging a project's existing token definitions | The hub is outside the repository and outside the Docker image, so the browser could never load it. And left alone, `cont`'s seven `--app-*` definitions in `admin.css` would each have been reported as a hardcoded value — 33 findings on a baseline of 26. |
-| **Smoke isolates data, port and auth; a 3xx is not a render** | A fixed port; whatever database the app config points at; accepting any 2xx/3xx | A fixed port collides with the owner's dev server and with a second ticket. Booting against the live SQLite file risks the WAL that §7.3 and §13.1 both protect. And a hotel app redirects an unauthenticated request to a login page — 302 would have passed while rendering nothing, which destroys the fast lane's only safety argument. |
+| **Generated `static/css/tokens.css` inside each project; `adopt` lifts existing tokens into the hub** | The hub `tokens.css` as the deployed file; flagging a project's existing token definitions | The hub is outside the repository and outside the Docker image, so the browser could never load it. And left alone, a project's existing token definitions in another stylesheet would each have been reported as a hardcoded value — adoption would flag the project's own design system. |
+| **Smoke isolates data, port and auth; a 3xx is not a render** | A fixed port; whatever database the app config points at; accepting any 2xx/3xx | A fixed port collides with the owner's dev server and with a second ticket. Booting against the live SQLite file risks the WAL that §7.3 and §13.1 both protect. And an application with a login redirects an unauthenticated request to a login page — 302 would have passed while rendering nothing, which destroys the fast lane's only safety argument. |
 | **Criterion 6 measured from the ticket's own verdict** | A `taller scan` count ratchet | A ratchet passes a ticket that removes one hardcoded value and adds another: the count stays flat while a new value reaches `main`, which is exactly what G4 forbids. |
 | **`mode` in the `RuleSet`** | Gates reading the environment | The local-vs-CI difference is required behaviour and had no channel; putting it in the `RuleSet` keeps `gates/*.py` pure over their arguments. |
 | **Rule ids are `<domain>.<rule>`, domains declared per gate** | Ids prefixed by the gate | `brand.hardcoded-color` is found by the constitution gate, so a gate prefix would have made `Finding.gate` and `Finding.rule` contradict each other — and criterion 6 filters on the `brand.` prefix. |
@@ -1796,20 +2077,114 @@ counts them and the Health screen shows them trending down.
 | Onboarding scratch outside the project | Inside `.taller/` | "Nothing is written before step ⑥" was otherwise false for `project new`. |
 | Derive facts, interview intent | Full interview; full auto-derivation | Interview alone re-types what the repository already states. Derivation alone describes what the code *is*, never what was *meant*. |
 | Profiles + modules, capped by a two-project rule | One shared constitution; per-project only | Three genuinely different project shapes exist. Unbounded modules become their own maintenance project. |
-| Commit-message *shape* checked, not language | Enforce Spanish or English summaries | Shape is decidable; language is not. |
+| Commit-message *shape* checked, not language | Enforce a particular summary language | Shape is decidable; language is not. |
 | Local-only repositories initially | Create GitHub remotes now | Publishing is the owner's decision, not a design requirement. |
 
 ---
 
 ## 18. Out of scope
 
-- Refactoring `PuroBeachClub`, and fixing the 26 existing hex values in `cont`
-  (Taller generates tickets for both; it does not do the work as part of its own
+- Refactoring any adopted application, or clearing its pre-existing violations
+  (Taller generates tickets for them; it does not do the work as part of its own
   construction)
-- Merging or retiring the `cont` `v2` branch
+- Resolving a long-lived divergent branch in an adopted repository (§8.3)
 - Multi-user access, authentication, or a hosted cockpit
 - Self-hosted CI runners
 - Repairing the failing GitHub MCP server (Taller uses `gh`)
 - Shipping a model price table
 - Any fourth profile or module not required by two existing projects
 - A tenth slice
+
+---
+
+## Appendix A — Worked example: one real estate
+
+Everything in this appendix is **evidence that the problems in §1 are real**, drawn
+from the author's own ten repositories on 2026-09-26. None of it is scope, and none
+of it is shipped: the hub starts empty and the catalogue names no business (§4.0,
+G9). The numbers exist so the thresholds in §16 were calibrated against something
+rather than guessed.
+
+### A.1 Context re-declared (§1.1)
+
+```
+8 CLAUDE.md files ................................ 143,487 chars ≈ 36,000 tokens
+two of them ........................................ 9,466 chars each, BYTE-IDENTICAL
+the largest ....................................... 27,406 chars ≈  7,000 tokens
+its sibling context/*.md (3 files) ................ 64,388 chars ≈ 16,000 tokens
+```
+
+The largest is loaded in full every session, and again into every subagent that
+reads it: ~7,000 tokens of preamble before the first word, ~23,000 if an agent also
+reads `context/`. This is the baseline for criterion 6 (≤ 800 tokens) and the two
+byte-identical files are the baseline for criterion 7.
+
+### A.2 Review infrastructure copied (§1.2)
+
+`code-review/`, `security-review/` and `design-review/` directories found
+duplicated across **six** projects, including one archived copy and one inside a
+worktree. Baseline for criterion 10.
+
+### A.3 Work with no home (§1.3)
+
+One repository root contained **40+ ad-hoc planning documents** —
+`PHASE4_CHECKPOINT.md`, `SESSION_SUMMARY.md`, `REFACTORING_PLAN.md`,
+`REFACTORING_PLAN_ORIGINAL.md`, `CONSOLIDATED_REFACTORING_PLAN.md`, and so on —
+plus **~60 single-use scripts** (`fix_*.py`, `check_*.py`, `debug_*.py`,
+`diagnose_*.py`) beside application code.
+
+The `PLAN` → `PLAN_ORIGINAL` → `CONSOLIDATED_PLAN` sequence is the pattern §9.8 and
+§11.1.1 exist to prevent: when no document is allowed to be the current one, every
+session writes a new one.
+
+### A.4 Rules defined and bypassed (§1.4)
+
+One project defined seven CSS custom properties and still contained **26 hardcoded
+hex values** in its templates — three of them (`#dc3545`, `#198754`, `#ffc107`)
+duplicating tokens that already existed as `--app-danger`, `--app-success` and
+`--app-warning`.
+
+Across six projects of the **same business**, design tokens were:
+
+| Tokens defined | Palette |
+|---|---|
+| 14 | baseline |
+| 14 | **identical** to the above |
+| 36 | a drifted copy — same hues, shifted values |
+| **135** | entirely different (Material-derived) |
+| 7 | different again (Flat-UI-derived) |
+| **0** | no tokens at all |
+
+Meanwhile an authoritative **brand guide PDF**, with a logo SVG and 22 icons, sat
+duplicated inside two of those repositories — and none of the five palettes matched
+each other.
+
+This is why §4.2 prefers a brand guide PDF over any stylesheet, why §4.7 discovers
+brands by *clustering* rather than asking, and why §4.2.1 lifts existing tokens
+into the hub instead of flagging them: left alone, adoption would have reported 33
+violations against a real baseline of 26 by flagging the project's own design
+system.
+
+### A.5 No staging (§1.5)
+
+Zero occurrences of "staging" across ten repositories. Deployment was Docker
+Compose behind a reverse proxy to a private host reachable over LAN and a VPN.
+
+### A.6 What discovery found (§4.7)
+
+Ten local repositories, thirteen remote. Cross-referencing produced:
+
+| Bucket | Count | Notes |
+|---|---|---|
+| Local **and** remote | 9 | Six on one stack, three on three others |
+| Local, remote **unresolvable** | 1 | `origin` pointed at a repository absent from the account listing — most likely renamed |
+| **Remote, not cloned** | 4 | One of them pushed **the previous day**, in a language none of the three catalogue profiles cover |
+| Local, no remote | 0 | |
+
+Also found: branch conventions used interchangeably (`feat/…` alongside
+`feature/…`), and one long-lived divergent branch.
+
+Three findings here are the argument for §4.7 existing at all — a broken remote, an
+actively-developed project absent from the machine, and a stack the catalogue does
+not cover would all have stayed invisible under a manual, one-project-at-a-time
+registration.
