@@ -575,7 +575,7 @@ argument false.
 text included, plus the brand's parsed tokens. CI's gates load the snapshot
 instead of resolving.
 
-**Three functions, deliberately separated,** so that `resolve()` stays pure
+**Four functions, deliberately separated,** so that `resolve()` stays pure
 (§4.4) and `constitution.py` never depends on `tickets.py` (§10.2):
 
 | Function | Does | Touches |
@@ -640,12 +640,10 @@ check cannot launder the file it is testing.
 In CI there is no hub, so neither comparison is possible. CI instead rejects any
 diff touching `resolved.json` on a ticket branch — a branch must never carry its
 own snapshot (§7.2) — reporting `constitution.resolved-snapshot-modified`
-(BLOCKER). That is sufficient, because the local ordered check runs at stage ②
-before any pull request exists and its verdict is committed with the work.
-
-CI cannot verify the snapshot's *content*, but it can verify that the branch did
-not change it — which is sufficient, because the local byte-for-byte check runs
-before any pull request exists and its verdict is committed with the work.
+(BLOCKER). CI cannot verify the snapshot's *content*, but it can verify that the
+branch did not change it — which is sufficient, because the local ordered check
+runs at stage ② before any pull request exists and its verdict is committed with
+the work.
 
 ---
 
@@ -1619,10 +1617,11 @@ Particular attention:
 - Snapshot check ordering: `hub_sha` behind the hub `HEAD` gives **stale** only,
   never modified, even though the bytes differ; `hub_sha` current plus altered
   bytes gives **modified**; the check writes nothing.
-- Brand delivery: `resolve()` regenerates `static/css/tokens.css` verbatim from
-  the hub brand; the constitution gate exempts that path and flags an identical
-  value placed anywhere else; adopting a project whose tokens live in another file
-  lifts them to the hub rather than reporting them (§4.2.1).
+- Brand delivery: `render_tokens()` reproduces the hub brand's `tokens.css`
+  verbatim and `commit_to_main()` writes it; the constitution gate exempts that
+  path and flags an identical value placed anywhere else; adopting a project whose
+  tokens live in another file lifts them to the hub rather than reporting them
+  (§4.2.1).
 - Fixer restriction: a fix round attempting to write under `paths.tests_dir`, or
   to `test_*.py` / `*_test.py`, aborts and escalates.
 - Remediation routing: `tests.error`, `smoke.boot-failed`, `smoke.not-rendered`
