@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "taller"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = ["PyYAML>=6.0", "pypdf>=4.0", "pillow>=10.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4"]
+
+[project.scripts]
+taller = "taller.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"taller" = ["catalogue/**/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
