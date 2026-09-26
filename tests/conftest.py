@@ -22,3 +22,48 @@ def tmp_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.delenv("CLAUDE_CODE_USE_BEDROCK", raising=False)
     monkeypatch.delenv("CLAUDE_CODE_USE_VERTEX", raising=False)
     return home
+
+
+import json
+import shutil
+import stat
+import sys
+
+
+@pytest.fixture
+def stub_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Put a fake `claude` first on PATH and expose what it was called with."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    source = Path(__file__).parent / "stub_claude.py"
+
+    if sys.platform == "win32":
+        # A .cmd shim, because Windows will not execute a bare .py from PATH.
+        shim = bindir / "claude.cmd"
+        # newline="" so text mode does not turn \n into \r\r\n.
+        shim.write_text(f'@echo off\n"{sys.executable}" "{source}" %*\n',
+                        encoding="utf-8", newline="")
+    else:
+        shim = bindir / "claude"
+        shim.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{source}" "$@"\n', encoding="utf-8")
+        shim.chmod(shim.stat().st_mode | stat.S_IEXEC)
+
+    argv_log = tmp_path / "argv.jsonl"
+    monkeypatch.setenv("PATH", str(bindir) + os.pathsep + os.environ["PATH"])
+    monkeypatch.setenv("STUB_CLAUDE_ARGV", str(argv_log))
+
+    class Stub:
+        log = argv_log
+
+        def calls(self) -> list[list[str]]:
+            if not argv_log.exists():
+                return []
+            return [json.loads(line) for line in argv_log.read_text(encoding="utf-8").splitlines()]
+
+        def last(self) -> list[str]:
+            return self.calls()[-1]
+
+        def flags(self) -> str:
+            return " ".join(self.last())
+
+    return Stub()
