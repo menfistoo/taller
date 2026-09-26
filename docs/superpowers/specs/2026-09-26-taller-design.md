@@ -229,8 +229,13 @@ lacks; each exposes the subset that makes sense for its context.
 
 | Surface | Commands | Why |
 |---|---|---|
-| **`taller` CLI** (Python console script) | `setup`, `project new\|adopt\|discover\|brief`, `brand new\|edit`, `ticket new\|show\|list\|transition\|approve\|reject\|resume\|close`, `models probe`, `resolve`, `scan`, `stage`, `doctor`, `cockpit` | Runs outside a session — a terminal, a script, CI, or the deployment host. |
-| **Slash commands** (in-session) | `/taller:new`, `/taller:approve`, `/taller:reject`, `/taller:resume`, `/taller:amend`, `/taller:status`, `/taller:onboard` | Need the conversation: they dispatch agents and interpret the owner's intent. |
+| **`taller` CLI** (Python console script) | `setup`, `settings [show\|set\|edit]`, `project new\|adopt\|discover\|brief`, `brand new\|edit`, `ticket new\|show\|list\|transition\|approve\|reject\|resume\|close`, `resolve`, `scan`, `stage`, `doctor`, `cockpit` | Runs outside a session — a terminal, a script, CI, or the deployment host. Makes **no model calls** (§5.2). |
+| **Slash commands** (in-session) | `/taller:new`, `/taller:approve`, `/taller:reject`, `/taller:resume`, `/taller:amend`, `/taller:status`, `/taller:onboard`, **`/taller:models-probe`** | Need the conversation: they dispatch agents, interpret the owner's intent, or require Claude Code's own credentials. |
+
+**Anything that calls a model is in-session, necessarily.** Taller holds no
+credentials (§5.2), so a command that needs inference cannot be a plain CLI
+subcommand. `/taller:models-probe` is the one command that moved for this reason
+(§6.2).
 
 **Naming is disjoint.** Project lifecycle is always `taller project …`; ticket
 lifecycle is `taller ticket …` on the CLI and `/taller:new` in a session.
@@ -822,13 +827,25 @@ paths:
     - "**/*secret*"
     - "**/*credential*"
 
+billing:                      # detected by `taller setup`; overridable (§5.2)
+  mode: subscription          # subscription | api | bedrock | vertex
+
+concurrency:                  # matters most on `subscription` (§5.2)
+  max_parallel_gates:   3
+  max_parallel_thinker: 1
+
 weights:                      # relative cost weights, tunable (§7.5)
   input:        1.0
-  cache_write:  1.25
-  cache_read:   0.1
-  output:       5.0
+  cache_write:  1.25          # standard Anthropic ratio
+  cache_read:   0.1           # standard ratio; some models are cheaper still
+  output:       5.0           # holds across every model in the roster
 
-pricing: null                 # optional; owner-supplied, per million tokens (§7.5)
+pricing:                      # per million tokens. Used only when billing.mode == api
+  as_of: 2026-06-24           # `doctor` warns when this is stale
+  claude-opus-5:   {input: 5.00,  output: 25.00}
+  claude-sonnet-5: {input: 2.00,  output: 10.00}
+  claude-haiku-4-5: {input: 1.00, output:  5.00}
+  claude-fable-5-1: {input: 10.00, output: 50.00}
 
 budget:                       # compared against spend.weighted_tokens (§7.5)
   per_ticket_warn:  400000    # ≈3× the worked fast-lane ticket in §7.1 (130,350)
@@ -859,6 +876,56 @@ rather than failing mid-ticket.
 
 **There is no `chief` key, deliberately.** The chief is the owner's own session,
 and Taller cannot set the model of the session it runs inside. See §6.1.
+
+### 5.2 Settings — one surface, and how Claude is reached
+
+Configuration is resolved from three files (§4.4, chain 1) but must be *read and
+changed* from one place. `taller settings` is that place:
+
+| Command | Does |
+|---|---|
+| `taller settings` | Prints every effective key, its value, and **which layer it came from** — hub, profile or project |
+| `taller settings set <key> <value>` | Writes to the right layer: a project key to the project file, a shared key to the hub, under the appropriate lock (§10.3) |
+| `taller settings edit` | Opens the relevant file in `$EDITOR` |
+
+The cockpit renders the same list as a Settings screen (§12). Both call the same
+library, so a value changed in either place is the same value.
+
+**Taller holds no credentials of its own.** Every model call is made *by Claude
+Code*, through the session or a dispatched subagent. Taller never stores an API
+key, never reads one, and never authenticates to Anthropic. It inherits whatever
+Claude Code is already using — which has a consequence in §6.2.
+
+**`billing.mode` is detected, not asked,** because it is determinable:
+
+| Detected from | `mode` |
+|---|---|
+| `CLAUDE_CODE_USE_BEDROCK` set | `bedrock` |
+| `CLAUDE_CODE_USE_VERTEX` set | `vertex` |
+| `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` set | `api` |
+| none of the above | `subscription` |
+
+It is shown at `taller setup` for confirmation and can be overridden. It matters
+because **the two modes are constrained by different things**:
+
+| | `subscription` | `api` |
+|---|---|---|
+| What you pay | A flat fee | Per token |
+| The binding limit | **A usage window.** Exhausting it stops work regardless of how cheap the tokens were | Money |
+| `spend.cost` | `null` — a dollar figure would be fiction | Computed from `pricing` |
+| `weighted_tokens` | A **pacing** signal: how hard this ticket leaned on the window | A proxy for cost |
+| What to tune | `concurrency` | `models`, `effort`, `budget` |
+
+`concurrency` exists for the subscription case specifically. Five gates dispatched
+in parallel, one of them on the `thinker` alias, can consume a usage window in
+minutes — and unlike an API bill, that failure is not gradual: work simply stops.
+`max_parallel_gates: 3` and `max_parallel_thinker: 1` bound it. On `api` the same
+keys are a latency and rate-limit control rather than a hard constraint.
+
+`pricing` ships with an `as_of` date and is only consulted when
+`billing.mode == api`. `taller doctor` reports it as stale past 90 days rather
+than silently computing yesterday's cost — a price table is the one part of this
+configuration that goes wrong without anything changing locally.
 
 ---
 
@@ -896,11 +963,21 @@ A warning only. It never switches models and never blocks.
 
 ### 6.2 Model availability
 
-The set of available models cannot be enumerated from the CLI (`--model` accepts
-an alias or a full name and does not list options). `taller models probe` sends a
-one-token request to each candidate (`opus`, `sonnet`, `haiku`, `fable`, plus any
-name the owner adds) and reports which are reachable, with latency. This replaces
-guessing and is re-run whenever a new model ships.
+The set of available models cannot be enumerated from Claude Code (`--model`
+accepts an alias or a full name and does not list options).
+
+**`/taller:models-probe` is a slash command, not a CLI subcommand.** Taller holds
+no credentials of its own (§5.2), so it cannot make an inference call from a plain
+Python process — with `ANTHROPIC_API_KEY` unset, which is the normal state under
+`billing.mode: subscription`, there is nothing to authenticate with. Instead the
+slash command dispatches **one trivial subagent per candidate** (`opus`, `sonnet`,
+`haiku`, `fable`, plus any name the owner adds) through Claude Code's own
+credentials, and records which returned, with latency, into
+`~/.taller/models-probe.json`. The CLI and the gates then read that file.
+
+This is the only place in the design where a capability had to move from the CLI
+to the session surface, and it is a direct consequence of Taller never holding a
+key.
 
 **Fable 5.1** is deliberately unassigned. It is available as `fable` and is a
 plausible candidate for the UX gate, but there is no evidence it outperforms
@@ -950,7 +1027,7 @@ checkpoints:               # pending | approved | rejected | skipped
 spend:
   partial: false
   by_model:
-    claude-haiku-4-5-20251001: {input: 1200, cache_write: 9000, cache_read: 31000, output: 3100}
+    claude-haiku-4-5: {input: 1200, cache_write: 9000, cache_read: 31000, output: 3100}
     claude-sonnet-5:           {input: 2400, cache_write: 22000, cache_read: 64000, output: 12600}
   total_tokens:    145300   # raw sum, for reference only
   weighted_tokens: 130350   # §7.5 — this is what budget compares against
@@ -1491,7 +1568,9 @@ programas/taller/
 │   ├── gitio.py                   main worktree, commit_to_main         (§7.3)
 │   ├── tickets.py                 CRUD, transition                      (§7)
 │   ├── locking.py                 project + hub + registry locks        (§10.3)
-│   ├── models.py                  alias resolution, probe, fallback
+│   ├── models.py                  alias resolution, probe result, fallback
+│   ├── settings.py                effective view + writes by layer   (§5.2)
+│   ├── billing.py                 mode detection, weights, pricing   (§5.2)
 │   ├── spend.py                   transcript parsing, weighting         (§7.5)
 │   ├── brands.py                  derive, write, swatch page
 │   └── gates/
@@ -1518,7 +1597,7 @@ Python gates.
 | `overrides.py` | Parse `overrides.md`; downgrade matching findings | `parse(text) -> [Override]`, `apply(findings, ruleset) -> [Finding]` | nothing but its arguments |
 | `tickets.py` | Create, read, update, list, transition tickets | `create()`, `load(id)`, `save(t)`, `list(p)`, `transition(t, stage)` | filesystem, `gh`, `locking`, `gitio` |
 | `locking.py` | Serialise writes | `project_lock(p)`, `hub_lock()`, `registry_lock()` — context managers | filesystem |
-| `models.py` | Resolve aliases, probe, apply fallback | `resolve(role, ruleset)`, `probe()` | `RuleSet` |
+| `models.py` | Resolve aliases; read the probe result; apply fallback | `resolve(role, ruleset)`, `load_probe()` | `RuleSet`, `models-probe.json` |
 | `spend.py` | Attribute and weight transcript usage | `for_ticket(t) -> Spend` (§7.5) | transcript files |
 | `gates/*.py` | Findings for one dimension | `run(diff, ruleset)`; `scan(tree, ruleset)` except smoke | nothing but its arguments |
 | `brands.py` | Derive, write and render a brand | `from_css()`, `from_image()`, `write()`, `swatch()` | filesystem |
@@ -1553,7 +1632,7 @@ point (G0); adoption is the harder case and goes second.
 |---|---|---|---|
 | **A** | Empty-hub contract + catalogue, `~/.taller-run/`, slice vocabulary, both resolution chains, `overrides.md`, snapshot + `tokens.css` rendering, `taller.yml` inheritance, **`locking.py`**, **`main` worktree + `commit_to_main()`**, `taller setup` discovery, **`project new` + scaffolds**, `project adopt`, `project brief`, brands | ~4 sessions | G0, G1, G3, G8, G9 |
 | **D** | Tickets, `status.yml`, `sync` handling, transitions, issue mirroring | ~1 session | G5 |
-| **B** | Chief, routing, lanes, model roster, `models probe`, `spend.py` | ~2 sessions | G2, G6, G7 |
+| **B** | Chief, routing, lanes, model roster, `/taller:models-probe`, `spend.py`, `billing.py`, `settings.py` | ~2 sessions | G2, G6, G7 |
 | **C** | Gates — constitution first, then size/tests/smoke, then the three LLM gates. `scan()` mode. `project adopt` removes the superseded `code-review/`, `security-review/`, `design-review/` directories. | ~2–3 sessions | G4 |
 | **F** | GitHub wiring, `taller-ci.yml`, branch ruleset, staging environment | ~1 session | — |
 | **E** | Cockpit | ~2–3 sessions | G7 made visible |
@@ -1724,6 +1803,7 @@ and calls `gh` for pull request state.
 | Ticket | The ask, the plan, every gate verdict (§7.4), the diff, and approve / reject / change. |
 | Spend | `weighted_tokens` by ticket, week and model; currency when `pricing` is set. `partial: true` marked as lower bounds; tickets past `per_ticket_warn` amber. |
 | Constitution | Read and edit rules; saving commits the amendment under the hub lock and refreshes affected snapshots. |
+| **Settings** | Every effective key with the layer it resolved from (§5.2), editable. Shows `billing.mode`, and hides `pricing` and `cost` entirely when the mode is not `api`. |
 | Health | Per project, from `taller scan` (§9.5): stray root files, hardcoded colour/font values, largest files, duplication — plus `tests_run`, `tests_passed`, `coverage_pct` from the latest tests-gate verdict's `metrics` block (§7.4). |
 
 The cockpit **writes the same files the CLI writes**, under the locks in §10.3.
@@ -1793,7 +1873,10 @@ which is the owner's decision to make.
 | `per_ticket_stop` crossed | Stop before dispatching anything further; ask the owner. |
 | Two writers at once | Project, hub or registry lock + atomic replace (§10.3). Loser fails clearly after 5s. |
 | Spend cannot be fully attributed | `spend.partial: true`; rendered as a lower bound. Never estimated. |
-| `pricing` unset | `spend.cost: null`; the cockpit shows weighted tokens only; `doctor` notes cost is unavailable. |
+| `billing.mode` is not `api` | `spend.cost: null` by design; the cockpit shows weighted tokens only and hides cost entirely (§5.2). |
+| `pricing.as_of` older than 90 days, with mode `api` | `doctor` reports it stale; `cost` is still computed but flagged as based on an old table. |
+| Detected billing mode differs from the configured one | `doctor` reports the mismatch — e.g. an `ANTHROPIC_API_KEY` appeared since setup, so budgets now mean money. |
+| Usage window exhausted mid-ticket (`subscription`) | The dispatched agent fails; the ticket blocks at its current stage with the reason recorded. `concurrency` exists to make this rare (§5.2). |
 | Snapshot older than the hub | `constitution.resolved-snapshot-stale` HIGH; remediated by `taller resolve`, a command, not an agent (§9.7). |
 | Snapshot edited by hand, or carried on a branch | `constitution.resolved-snapshot-modified` BLOCKER, escalated to the owner. Locally by byte-for-byte re-resolution; in CI by detecting the diff (§4.6). |
 | Amend touches a module six projects share | All six snapshots refreshed, each under its own lock; `/taller:amend` reports which projects it wrote. Any that fail leave `sync: pending` (§4.6, §7.3). |
@@ -1907,8 +1990,8 @@ before every phase exists:
 | No ticket branch carries its own `resolved.json` or `tokens.css` | A |
 | Registry valid; every registered path exists; every `main` worktree present | A/D |
 | Every `status.yml` parses; no ticket left `sync: pending` | D |
-| Every configured model reachable (`models probe`) | B |
-| `pricing` set (advisory — notes that cost is unavailable if not) | B |
+| Every configured model reachable, per the last `/taller:models-probe` result | B |
+| `billing.mode` matches the detected environment; `pricing.as_of` within 90 days when mode is `api` (advisory) | B |
 | Every Python gate executes; `smoke` configuration valid for the profile; `smoke.auth.secret` resolvable if declared; each LLM gate **dry-runs** (prompt assembles, model reachable — no inference) | C |
 | Latest `taller-ci` run on `main` with `taller-ci-mode: full` is green (§9.4) | F |
 
@@ -2029,6 +2112,10 @@ counts them and the Health screen shows them trending down.
 
 | Decision | Rejected | Reason |
 |---|---|---|
+| **Taller holds no credentials; anything needing inference is a slash command** | A `taller models probe` CLI subcommand sending its own one-token requests | Under subscription auth — the default — `ANTHROPIC_API_KEY` is unset and there is nothing for a Python process to authenticate with. Every model call goes through Claude Code. The probe therefore dispatches trivial subagents in-session and caches the result to a file the CLI reads. |
+| **`billing.mode` detected, with different meanings for budget and concurrency** | One budget model for everyone | On a subscription the binding constraint is a usage window, not money: five parallel gates with one on Opus can exhaust it in minutes, and that failure is not gradual — work stops. `concurrency` bounds it, and `cost` stays `null` because a dollar figure would be fiction. On API billing the same number is a real cost proxy. |
+| **`pricing` ships with an `as_of` date, and `doctor` calls it stale at 90 days** | Shipping no table; shipping an undated one | A table is more useful than nothing once it is honest about age. It is also the only part of the configuration that goes wrong while nothing changes locally. |
+| **`taller settings` is a single surface over three config layers** | Hand-editing YAML in three places | Resolution is layered by design (§4.4), but reading and changing a value should not require knowing which layer owns it. The command prints where each value came from. |
 | **The hub starts empty; the plugin ships an inert generic catalogue** | Shipping profiles, a brand and a UI language as defaults | The first draft shipped a profile with a line of business in its name, a named brand as a profile default, and one human's UI language as a hub default — while claiming on the same page to contain no domain-specific knowledge. "Empty" must mean *knows nothing about you*, not *can do nothing*, so the catalogue exists but is inert until copied. |
 | **A domain-vocabulary test (§15.6) and an empty-hub test** | Promising genericity in prose | G9 is otherwise unfalsifiable. The catalogue lives inside the plugin, so it is covered too. |
 | **Evidence moved to Appendix A** | A problem statement built from one person's repositories | The measurements are the reason the thresholds are not guesses, but as §1 they made the document read as a cleanup project for one estate — which is how `project new` ended up the least-specified part of a tool whose main job is starting new projects. |
