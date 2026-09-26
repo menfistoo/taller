@@ -373,6 +373,14 @@ Result = {
 `cache_read_input_tokens` happens once, here, on both the `Result` path and the
 transcript fallback path.
 
+**Two model namespaces, deliberately, and they never meet.** `model_aliases` maps an
+alias to whatever `--model` should be given, which may be a short CLI alias
+(`sonnet`) or a full id. `UsageRecord.model` and `pricing` are keyed by the
+**concrete id the run reports** (`claude-sonnet-5`), because that is what actually
+served the request — a fallback or a silent upgrade would otherwise be invisible.
+So `pricing[resolve_model(role)]` is a `KeyError` waiting to happen and is never
+correct: cost is always looked up by the reported id, never by the requested one.
+
 **`ruleset` is optional, because the first inference happens before one exists.**
 `resolve(path)` reads a project's `.taller/` and its profile, and the primary entry
 point runs inference *before either exists*: §11.4 synthesises a constitution from
