@@ -121,7 +121,9 @@ particular one.
 
 - **Not a replacement for superpowers.** Superpowers remains the brainstorm →
   plan → execute → verify engine. Taller adds what it lacks.
-- **Not a persistent daemon.** See §3.1.
+- **Not a persistent daemon.** `taller` runs in the foreground, advances a ticket
+  and exits. The chief's continuity comes from a stored session id and from files
+  (§3.1, §7.6), not from a resident process.
 - **Not multi-user.** Single operator. No auth in the cockpit; it binds to
   `127.0.0.1`.
 - **Not a Spec Kit installation.** Ideas adopted (§17), toolchain not.
@@ -154,10 +156,18 @@ process, and the chief lives as long as it does.
 
 Three mechanisms, in descending order of what they now buy:
 
-**The chief is a process, and a ticket owns a session.** Taller passes
-`--session-id <uuid>` per ticket (§3.6), so the chief's conversational context
-survives across invocations, across stages, and across days — not merely its
-briefing. Resuming ticket 43 tomorrow resumes the conversation about ticket 43.
+**A ticket owns a conversation, recorded on disk.** The chief's `session_id` is
+captured from its first dispatch and stored in `status.yml` (§7.1); every later
+dispatch passes it back as `resume` (§3.6). So the chief's *conversational context*
+survives across invocations, stages and days — not merely its briefing. Resuming
+ticket 43 tomorrow resumes the conversation about ticket 43.
+
+**There is still no resident daemon.** `taller` is a foreground process that
+advances a ticket and exits; nothing runs in the background between invocations,
+and `taller cockpit` is a web server, not the chief. Continuity comes from the
+stored session id and the files, not from a process that stays alive. §7.6 states
+what happens to that session when a ticket goes backwards, and where the
+conversation *cannot* follow.
 
 **State on disk, not in the conversation.** The constitution is what the project
 *is*; the ticket folder is what is *happening*. Both are files in the repository.
@@ -256,7 +266,7 @@ lacks; each exposes the subset that makes sense for its context.
 | Surface | Commands | Why |
 |---|---|---|
 | **`taller` CLI** (Python console script) | `setup`, `settings [show\|set\|edit]`, `models probe`, `project new\|adopt\|discover\|brief`, `brand new\|edit`, `ticket new\|show\|list\|transition\|approve\|reject\|resume\|close`, `resolve`, `scan`, `stage`, `doctor`, `cockpit` | Runs outside a session — a terminal, a script, CI, or the deployment host. Reaches inference through `claude` (§3.6). |
-| **Slash commands** (in-session) | `/taller:new`, `/taller:approve`, `/taller:reject`, `/taller:resume`, `/taller:amend`, `/taller:status`, `/taller:onboard` | Need the conversation: they dispatch agents, interpret the owner's intent, or require Claude Code's own credentials. |
+| **Slash commands** (in-session) | `/taller:new`, `/taller:approve`, `/taller:reject`, `/taller:resume`, `/taller:amend`, `/taller:status`, `/taller:onboard` | For working inside a conversation the owner is already having, with the owner able to interject at any point. |
 
 **Both front ends can do everything.** The CLI reaches inference through `claude`
 as a subprocess (§3.6); the slash commands reach it through the session they are
@@ -291,64 +301,133 @@ implemented. The rest of the program asks for a dispatch and receives a result.
 
 ```python
 Dispatch = {
-    "role":      str,        # a key in models: architect | implementer | fixer |
-                             #   gate_security | gate_quality | gate_ux |
-                             #   explorer | scribe | summariser
+    "role":      str,            # chief | architect | implementer | fixer |
+                                 #   gate_security | gate_quality | gate_ux |
+                                 #   explorer | scribe | summariser  (§6)
     "prompt":    str,
-    "ruleset":   RuleSet,    # supplies model, effort, and the slices to brief with
-    "session":   str | None, # ticket session uuid; None for a one-shot
-    "cwd":       str,        # the ticket worktree, never the live checkout
-    "writable":  [str],      # paths this dispatch may modify
-    "forbidden": [str],      # paths it may not, whatever it decides
-    "schema":    dict | None,# expected JSON shape, validated on return
+    "ruleset":   RuleSet | None, # None during bootstrap — see below
+    "model":     str | None,     # explicit override; wins over role lookup
+    "effort":    str | None,     # explicit override
+    "system":    str | None,     # explicit briefing when there is no RuleSet
+    "resume":    str | None,     # a session_id to continue; None starts fresh
+    "cwd":       str,            # the ticket worktree, never the live checkout
+    "writable":  [glob],         # path globs this dispatch may modify
+    "forbidden": [glob],         # path globs it may not — see rendering below
+    "schema":    dict | None,    # JSON Schema the answer must satisfy
+    "unattended": bool,          # nobody is available to answer a prompt
 }
 
 Result = {
     "ok": bool, "value": object | None, "error": str | None,
-    "usage": [UsageRecord],  # per-message model + usage, for spend.py (§7.5)
-    "session": str,          # the id to reuse for the next dispatch
+    "session_id": str,           # store it to continue this conversation
+    "usage": [UsageRecord],      # per-model usage for this dispatch (§7.5)
+    "cost_usd": float | None,    # CUMULATIVE when resuming — see §7.5
 }
 ```
 
-`infer(Dispatch) -> Result` is the whole surface. Its current implementation
-builds a `claude` invocation:
+**`ruleset` is optional, because the first inference happens before one exists.**
+`resolve(path)` reads a project's `.taller/` and its profile, and the primary entry
+point runs inference *before either exists*: §11.4 synthesises a constitution and
+the first tickets from twelve free-text answers, and §11.1 runs the missing `setup`
+rounds on an empty hub where no profile has yet been copied. A `Dispatch` with
+`ruleset: None` must therefore be constructible, carrying `model`, `effort` and
+`system` directly. That is **bootstrap mode**, and it is the first thing Phase A
+exercises.
 
-| `Dispatch` field | Becomes |
+`infer(Dispatch) -> Result` is the whole surface. Its implementation builds a
+`claude` invocation:
+
+| `Dispatch` | Becomes |
 |---|---|
-| `role` → `ruleset["models"][role]` | `--model` |
-| `role` → `ruleset["effort"][role]` | effort, via the system prompt |
 | `prompt` | stdin, with `-p --output-format json` |
-| `ruleset` slices for the role | `--append-system-prompt` |
-| `session` | `--session-id <uuid>` |
+| `model`, else `ruleset["models"][role]` | `--model` |
+| `effort`, else `ruleset["effort"][role]` | `/effort <level>` in the prompt |
+| `system`, else the role's slices from `ruleset` | `--append-system-prompt` |
+| `resume` | `--resume <session_id>` |
 | `cwd` | process working directory |
-| `writable` | `--add-dir` |
-| `forbidden` | `--disallowed-tools` |
+| `writable` | `--add-dir`, and an `--allowedTools` allowlist |
+| `forbidden` | `--disallowedTools` specifiers — see below |
+| `schema` | `--json-schema`; the answer arrives in `structured_output` |
 | gate agent definitions | `--agents <json>` |
-| unattended runs | `--permission-mode` |
+| `unattended: true` | `--permission-mode dontAsk --permission-prompts none` |
 
-Three consequences worth stating:
+**Session ids are captured, never invented.** `Result.session_id` comes from the
+`session_id` field of the JSON result; the caller stores it and passes it back as
+`resume` next time. Claude Code resolves a session id from any directory on the
+machine, so a ticket's conversation is reachable from its worktree. Taller does not
+pre-generate uuids with `--session-id`, because a captured id cannot collide.
 
-**`forbidden` is enforced by the harness, not by a prompt.** §9.7 requires that no
-fix round modify a test file. Expressed as `--disallowed-tools`, that is a
-capability the fixer does not have, rather than an instruction it is asked to
-respect. Every rule of that kind in this specification should be expressed here
-when it can be.
+### 3.6.1 How `forbidden` actually renders
 
-**Gate agents need no plugin installed.** `--agents <json>` passes the nine
-definitions inline, so standalone Taller works on a machine where the Claude Code
-plugin was never installed. The plugin is a convenience for working inside a
-session, not a dependency.
+`--disallowedTools` takes **permission rule syntax** — tool names and
+`Tool(pattern)` specifiers — **not bare paths.** A path passed to it would match no
+tool and silently restrict nothing, which would quietly void the claim that §9.7's
+no-test-file rule is harness-enforced. `inference.py` therefore expands each glob
+in `forbidden` across every write-capable tool:
+
+```
+forbidden: ["tests/**", "**/test_*.py"]
+  →  --disallowedTools "Write(tests/**) Edit(tests/**) NotebookEdit(tests/**)
+                        Write(**/test_*.py) Edit(**/test_*.py) NotebookEdit(**/test_*.py)"
+```
+
+**A shell can still circumvent it,** so `forbidden` is not sufficient alone. A role
+with a non-empty `forbidden` list is additionally denied unrestricted `Bash`: it
+receives only the `Bash(...)` specifiers it needs, never the bare tool. The
+combination — an allowlisted `Bash`, denied edit specifiers, and `--add-dir`
+limited to `writable` — is what makes the restriction real. A role that needs
+unrestricted `Bash` cannot have a meaningful `forbidden` list, and the spec should
+not pretend otherwise.
+
+The `main` worktree (§7.3) is **never** in `writable` or `--add-dir` for any
+dispatch. `gitio.commit_to_main()` is the only writer of the five `main`-side
+files, and no dispatch should be able to reach them.
+
+### 3.6.2 `--bare` must not be used
+
+`--bare` is documented as the recommended mode for scripted calls and as the future
+default for `-p`. **Taller must pass `-p` without it, and must keep working when
+the default flips.**
+
+> In bare mode, Claude Code never reads OAuth credentials or the system keychain.
+
+Bare mode therefore **cannot use a subscription** — it requires
+`ANTHROPIC_API_KEY`, which is precisely the billing relationship §5.2 exists to
+avoid. This is the single largest forward-compatibility risk in the design:
+`billing.mode: subscription` silently becomes impossible the day `-p` defaults to
+bare and Taller has not opted out. `taller doctor` asserts that a trivial dispatch
+succeeds with no `ANTHROPIC_API_KEY` present, which fails loudly if this ever
+changes.
+
+Two consequences of *not* using bare mode, both intended: a dispatch loads the
+project's `CLAUDE.md` — the stub pointing at `00-index.md`, which is the briefing
+Taller wants — and it runs whatever hooks the working directory configures. Since
+the working directory is always a Taller-created worktree of the owner's own
+project, that is the owner's own configuration.
+
+### 3.6.3 The rest of the contract
+
+**Gate agents need no plugin installed.** `--agents <json>` passes the definitions
+inline, so standalone Taller works where the Claude Code plugin was never
+installed. The plugin is a convenience for working inside a session, not a
+dependency.
 
 **Option B remains a swap, not a rewrite.** Replacing the subprocess with an
 embedded Agent SDK client — which would require an API key and forfeit
-subscription billing (§5.2) — changes this one module and nothing else. That is
-the only reason the boundary is drawn this tightly; it is not expected to happen.
+subscription billing (§5.2) — changes this one module and nothing else.
 
 **Failure handling.** A non-zero exit, unparseable JSON, a schema mismatch, or a
-missing `claude` binary all return `ok: false` with a reason. The caller decides;
-`infer` never retries on its own, because the retry policy belongs to §14 and
-differs by caller. `concurrency` (§5.2) is enforced here, since this is the only
-place that knows how many dispatches are in flight.
+missing `claude` binary all return `ok: false` with a distinct reason. `infer`
+never retries on its own; retry policy belongs to §14 and differs by caller. A
+SIGTERM to a dispatch exits 143 with the turn unfinished and no result recorded,
+which `infer` reports as an error rather than an empty success.
+
+**`concurrency` is enforced across processes, not within one.** The limit it
+protects — a subscription usage window (§5.2) — is per account, while the CLI, the
+cockpit and a Claude Code session can all dispatch at once. `inference.py`
+therefore takes a slot from a counted semaphore under
+`~/.taller-run/dispatch/`, using the same lock mechanism as §10.3, and releases it
+in a `finally`. A per-process counter would bound nothing that matters.
 
 ---
 
@@ -917,7 +996,8 @@ model_aliases:                # the ONLY place a concrete model name appears
   cheap:    haiku
   creative: fable             # untested; unassigned by decision
 
-models:                       # role -> alias. Nine roles, matching §6.
+models:                       # role -> alias. Ten roles, matching §6.
+  chief:         worker        # CLI only; ignored inside a Claude Code session (§6.1)
   architect:     thinker
   implementer:   worker
   fixer:         worker
@@ -1053,11 +1133,13 @@ configuration that goes wrong without anything changing locally.
 
 ## 6. Model roster
 
-Nine agent roles, matching `models:` in §5.1 and `agents/` in §10.1 exactly.
-Four gates have no agent at all.
+Ten roles. The nine specialists each have an agent definition in `agents/`
+(§10.1); the chief has none, because it is the orchestrator rather than a
+dispatched agent. Four gates have no agent at all.
 
 | Role | Alias | Rationale |
 |---|---|---|
+| **Chief** | `worker` | Classifies, picks the lane, selects gates, dispatches. Routing is low-judgement work. CLI only — see §6.1. |
 | Scribe | `cheap` | Transcribes the owner's words into `ticket.md` |
 | Explorer | `cheap` | Locates files, reports paths. High volume, low judgement. |
 | Architect | `thinker` | The one place to spend. A bad plan costs more than the model. |
@@ -1070,18 +1152,27 @@ Four gates have no agent at all.
 
 Constitution, size, tests and smoke gates are Python and take no model (§9.1).
 
-### 6.1 The chief's model
+### 6.1 The chief's model, in each front end
 
-The chief runs in the owner's session, so its model is whatever the owner
-selected. Taller cannot change it. `/taller:new` reads the session model from the
-transcript (§7.5) and warns when it is mismatched:
+The chief is a role like any other in the CLI, and not configurable at all in a
+session. Both cases are real, so `models:` carries a `chief` key and §6's table
+lists it:
+
+| Front end | The chief's model |
+|---|---|
+| **`taller` CLI** | `models.chief`, resolved and passed as `--model` like every other role (§3.6). Default `worker` — routing is low-judgement work. |
+| **Claude Code session** | Whatever the owner selected. Taller cannot set the model of a session it is running inside, so `models.chief` is ignored there. |
+
+In the session case only, `/taller:new` reads the session model from the transcript
+(§7.5) and warns on a mismatch:
 
 | Situation | Warning |
 |---|---|
 | Session on `thinker`, ticket triaged `fast` | "This ticket is a fast-lane fix; your session is on Opus. Consider Sonnet." |
 | Session on `cheap`, ticket triaged `full` with a design stage | "This ticket needs a plan; your session is on Haiku. Consider Opus." |
 
-A warning only. It never switches models and never blocks.
+A warning only. It never switches models and never blocks. The warning has no
+meaning in the CLI, where Taller chose the model itself, and is not emitted there.
 
 ### 6.2 Model availability
 
@@ -1089,8 +1180,9 @@ The set of available models cannot be enumerated from Claude Code (`--model`
 accepts an alias or a full name and does not list options).
 
 `taller models probe` issues one trivial `infer()` dispatch per candidate
-(`opus`, `sonnet`, `haiku`, `fable`, plus any name the owner adds) with the model
-overridden, and records which returned, with latency, into
+(`opus`, `sonnet`, `haiku`, `fable`, plus any name the owner adds), using
+`Dispatch.model` to name the candidate and `ruleset: None` because a probe belongs
+to no project (§3.6). It records which returned, with latency, into
 `~/.taller/models-probe.json`. `models.load_probe()` reads that file; the gates and
 `doctor` never probe on their own.
 
@@ -1134,6 +1226,7 @@ verdicts:
   tests:        {result: pass, blocker: 0, high: 0, medium: 0, low: 2, nit: 0, hub_sha: a3f9c21}
   smoke:        {result: pass, blocker: 0, high: 0, medium: 0, low: 0, nit: 0, hub_sha: a3f9c21}
 fix_rounds: 1
+chief_session: 9f2c1b74-0a3e-4d51-8b6c-2e7f4a1d905c   # §7.6; null before ②
 sync: ok                   # ok | pending  — remote mirror state (§7.3)
 templates:                 # written at ②; drives the smoke gate (§9.6)
   templates/dia.html: ["/dia", "/dia/<fecha>"]
@@ -1265,18 +1358,32 @@ is treated as `BLOCKER` for flow purposes and never as a pass.
 
 ### 7.5 Spend, weights and budget
 
-Claude Code writes a session transcript at
-`~/.claude/projects/<slug>/<session>.jsonl`. Each assistant record carries
-`message.model` and a full `message.usage` (`input_tokens`,
-`cache_creation_input_tokens`, `cache_read_input_tokens`, `output_tokens`), plus
-`timestamp`, `gitBranch`, `agentName` and `isSidechain`. Verified against a live
-transcript, not assumed.
+**`Result.usage` is the authoritative source.** Every dispatch goes through
+`infer()` (§3.6), which returns the usage for that dispatch, so attribution needs
+no heuristic: `spend.py` accumulates what the ticket's own dispatches reported.
+`--output-format json` carries session metadata including usage and a per-model
+cost breakdown.
 
-`src/taller/spend.py` attributes usage to a ticket by:
+**One trap, stated because it would silently double-count.** `cost_usd` from a
+**resumed** session reports the *whole conversation's* cumulative total, earlier
+runs included — and the chief's session is resumed at every stage (§7.6). Summing
+`cost_usd` across a ticket's dispatches would therefore multiply the chief's spend
+by the number of stages. `spend.py` accumulates **per-dispatch `usage`** and treats
+`cost_usd` as a cross-check on the final dispatch only. Both figures are
+client-side estimates in any case.
 
-1. **`gitBranch`** where present — every ticket owns a branch, so this is exact.
-2. **Stage-transition time window** otherwise, for records written before the
-   branch exists (stages ① and ②).
+**The transcript is the fallback, for work Taller did not dispatch.** A ticket
+advanced inside a Claude Code session spends tokens that no `Result` describes.
+There, `spend.py` parses `~/.claude/projects/<slug>/<session>.jsonl`, whose
+assistant records carry `message.model` and a full `message.usage`
+(`input_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`,
+`output_tokens`) plus `timestamp`, `gitBranch`, `agentName` and `isSidechain` —
+verified against a live transcript. Attribution there is by `gitBranch`, with a
+stage-transition time window for records predating the branch.
+
+Note that the `<slug>` differs between the two paths, because a dispatch's `cwd` is
+the ticket worktree rather than the project checkout. `spend.py` resolves the slug
+from the path it is asked about rather than assuming one.
 
 **Why a raw token sum is the wrong number.** Cache reads bill far below input
 tokens, and output far above. In §7.1's example 95,000 of 145,300 tokens — 65% —
@@ -1319,6 +1426,48 @@ only arrive after the security gate had already been paid for.
 
 The cap bounds a *ticket*, not an individual call: one runaway subagent can
 overshoot between checks.
+
+### 7.6 The chief's session: scope and lifecycle
+
+**Only the chief holds a session.** Every specialist dispatch — architect,
+implementer, fixer, the three LLM gates, explorer, scribe, summariser — is
+**one-shot**, with `resume: None`. They receive a prompt and return an answer;
+their output persists as `plan.md`, a diff, or a verdict file, so a conversation
+would add cost without adding memory. One id per ticket, stored as
+`chief_session`, and no ambiguity about whether a session is per role or per model.
+
+| Transition | The session |
+|---|---|
+| ① intake → ② triage | Created at the first chief dispatch; `session_id` captured and stored |
+| ② → ③ → ④ → ⑤ → ⑥ → ⑦ forward | **Kept.** This is the continuity the design is for. |
+| **Promotion to `full` at ④** (§8.2) | **Kept.** The chief is mid-ticket, the diff is retained, and the architect it now dispatches is one-shot anyway. |
+| **Rejection at ⑦** → back to ② | **Abandoned.** `chief_session` is set to `null` and a fresh conversation starts. A conversation holding a rejected plan and code that no longer exists is worse than a clean start, and the owner's reason is in `notes.md` (§7.2), which briefs the new session. |
+| `stage: blocked` → resumed | Kept. Nothing was thrown away. |
+| ⑫ close | Retained in `status.yml` for the record; never resumed. |
+
+**Where the conversation cannot follow.** `/taller:resume` inside a Claude Code
+session runs in *that* session, not the ticket's. The ticket's conversation is not
+reachable from the second front end.
+
+This is a real limit and the earlier text overstated it. To be precise about what
+§3.5's "the same ticket can move between them" means:
+
+| | Moves between front ends |
+|---|---|
+| `ticket.md`, `status.yml`, `notes.md`, `plan.md`, gate verdicts, the branch, the worktree | **Yes** — all on disk |
+| The chief's conversation | **No** — it belongs to whichever front end created it |
+
+A ticket picked up in a Claude Code session is therefore briefed from disk — the
+original "arrives briefed" mechanism (§3.1), still intact as the fallback it always
+was. Nothing is lost that was written down; what is lost is the unwritten part of a
+conversation, which is exactly why `notes.md` records decisions and their reasons
+rather than only outcomes.
+
+**Concurrent drive of one session is prevented.** Resuming the same `session_id`
+from two processes at once would interleave two conversations. The project lock
+(§10.3) is therefore taken for the duration of a chief dispatch, not only around
+file writes — so the CLI and the cockpit cannot advance the same ticket
+simultaneously, and the loser fails with a clear message after 5s.
 
 ---
 
@@ -1636,9 +1785,15 @@ work on a `full` ticket, not a fixer's.
 **The fixer may not modify tests.** No fix round may touch any path under
 `paths.tests_dir`, or any file matching `test_*.py` / `*_test.py`. The cheapest
 way to make a failing test pass is to change the test, and a system that is
-allowed to do that cannot be trusted by the person relying on it. An attempted
-write there aborts the round and escalates. This is enforced in `fixer.md` and
-asserted in §15.1.
+allowed to do that cannot be trusted by the person relying on it.
+
+This is enforced **by the harness, not by the prompt**: the fixer's
+`Dispatch.forbidden` carries those globs, which render as `--disallowedTools`
+specifiers, and a role with a non-empty `forbidden` list is additionally denied
+unrestricted `Bash` (§3.6.1). It is a capability the fixer does not have, rather
+than an instruction it is asked to respect. `fixer.md` states the rule too, so the
+model is not surprised by a denial, but the guarantee is the flag. Asserted in
+§15.1.
 
 The three LLM gates assign severity and remediation per finding, from guidance in
 their agent definition, and their rule ids are declared there. **Every
@@ -1662,7 +1817,7 @@ to prevent the decay visible in `REFACTORING_PLAN.md` →
 
 ## 10. Components and build order
 
-### 10.1 Plugin layout
+### 10.1 Program layout
 
 ```
 programas/taller/
@@ -2005,7 +2160,11 @@ which is the owner's decision to make.
 | Owner rejects at ⑦ | Verdicts and the reason copied to `main` under `rejected/<timestamp>/`, **then** worktree and branch deleted. Ticket returns to ②. |
 | `per_ticket_warn` crossed | Owner told; cockpit amber; work continues. |
 | `per_ticket_stop` crossed | Stop before dispatching anything further; ask the owner. |
-| Two writers at once | Project, hub or registry lock + atomic replace (§10.3). Loser fails clearly after 5s. |
+| Two writers at once, or two chief dispatches on one ticket | Project, hub or registry lock + atomic replace (§10.3); the project lock is held for a whole chief dispatch (§7.6). Loser fails clearly after 5s. |
+| Ticket rejected at ⑦ | `chief_session` cleared; a fresh conversation starts at ②, briefed from `notes.md` (§7.6). |
+| Ticket resumed in a Claude Code session | The ticket's conversation is not reachable there; the chief is briefed from disk instead (§7.6). Files lose nothing; unwritten conversation does. |
+| A dispatch is killed (SIGTERM) | Exit 143, turn unfinished, no result recorded. `infer` reports an error rather than an empty success (§3.6). |
+| `claude -p` starts defaulting to `--bare` | Subscription auth would break silently. `doctor` asserts a trivial dispatch succeeds with no `ANTHROPIC_API_KEY` set (§3.6.2). |
 | Spend cannot be fully attributed | `spend.partial: true`; rendered as a lower bound. Never estimated. |
 | `billing.mode` is not `api` | `spend.cost: null` by design; the cockpit shows weighted tokens only and hides cost entirely (§5.2). |
 | `pricing.as_of` older than 90 days, with mode `api` | `doctor` reports it stale; `cost` is still computed but flagged as based on an old table. |
@@ -2064,14 +2223,25 @@ Particular attention:
   `never`-slice rule and a security rule both refused as non-suppressible.
 - `spend.py`: recorded transcript fixtures, including one unattributable record
   asserting `partial: true`; `weighted_tokens` differs from `total_tokens` on a
-  cache-heavy fixture; `cost` stays `null` when `pricing` is unset.
+  cache-heavy fixture; `cost` stays `null` on every `billing.mode` but `api`.
 - `locking.py`: two writers, one wins, the loser fails within 5s, the file
   survives intact.
 - `inference.py`: the `Dispatch` → argument mapping of §3.6, for every field; a
-  non-zero exit, unparseable JSON, a schema mismatch and a missing `claude` binary
-  each return `ok: false` with a distinct reason and **no retry**; `forbidden`
-  reaches `--disallowed-tools`; `concurrency` caps in-flight dispatches. Tested
-  against a stub `claude` on `PATH`, so the suite makes no real inference calls.
+  `ruleset: None` bootstrap dispatch builds correctly from `model`/`effort`/`system`
+  alone; a non-zero exit, unparseable JSON, a schema mismatch, exit 143 and a missing
+  `claude` binary each return `ok: false` with a distinct reason and **no retry**;
+  `session_id` is captured from the result and replayed as `--resume`; `--bare` is
+  never passed; `concurrency` caps in-flight dispatches **across two processes**, not
+  just within one.
+- `forbidden` rendering (§3.6.1): each glob expands to `Write(...)`, `Edit(...)` and
+  `NotebookEdit(...)` specifiers; a role with a non-empty `forbidden` list never
+  receives bare `Bash`; the `main` worktree never appears in `--add-dir`. Assert on
+  the generated argument list, since this is the mechanism §9.7 depends on.
+- `spend.py`: per-dispatch `usage` accumulates while a **resumed** session's
+  cumulative `cost_usd` does **not** — a three-stage ticket must not report three
+  times the chief's spend; the transcript fallback resolves the worktree's slug
+  rather than the project's.
+  Tested against a stub `claude` on `PATH`, so the suite makes no real inference calls.
 - `discovery.py`: `reconcile()` produces the four buckets of §4.7 from fixture disk
   and `gh` output, including a local repository whose remote does not resolve;
   `cluster_palettes()` groups two identical palettes and separates a drifted one;
@@ -2138,7 +2308,7 @@ before every phase exists:
 
 | Check | Requires |
 |---|---|
-| The `claude` CLI is present and authenticated (§3.4) | A |
+| The `claude` CLI is present, and a trivial dispatch succeeds **with no `ANTHROPIC_API_KEY` set** — proving subscription auth still works and `--bare` has not become the default (§3.6.2) | A |
 | Every profile in the hub names only modules the hub contains (§4.0) | A |
 | `language` is set — not `null` — for every registered project (§11.1) | A |
 | `resolve()` succeeds; no unreasoned, expired or non-permitted override | A |
@@ -2274,7 +2444,12 @@ counts them and the Health screen shows them trending down.
 | **Taller is a standalone program that drives the `claude` CLI as a subprocess** | A Claude Code plugin only; embedding the Claude Agent SDK | The owner needs a program usable instead of, or interchangeably with, Claude Code. Embedding the Agent SDK would have forced API-key billing — its terms do not permit a third-party product to run on a claude.ai subscription — and the owner's stated preference is the subscription. Driving the owner's own authenticated CLI is the documented route for exactly this, and is the same relationship Taller already has with `gh`. |
 | **A persistent chief, with a session per ticket** | A chief that merely arrives briefed each session | Once Taller is the program, Taller is the process, so the concession is unnecessary. `--session-id` per ticket means the chief's conversation survives across stages and days, not just its briefing. |
 | **All inference behind one module, `inference.py`** | Spawning `claude` wherever a model is needed | It keeps the Agent-SDK option a one-module swap, it is the only place that can enforce `concurrency`, and it is where path restrictions become harness-enforced rather than merely requested. |
-| **`--disallowed-tools` enforces the no-test-file rule** | Enforcing it in `fixer.md` alone | A capability the fixer does not have beats an instruction it is asked to respect. |
+| **`--disallowedTools` specifiers enforce the no-test-file rule, plus no bare `Bash`** | Enforcing it in `fixer.md` alone; passing bare paths to the flag | A capability the fixer does not have beats an instruction it is asked to respect — but `--disallowedTools` takes tool specifiers, not paths, so a path would have restricted nothing silently, and a shell could have circumvented the specifiers anyway (§3.6.1). |
+| **`--bare` is never passed, and `doctor` asserts subscription auth still works** | Using the documented recommended mode for scripted calls | Bare mode never reads OAuth credentials, so it requires an API key — it would silently destroy the billing arrangement this design was chosen for. It is also slated to become the `-p` default, which makes this the largest forward-compatibility risk in the design and worth a standing assertion rather than a comment. |
+| **Only the chief holds a session; specialists are one-shot** | A session per role, or per (ticket, role) | A specialist's output already persists as a plan, a diff or a verdict file, so a conversation would add cost without adding memory — and one id per ticket removes the schema and resume ambiguity. |
+| **The chief's session is abandoned on rejection, kept on promotion** | Keeping it in both cases | A conversation holding a rejected plan and deleted code is worse than a clean start plus the written reason; a promotion is mid-ticket with the diff retained, so continuity helps. |
+| **Per-dispatch `usage` for spend, not cumulative `cost_usd`** | Summing the reported cost per dispatch | A resumed session reports the whole conversation's total, and the chief's session is resumed at every stage — summing it would have multiplied the chief's spend by the number of stages. |
+| **`concurrency` is a cross-process semaphore** | A per-process counter | The limit it protects is a per-account usage window, and the CLI, the cockpit and a session can all dispatch at once. |
 | **`billing.mode` detected, with different meanings for budget and concurrency** | One budget model for everyone | On a subscription the binding constraint is a usage window, not money: five parallel gates with one on Opus can exhaust it in minutes, and that failure is not gradual — work stops. `concurrency` bounds it, and `cost` stays `null` because a dollar figure would be fiction. On API billing the same number is a real cost proxy. |
 | **`pricing` ships with an `as_of` date, and `doctor` calls it stale at 90 days** | Shipping no table; shipping an undated one | A table is more useful than nothing once it is honest about age. It is also the only part of the configuration that goes wrong while nothing changes locally. |
 | **`taller settings` is a single surface over three config layers** | Hand-editing YAML in three places | Resolution is layered by design (§4.4), but reading and changing a value should not require knowing which layer owns it. The command prints where each value came from. |
