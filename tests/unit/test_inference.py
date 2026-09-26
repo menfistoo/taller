@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -17,7 +18,7 @@ def _bootstrap_dispatch(**over):
         cwd=None,                                   # -> scratch
         writable=[],
         tools=inference.role_tools(role),           # the spec 3.6.1 table
-        forbidden=inference.role_forbidden(role),
+        forbidden=inference.role_forbidden(role, "tests"),
         agents=None,
         schema=None,
         unattended=True,
@@ -84,21 +85,21 @@ def test_forbidden_expands_to_tool_specifiers_not_paths(tmp_home, stub_claude):
 def test_the_role_table_never_gives_the_fixer_bare_bash(tmp_home):
     # The table is the source of truth, so assert on the table itself.
     assert "Bash" not in inference.role_tools("fixer")
-    assert inference.role_forbidden("fixer")            # it does restrict paths
+    assert inference.role_forbidden("fixer", "tests")   # it does restrict paths
     assert any(t.startswith("Bash(") for t in inference.role_tools("fixer"))
 
 
 def test_the_implementer_keeps_bare_bash_and_forbids_nothing(tmp_home):
     # It must run arbitrary commands to check its own work; --add-dir bounds it.
     assert "Bash" in inference.role_tools("implementer")
-    assert inference.role_forbidden("implementer") == []
+    assert inference.role_forbidden("implementer", "tests") == []
 
 
 def test_read_only_roles_get_no_write_tools_and_no_forbidden_list(tmp_home):
     for role in ("explorer", "scribe", "summariser", "gate_security", "gate_ux"):
         tools = inference.role_tools(role)
         assert not {"Write", "Edit", "NotebookEdit"} & set(tools), role
-        assert inference.role_forbidden(role) == [], role
+        assert inference.role_forbidden(role, "tests") == [], role
 
 
 def test_a_role_with_forbidden_paths_and_bare_bash_is_a_contract_violation(tmp_home, stub_claude):
@@ -299,3 +300,65 @@ def test_concurrency_cap_holds_across_processes(tmp_home, stub_claude, tmp_path,
     finally:
         holder.kill()
         holder.wait()
+
+
+# --- the accent that would have corrupted a Spanish constitution --------------
+
+def test_non_ascii_survives_the_round_trip(tmp_home, stub_claude, monkeypatch):
+    """Without an explicit encoding, subprocess uses the locale encoding - cp1252
+    on Windows - and a UTF-8 answer decodes to mojibake that still parses as JSON.
+    Verified: 'reunion' with an accent came back with U+00F3 replaced by
+    U+00C3 U+00B3, silently. No other fixture contains an accented character."""
+    monkeypatch.setenv("STUB_CLAUDE_RESPONSE", json.dumps({
+        "session_id": "s",
+        "is_error": False,
+        "result": "la reunión terminó — café ñ",
+        "usage": {"input_tokens": 1, "cache_creation_input_tokens": 0,
+                  "cache_read_input_tokens": 0, "output_tokens": 1},
+    }, ensure_ascii=False))
+    result = inference.infer(_bootstrap_dispatch())
+    assert result.ok
+    assert result.value == "la reunión terminó — café ñ"
+    assert "Ã" not in result.value, "the answer was decoded with the wrong codec"
+
+
+def test_a_prompt_with_non_ascii_does_not_crash(tmp_home, stub_claude):
+    """U+2192 is outside cp1252 and appears throughout this project's own
+    documents. Encoding the prompt with the locale codec raised UnicodeEncodeError
+    out of infer(), which is neither of its two documented failure classes."""
+    result = inference.infer(_bootstrap_dispatch(
+        prompt="rename módulo → módulos, and keep the ñ"
+    ))
+    assert result.ok
+
+
+def test_a_slot_is_released_after_the_body_raises(tmp_home, stub_claude, monkeypatch):
+    """Locks in the release guarantee, not just the exception's survival."""
+    import subprocess as sp
+
+    def boom(*args, **kwargs):
+        raise OSError("BODY BOOM")
+
+    monkeypatch.setattr(sp, "run", boom)
+    pool = paths.dispatch_slots() / "worker"
+    with pytest.raises(OSError):
+        inference.infer(_bootstrap_dispatch())
+    assert not list(pool.glob("*.lock")), "a slot leaked when the body raised"
+
+
+def test_omitting_tools_does_not_fail_open(tmp_home, stub_claude):
+    """An empty allowlist meant no --allowedTools at all, so the dispatch ran with
+    the CLI's full default tool set under --permission-mode dontAsk."""
+    d = _bootstrap_dispatch(role="gate_ux", tools=[], forbidden=[])
+    inference.infer(d)
+    flags = stub_claude.flags()
+    assert "--allowedTools" in flags
+    for write_tool in ("Write", "Edit", "NotebookEdit"):
+        assert write_tool not in flags, f"a read-only gate was granted {write_tool}"
+
+
+def test_a_cwd_that_does_not_exist_is_refused(tmp_home, stub_claude, tmp_path):
+    """Creating an arbitrary cwd turned a stale worktree path into an empty
+    directory, and the dispatch then ran against nothing and reported success."""
+    with pytest.raises(inference.InferenceError, match="not a directory"):
+        inference.infer(_bootstrap_dispatch(cwd=tmp_path / "does-not-exist"))

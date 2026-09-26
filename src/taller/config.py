@@ -139,7 +139,8 @@ def hub_sha() -> str:
     try:
         out = subprocess.run(
             ["git", "-C", str(paths.hub()), "rev-parse", "HEAD"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=30,
         )
     except OSError:
         return ""

@@ -11,6 +11,14 @@ import json
 import os
 import sys
 
+# Write UTF-8 bytes explicitly. Python's default stdout encoding on Windows is
+# cp1252, so a stub using sys.stdout.write would mangle a non-ASCII payload
+# before it ever reached the code under test - the same defect the test is there
+# to catch, hidden in the test harness instead of the product.
+def _out(text: str) -> None:
+    sys.stdout.buffer.write(text.encode("utf-8"))
+    sys.stdout.buffer.flush()
+
 
 def main() -> int:
     argv_path = os.environ.get("STUB_CLAUDE_ARGV")
@@ -23,15 +31,15 @@ def main() -> int:
         return int(os.environ["STUB_CLAUDE_FAIL_EXIT"])
 
     if os.environ.get("STUB_CLAUDE_BAD_JSON"):
-        sys.stdout.write("this is not json")
+        _out("this is not json")
         return 0
 
     payload = os.environ.get("STUB_CLAUDE_RESPONSE")
     if payload:
-        sys.stdout.write(payload)
+        _out(payload)
         return 0
 
-    sys.stdout.write(json.dumps({
+    _out(json.dumps({
         "type": "result",
         "subtype": "success",
         "is_error": False,

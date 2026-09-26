@@ -14,6 +14,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,11 @@ from .errors import InferenceError
 WRITE_TOOLS = ("Write", "Edit", "NotebookEdit")
 
 BARE_BASH = "Bash"
+
+# Generous, but finite. locking._reap_if_stale only reclaims a lock whose process
+# is GONE, so a live-but-wedged dispatch is invisible to it and would hold its
+# concurrency slot until every other process timed out waiting.
+DISPATCH_TIMEOUT = 1800.0
 
 READ_ONLY = ["Read", "Glob", "Grep"]
 
@@ -69,11 +75,32 @@ def role_tools(role: str) -> list[str]:
         raise InferenceError(f"No tool allowlist defined for role {role!r}.") from exc
 
 
-def role_forbidden(role: str, tests_dir: str = "tests") -> list[str]:
-    """The forbidden globs for a role. Empty for every role but the fixer."""
+def role_forbidden(role: str, tests_dir: str) -> list[str]:
+    """The forbidden globs for a role. Empty for every role but the fixer.
+
+    `tests_dir` has no default on purpose. A default of "tests" silently protected
+    the wrong directory in a project whose tests live in `test/` or `spec/`, which
+    voids spec 9.7's guarantee with no error at all. Omitting it is a TypeError.
+    """
     if role != "fixer":
         return []
     return [f"{tests_dir}/**", *FIXER_FORBIDDEN]
+
+
+def _default_forbidden(dispatch: "Dispatch") -> list[str]:
+    """The role's forbidden globs, taking tests_dir from the RuleSet when there is
+    one. In bootstrap mode there is no project, and no role that restricts paths."""
+    if dispatch.role != "fixer":
+        return []
+    ruleset = dispatch.ruleset or {}
+    tests_dir = (ruleset.get("paths") or {}).get("tests_dir")
+    if not tests_dir:
+        raise InferenceError(
+            "A fixer dispatch needs paths.tests_dir from its RuleSet to know which "
+            "directory to protect. Pass a resolved RuleSet, or set `forbidden` "
+            "explicitly."
+        )
+    return role_forbidden(dispatch.role, tests_dir)
 
 
 @dataclass
@@ -131,6 +158,17 @@ def infer(dispatch: Dispatch, executable: str = "claude") -> Result:
       * A *runtime* failure — bad exit, bad JSON, schema mismatch, missing binary
         — returns ok: false with a distinct reason, for the caller's retry policy.
     """
+    # Fill the role's allowlist and forbidden globs when a caller omitted them.
+    # Leaving them empty was fail-open twice over: an empty `tools` means no
+    # --allowedTools at all, so the dispatch runs with the CLI's full default tool
+    # set under --permission-mode dontAsk; and a fixer given `tools` but not
+    # `forbidden` gets Write/Edit with no --disallowedTools, voiding the one
+    # guarantee spec 9.7 rests on. The table is right here, so use it.
+    if not dispatch.tools:
+        dispatch.tools = role_tools(dispatch.role)
+    if not dispatch.forbidden:
+        dispatch.forbidden = _default_forbidden(dispatch)
+
     argv_tail, cwd = _build(dispatch, executable)   # may raise: see above
 
     # Resolve to an absolute path BEFORE spawning. On Windows, CreateProcess
@@ -146,10 +184,43 @@ def infer(dispatch: Dispatch, executable: str = "claude") -> Result:
         )
     argv = [resolved, *argv_tail]
 
-    with _slot(dispatch):
-        completed = subprocess.run(
-            argv, input=dispatch.prompt, capture_output=True, text=True, cwd=str(cwd)
-        )
+    from .errors import LockTimeout
+    try:
+        slot = _slot(dispatch)
+        slot.__enter__()
+    except LockTimeout as exc:
+        # Neither a Taller bug nor a CLI failure: the account's own concurrency
+        # ceiling. The documented contract is a Result, so a LockTimeout must not
+        # escape infer().
+        return Result(ok=False, error=str(exc))
+    try:
+        try:
+            completed = subprocess.run(
+                argv,
+                input=dispatch.prompt,
+                capture_output=True,
+                text=True,
+                # UTF-8 on both directions, explicitly. Without it Python uses the
+                # locale encoding - cp1252 on Windows - and two things break
+                # silently: a prompt containing any character outside cp1252 (an
+                # arrow, an em dash) raises UnicodeEncodeError out of infer(), and
+                # a UTF-8 answer decodes to mojibake that still parses as JSON, so
+                # "reunion" comes back with its accent replaced by two characters
+                # and nothing reports an error. Verified both ways on this machine.
+                encoding="utf-8",
+                errors="replace",
+                cwd=str(cwd),
+                timeout=DISPATCH_TIMEOUT,
+            )
+        except subprocess.TimeoutExpired:
+            return Result(
+                ok=False,
+                error=f"The dispatch produced no result within "
+                      f"{DISPATCH_TIMEOUT}s and was abandoned. A wedged CLI would "
+                      f"otherwise hold its concurrency slot indefinitely.",
+            )
+    finally:
+        slot.__exit__(None, None, None)
 
     if completed.returncode == 143:
         return Result(
@@ -167,6 +238,12 @@ def infer(dispatch: Dispatch, executable: str = "claude") -> Result:
     except json.JSONDecodeError as exc:
         return Result(ok=False, error=f"`{executable}` returned output that is not "
                                       f"JSON: {exc}")
+    if not isinstance(payload, dict):
+        return Result(
+            ok=False,
+            error=f"`{executable}` returned JSON that is not an object "
+                  f"({type(payload).__name__}); every field lookup below assumes one.",
+        )
 
     if payload.get("is_error"):
         # A failed turn was still billed, so its usage must be recorded (spec 7.5).
@@ -211,8 +288,19 @@ def _build(dispatch: Dispatch, executable: str) -> tuple[list[str], Path]:
             f"specific Bash(...) specifiers it needs instead."
         )
 
-    cwd = Path(dispatch.cwd) if dispatch.cwd else paths.scratch_cwd()
-    cwd.mkdir(parents=True, exist_ok=True)
+    # Only the bootstrap scratch directory is created here. Creating an arbitrary
+    # cwd would turn a stale or mistyped worktree path into an empty directory, and
+    # a dispatch would then run against nothing and report success.
+    if dispatch.cwd is None:
+        cwd = paths.scratch_cwd()
+        cwd.mkdir(parents=True, exist_ok=True)
+    else:
+        cwd = Path(dispatch.cwd)
+        if not cwd.is_dir():
+            raise InferenceError(
+                f"{cwd} is not a directory. A dispatch's cwd must already exist; "
+                f"only the bootstrap scratch directory is created on demand."
+            )
 
     # argv WITHOUT the executable; infer() prepends the resolved absolute path.
     argv = ["-p", "--output-format", "json", "--model", model, "--effort", effort]
@@ -275,10 +363,10 @@ def _usage(payload: dict[str, Any]) -> list[UsageRecord]:
         return [
             UsageRecord(
                 model=model,
-                input=int(u.get("inputTokens", 0)),
-                cache_write=int(u.get("cacheCreationInputTokens", 0)),
-                cache_read=int(u.get("cacheReadInputTokens", 0)),
-                output=int(u.get("outputTokens", 0)),
+                input=int(u.get("inputTokens") or 0),
+                cache_write=int(u.get("cacheCreationInputTokens") or 0),
+                cache_read=int(u.get("cacheReadInputTokens") or 0),
+                output=int(u.get("outputTokens") or 0),
             )
             for model, u in per_model.items()
         ]
@@ -287,15 +375,15 @@ def _usage(payload: dict[str, Any]) -> list[UsageRecord]:
         return []
     return [UsageRecord(
         model=payload.get("model", "unknown"),
-        input=int(usage.get("input_tokens", 0)),
-        cache_write=int(usage.get("cache_creation_input_tokens", 0)),
-        cache_read=int(usage.get("cache_read_input_tokens", 0)),
-        output=int(usage.get("output_tokens", 0)),
+        input=int(usage.get("input_tokens") or 0),
+        cache_write=int(usage.get("cache_creation_input_tokens") or 0),
+        cache_read=int(usage.get("cache_read_input_tokens") or 0),
+        output=int(usage.get("output_tokens") or 0),
     )]
 
 
 @contextlib.contextmanager
-def _slot(dispatch: Dispatch):
+def _slot(dispatch: Dispatch):  # noqa: C901
     """A counted semaphore across processes.
 
     The limit being protected is a per-account usage window (spec 5.2), and the
@@ -308,8 +396,6 @@ def _slot(dispatch: Dispatch):
     as `RuntimeError: generator didn't stop after throw()` with the real cause
     gone — while abandoning the generator still holding the lock.
     """
-    from . import locking
-
     cfg = dispatch.ruleset or dispatch.config
     concurrency = cfg.get("concurrency", {})
     thinker = cfg.get("model_aliases", {}).get("thinker")
@@ -334,25 +420,43 @@ def _slot(dispatch: Dispatch):
         acquired.__exit__(None, None, None)
 
 
-def _acquire_slot(pool_dir: Path, limit: int):
-    """Take the first free slot, or wait on slot 0 when all are busy.
+def _acquire_slot(pool_dir: Path, limit: int, timeout: float = 300.0):
+    """Take the first free slot, polling every slot until one frees or we time out.
 
     Returns the entered context manager so the caller can release it in a
     `finally`. Only slot acquisition is guarded here; the body is not.
+
+    An earlier version parked a queued dispatch on slot-0 alone. With three slots
+    and five waiters, four of them piled onto slot-0 while slots 1 and 2 sat idle,
+    so queued work serialised toward one-at-a-time and a waiter could sleep out its
+    whole timeout beside free capacity.
     """
     from . import locking
     from .errors import LockTimeout
 
-    for index in range(limit):
-        candidate = locking.file_lock(
-            pool_dir / f"slot-{index}.lock", timeout=0.05, reentrant=False
+    # Waiting is futile when THIS thread already holds a slot in this pool: the
+    # thread that would release it is the one blocked here. Fail fast instead of
+    # polling for the full timeout.
+    if any(locking.held(pool_dir / f"slot-{i}.lock") for i in range(limit)):
+        raise LockTimeout(
+            f"This thread already holds a slot in {pool_dir.name}. A dispatch "
+            f"cannot nest inside another on one thread."
         )
-        try:
-            candidate.__enter__()
-        except LockTimeout:
-            continue                # that slot is busy; try the next
-        return candidate
 
-    waiting = locking.file_lock(pool_dir / "slot-0.lock", timeout=300, reentrant=False)
-    waiting.__enter__()
-    return waiting
+    deadline = time.monotonic() + timeout
+    while True:
+        for index in range(limit):
+            candidate = locking.file_lock(
+                pool_dir / f"slot-{index}.lock", timeout=0.05, reentrant=False
+            )
+            try:
+                candidate.__enter__()
+            except LockTimeout:
+                continue                # that slot is busy; try the next
+            return candidate
+        if time.monotonic() >= deadline:
+            raise LockTimeout(
+                f"No dispatch slot became free in {pool_dir.name} within "
+                f"{timeout:g}s ({limit} slot(s))."
+            )
+        time.sleep(0.05)

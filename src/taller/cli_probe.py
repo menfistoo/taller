@@ -138,7 +138,8 @@ def _run(resolved: str, flag: str) -> str:
     """
     try:
         completed = subprocess.run(
-            [resolved, flag], capture_output=True, text=True, timeout=60
+            [resolved, flag], capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=60
         )
     except subprocess.TimeoutExpired as exc:
         raise InferenceError(f"`{resolved} {flag}` did not respond within 60s.") from exc
