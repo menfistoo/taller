@@ -853,17 +853,17 @@ def probe(executable: str = "claude") -> FlagReport:
     """Run the real binary. Used by `taller doctor`, never by unit tests."""
     from .errors import InferenceError
 
-    if shutil.which(executable) is None:
+    # Resolve BEFORE spawning — the same rule as inference.py. On Windows a bare
+    # name skips a .cmd shim earlier on PATH. Not billed here, but this is the
+    # pattern inference.py is written from, where it is.
+    resolved = shutil.which(executable)
+    if resolved is None:
         raise InferenceError(
             f"The `{executable}` CLI is not on PATH. Taller performs every act of "
             f"inference through it (spec 3.6) and cannot work without it."
         )
-    help_text = subprocess.run(
-        [executable, "--help"], capture_output=True, text=True, timeout=60
-    ).stdout
-    version_text = subprocess.run(
-        [executable, "--version"], capture_output=True, text=True, timeout=60
-    ).stdout
+    help_text = _run(resolved, "--help")      # checks returncode; see below
+    version_text = _run(resolved, "--version")
     report = check_flags(help_text)
     report.version = parse_version(version_text)
     return report
@@ -2149,7 +2149,7 @@ def _acquire_slot(pool_dir: Path, limit: int):
 - [ ] **Step 6: Run the tests**
 
 Run: `python -m pytest tests/unit/test_inference.py -q`
-Expected: `27 passed`
+Expected: `28 passed`
 
 Then confirm the stub really ran, which is the whole point of Task 7:
 

@@ -574,7 +574,7 @@ The plugin separately ships a **catalogue** — generic, inert, and copied into 
 hub only when something needs it:
 
 ```
-programas/taller/templates/catalogue/
+src/taller/catalogue/          # INSIDE the package
 ├── modules/
 │   ├── stack/flask-sqlite.md      stack/static-site.md      stack/python-packaged.md
 │   ├── security/web-app.md        security/minimal.md
@@ -1067,7 +1067,11 @@ notices.
 
 **Conflicts.** `resolved.json` is generated, so it is never merged.
 `.gitattributes` marks it `merge=ours`, and any conflict or divergence is resolved
-by discarding both sides and running `resolve()` again. A ticket branch never
+by discarding both sides and running `resolve()` again. **`ours` is not a built-in
+driver** — it does nothing unless `merge.ours.driver` is configured — so `taller
+setup` and `project new` both set `git config merge.ours.driver true`, and `doctor`
+checks it. Without that, the attribute is decoration and git silently falls back to
+a three-way merge of a generated file. A ticket branch never
 carries its own snapshot: it inherits `main`'s.
 
 **Line endings are pinned to LF, and this is load-bearing.** The byte-for-byte
@@ -2176,6 +2180,20 @@ Every file write inside a lock is an atomic replace: write to a temporary file i
 the same directory, then `os.replace`. A writer that cannot take a lock within 5
 seconds fails with a clear message rather than waiting or forcing.
 
+**Locks are re-entrant within a *thread*, not merely within a process.** A
+process-wide counter would let one cockpit thread believe it holds another
+thread's lock, and §12's cockpit is a threaded server. A second thread falls
+through to the exclusive-create spin, which is the real mutex.
+
+**Semaphore slots are taken non-re-entrantly** (§3.6). A re-entrant lock used as a
+counting semaphore silently stops capping, because the second acquisition in the
+same thread succeeds by design.
+
+**A lock whose owning process is gone is reaped.** The holder's PID is written into
+the lock file so it can be read back: without that, a process killed by the OS or
+lost to a power failure leaves a lock that blocks every later invocation and can
+only be cleared by hand.
+
 **Locks are re-entrant within a process.** §7.6 holds the project lock for the whole
 of a chief dispatch, and a stage transition inside that window calls
 `gitio.commit_to_main()`, which takes the same lock. A non-re-entrant lock would
@@ -2616,6 +2634,8 @@ before every phase exists:
 | `language` is set — not `null` — for every registered project (§11.1) | A |
 | `resolve()` succeeds; no unreasoned, expired or non-permitted override | A |
 | `resolved.json` present, not stale, and byte-identical to an **in-memory** `render_snapshot(resolve(path))` — nothing written | A |
+| `merge.ours.driver` is configured, so `.gitattributes`' `merge=ours` is not decoration (§4.6) | A |
+| No lock left behind by a dead process (§10.3) | A |
 | **When `brand` is not `none`:** `paths.brand_tokens` present and byte-identical to an in-memory `render_tokens()`. Skipped with reason when the brand is `none`, so `python-packaged` passes. | A |
 | `00-index.md` present, byte-identical to an in-memory `render_index()`, and within its 600-token budget | A |
 | No ticket branch carries its own `resolved.json`, `00-index.md` or brand tokens | A |

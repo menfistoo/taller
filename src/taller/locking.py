@@ -13,8 +13,11 @@ from __future__ import annotations
 
 import contextlib
 import os
+import subprocess
+import sys
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Iterator
 
@@ -76,29 +79,81 @@ def file_lock(
 
     path.parent.mkdir(parents=True, exist_ok=True)
     deadline = time.monotonic() + timeout
-    fd = None
     while True:
         try:
             fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             break
-        except FileExistsError:
+        except (FileExistsError, PermissionError):
+            # PermissionError matters on Windows: a file in the delete-pending
+            # state — precisely the window the previous holder's unlink() opens —
+            # reports ERROR_ACCESS_DENIED, not "already exists". Catching only
+            # FileExistsError would escape this loop as a bare OSError under the
+            # cross-process contention this module exists to handle.
+            if _reap_if_stale(path):
+                continue
             if time.monotonic() >= deadline:
                 raise LockTimeout(
                     f"Could not take the lock at {path} within {timeout:g}s. "
                     f"Another Taller process is probably still working. "
-                    f"If none is, remove the file."
+                    f"If none is, run `taller doctor` or remove the file."
                 )
             time.sleep(_POLL)
 
-    os.write(fd, str(os.getpid()).encode("ascii"))
-    os.close(fd)
-    depth[key] = 1
+    # From here the lock file exists, so every path must be able to remove it.
+    # An unguarded os.write between the open and the try left a file that could
+    # not be deleted at all on Windows, because the leaked handle kept it open.
     try:
+        try:
+            os.write(fd, str(os.getpid()).encode("ascii"))
+        finally:
+            os.close(fd)
+        depth[key] = 1
         yield
     finally:
-        depth[key] = 0
+        depth.pop(key, None)
         with contextlib.suppress(FileNotFoundError):
             path.unlink()
+
+
+def _reap_if_stale(path: Path) -> bool:
+    """Remove a lock whose owning process is gone. True when one was reaped.
+
+    The PID is written into the lock file precisely so it can be read back here.
+    Without this, a holder killed by TerminateProcess, an OOM or a power loss
+    leaves a lock that blocks every future invocation and can only be cleared by
+    hand — and the PID write would be decoration rather than a safety feature.
+    """
+    try:
+        raw = path.read_text(encoding="ascii").strip()
+    except (OSError, UnicodeDecodeError):
+        return False                    # unreadable: assume a live holder
+    if not raw.isdigit():
+        return False
+    if _pid_alive(int(raw)):
+        return False
+    with contextlib.suppress(OSError):
+        path.unlink()
+        return True
+    return False
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if sys.platform == "win32":
+        # No signal 0 on Windows; ask the process list instead.
+        out = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+            capture_output=True, text=True,
+        )
+        return str(pid) in out.stdout
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True                     # exists, owned by someone else
+    return True
 
 
 # --- the three named locks of spec 10.2, as context managers ----------------
@@ -126,13 +181,38 @@ def atomic_write(target: Path | str, data: bytes) -> None:
     """
     target = Path(target)
     target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_name(f".{target.name}.tmp{os.getpid()}")
+    # PID + thread + a random token. PID alone was not enough: this module's own
+    # docstring justifies thread-locality by pointing at a threaded server, and two
+    # threads computing the same temp name do not blend their writes - they race,
+    # both raise PermissionError on Windows, and the target ends up ABSENT.
+    tmp = target.with_name(
+        f".{target.name}.tmp{os.getpid()}-{threading.get_ident()}-{uuid.uuid4().hex[:8]}"
+    )
     try:
         tmp.write_bytes(data)
-        os.replace(tmp, target)
+        _replace_with_retry(tmp, target)
     finally:
         with contextlib.suppress(FileNotFoundError):
             tmp.unlink()
+
+
+def _replace_with_retry(tmp: Path, target: Path, attempts: int = 50) -> None:
+    """os.replace, retried briefly on a transient Windows denial.
+
+    On Windows, replacing a target another thread or process is momentarily
+    holding raises PermissionError (ERROR_ACCESS_DENIED) even when the temp name
+    is unique. Discovered by testing two threads writing one target: the write
+    failed outright rather than one of them simply winning. The replace is atomic
+    once it succeeds; retrying only widens the window in which it can.
+    """
+    for attempt in range(attempts):
+        try:
+            os.replace(tmp, target)
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(_POLL)
 
 
 def atomic_write_text(target: Path | str, text: str) -> None:
