@@ -258,7 +258,10 @@ conversational act whose reason must reach `notes.md`.
 
 ~/.taller-run/                     NOT versioned
 ├── .lock                          hub write lock (§10.3)
+├── registry.lock                  projects.json write lock (§10.3)
+├── locks/<project>.lock           per-project write lock (§10.3)
 ├── onboarding/<name>.yml          wizard scratch (§11.3)
+├── smoke/<project>-<id>/          ephemeral smoke data + logs (§9.6)
 └── worktrees/<project>-main/      long-lived `main` worktree (§7.3)
 ```
 
@@ -306,6 +309,26 @@ smoke:                         # §9.6
   ready:     "http://127.0.0.1:5000/"
   timeout_s: 30
   routes:    ["/"]             # always exercised, plus the mapped routes
+```
+
+```yaml
+# ~/.taller/profiles/static-tool.yml
+name: static-tool
+description: Static HTML/JS page with a Python helper script, no server
+modules: [stack/static-js, security/minimal, conventions/js, ux/bootstrap-es, never]
+brand: precios                 # its own brand — see "own logo.png", §4.1
+language: {code: en, ui: es, commits: en}
+paths:
+  security_sensitive: []       # inherits only the hub floor (§5.1)
+  ui: ["*.html", "*.css", "*.js"]
+  layers: {}
+  tests_dir: "tests"
+smoke:
+  kind:      http              # served by python -m http.server, not the app
+  boot:      "python -m http.server 0 --directory ."
+  ready:     "auto"            # port taken from the boot process, §9.6
+  timeout_s: 15
+  routes:    ["/index.html", "/history.html"]
 ```
 
 ```yaml
@@ -358,6 +381,41 @@ where, by name.
 It then collects typography and assets, writes `tokens.css` and `brand.md`, and
 renders a **swatch page** (a standalone HTML file opened locally), so a brand is
 reviewed visually rather than as a list of hex codes.
+
+### 4.2.1 How the brand reaches the running application
+
+The hub is outside every project repository and outside the Docker image that
+gets deployed, so the hub `tokens.css` cannot be the file the browser loads.
+
+**`resolve()` generates `<project>/static/css/tokens.css`** — a verbatim copy of
+the brand's `tokens.css` with a generated-file header — and commits it as a
+`main`-side generated file alongside `resolved.json` (§7.2). It is refreshed on
+exactly the same triggers, including an amend to the brand, which fans out to
+every project using that brand. The application links it; the Docker image
+contains it; nothing at runtime depends on the hub existing.
+
+The constitution gate **exempts that one generated path** and flags colour and
+font values anywhere else. Precisely:
+
+| Path | Rule |
+|---|---|
+| `static/css/tokens.css` (generated) | Exempt — it is the definition |
+| Anything else | `brand.hardcoded-color` / `brand.hardcoded-font` |
+
+**What this means for `cont` at adoption.** `cont` defines its seven `--app-*`
+tokens in `static/css/admin.css` (§1.4). That is not the generated path, so left
+alone those seven definitions would each become a HIGH finding — the adoption
+would report 33 violations instead of 26. `taller project adopt` therefore:
+
+1. Reads the `:root` block from `admin.css` — this is exactly the
+   `brand new --from-css` path of §4.2 — and lifts those seven tokens into the
+   hub brand.
+2. Writes the generated `static/css/tokens.css`.
+3. Removes the `:root` block from `admin.css` and adds an `@import` of the
+   generated file.
+4. Presents all of this at wizard step ⑥ for approval, like everything else.
+
+The tokens move; they are not flagged. The 26 baseline stands.
 
 ### 4.3 Slice vocabulary
 
@@ -427,11 +485,18 @@ RuleSet = {
     "language":   {"code": str, "ui": str, "commits": str},
     "overrides":  [Override],                    # §4.5
     "hub_sha":    str,
+    "mode":       str,                           # "local" | "ci"  — §4.6
 }
 ```
 
+`mode` is the one behavioural difference between a local and a CI gate run
+(§4.6). `resolve()` sets `"local"`; `load_snapshot()` sets `"ci"`. It travels
+inside the `RuleSet` so that `gates/*.py` stay pure over their arguments (§10.2)
+rather than reading the environment.
+
 **Determinism:** `resolve()` performs no network access and no model calls. It is
-pure over the filesystem, so it is directly unit-testable.
+pure over the filesystem, so it is directly unit-testable — which is what makes
+the byte-for-byte tamper check in §4.6 possible.
 
 `~/.taller/` is a git repository because one edit can affect six projects.
 Amendments have history and can be reverted. `hub_sha` is the hub's `HEAD` at
@@ -440,8 +505,25 @@ resolution time and is recorded on every gate verdict (§7.4).
 ### 4.5 `overrides.md` — format and mechanism
 
 Every rule a gate can report has a **stable id** in one namespace, shared with
-`Finding.rule` (§7.4): `<gate>.<rule>`. Ids and their default severities are
-declared in §9.7 and are part of each gate's public surface.
+`Finding.rule` (§7.4): `<domain>.<rule>`. A **domain** is a subject area, not a
+gate — one gate may own several. Ids and their default severities are declared in
+§9.7 and are part of each gate's public surface.
+
+| Domain | Owned by |
+|---|---|
+| `brand` | constitution gate |
+| `constitution` | constitution gate |
+| `size` | size gate |
+| `tests` | tests gate |
+| `smoke` | smoke gate |
+| `security` | security gate |
+| `quality` | code quality gate |
+| `ux` | UX gate |
+
+So a hardcoded colour is reported as `gate: constitution, rule:
+brand.hardcoded-color`. `Finding.gate` and the rule's domain are independent
+fields, which is what lets criterion 6 filter on `brand.hardcoded-*` without
+depending on which gate happened to find it.
 
 ```markdown
 ---
@@ -497,15 +579,44 @@ instead of resolving.
 | Self-contained | CI needs no hub, no remote, no secrets, no deploy key |
 | Carries `hub_sha` | Verdicts from CI are as traceable as local ones |
 
-**Staleness.** `resolve()` is run, and the snapshot refreshed, at `project
-adopt`, at every `/taller:amend`, and at stage ② of every ticket. Locally — where
-the hub exists — the constitution gate compares `resolved.json`'s `hub_sha`
-against the hub's `HEAD` and reports `constitution.resolved-snapshot-stale`
-(HIGH) on mismatch. In CI it cannot make that comparison and does not try; it
-validates against the snapshot as committed. The local check is what keeps the
-snapshot honest, and it runs before every pull request exists.
+**Where it is written and by whom.** The snapshot is a `main`-side generated file,
+like the three ticket files (§7.2), and `tickets.commit_to_main()` is the only
+writer. It is refreshed:
 
-`taller resolve` refreshes it on demand.
+| When | Scope |
+|---|---|
+| `taller project adopt` | that project |
+| `/taller:amend` or the cockpit Constitution screen | **every project whose profile includes the changed module or brand** |
+| stage ② of every ticket | that project, on `main`, before the branch exists |
+| `taller resolve` | on demand |
+
+An amend to `security/web-app.md` therefore writes to all six `flask-hotel`
+projects: six project locks, six commits, six pushes, six `sync` states. That is
+the honest cost of one shared rule and the reason `/taller:amend` reports which
+projects it touched. The alternative — refreshing one project — leaves the other
+five reporting `constitution.resolved-snapshot-stale` at HIGH until someone
+notices.
+
+**Conflicts.** `resolved.json` is generated, so it is never merged.
+`.gitattributes` marks it `merge=ours`, and any conflict or divergence is resolved
+by discarding both sides and running `resolve()` again. A ticket branch never
+carries its own snapshot: it inherits `main`'s.
+
+**Tamper check.** `resolve()` is pure and deterministic over the filesystem
+(§4.4), so the snapshot is reproducible. Two checks, because CI validates against
+a file a pull request can edit — a branch that raised `max_file_lines`, emptied
+`paths.ui`, deleted the `never` slice text or appended an override would
+otherwise get a green CI run against its own weakened rules, and a hand-edited
+snapshot keeps the correct `hub_sha`:
+
+| Where | Check | Rule id |
+|---|---|---|
+| Locally (hub present) | Re-resolve and compare **byte for byte**; also compare `hub_sha` against the hub `HEAD` | `constitution.resolved-snapshot-modified` (BLOCKER), `constitution.resolved-snapshot-stale` (HIGH) |
+| In CI (no hub) | Any diff touching `resolved.json` on a ticket branch is a finding, since a ticket branch must never carry its own snapshot | `constitution.resolved-snapshot-modified` (BLOCKER) |
+
+CI cannot verify the snapshot's *content*, but it can verify that the branch did
+not change it — which is sufficient, because the local byte-for-byte check runs
+before any pull request exists and its verdict is committed with the work.
 
 ---
 
@@ -582,8 +693,9 @@ weights:                      # relative cost weights, tunable (§7.5)
 pricing: null                 # optional; owner-supplied, per million tokens (§7.5)
 
 budget:                       # compared against spend.weighted_tokens (§7.5)
-  per_ticket_warn: 120000
-  per_ticket_stop: 320000
+  per_ticket_warn:  400000    # ≈3× the worked fast-lane ticket in §7.1 (130,350)
+  per_ticket_stop: 1200000    # ≈9× — a full-lane ticket with an Opus plan
+                              #   and an Opus security gate should fit under this
 
 thresholds:
   max_file_lines:       800
@@ -690,6 +802,8 @@ verdicts:
   smoke:        {result: pass, blocker: 0, high: 0, medium: 0, low: 0, nit: 0, hub_sha: a3f9c21}
 fix_rounds: 1
 sync: ok                   # ok | pending  — remote mirror state (§7.3)
+templates:                 # written at ②; drives the smoke gate (§9.6)
+  templates/dia.html: ["/dia", "/dia/<fecha>"]
 checkpoints:               # pending | approved | rejected | skipped
   design:  skipped         # not in the fast lane
   review:  pending
@@ -700,10 +814,23 @@ spend:
   by_model:
     claude-haiku-4-5-20251001: {input: 1200, cache_write: 9000, cache_read: 31000, output: 3100}
     claude-sonnet-5:           {input: 2400, cache_write: 22000, cache_read: 64000, output: 12600}
-  total_tokens:    145300   # raw sum, for reference
-  weighted_tokens:  98065   # §7.5 — this is what budget compares against
+  total_tokens:    145300   # raw sum, for reference only
+  weighted_tokens: 130350   # §7.5 — this is what budget compares against
   cost: null                # populated only when `pricing` is configured
 ```
+
+Worked through, so the arithmetic can be checked against §7.5's formula and
+§5.1's weights:
+
+```
+haiku    1,200×1.0 +  9,000×1.25 + 31,000×0.1 +  3,100×5.0 =  31,050
+sonnet   2,400×1.0 + 22,000×1.25 + 64,000×0.1 + 12,600×5.0 =  99,300
+                                                    weighted = 130,350
+```
+
+Output is 78,500 of 130,350 — 60% — while being only 11% of the raw token count.
+That is the weighting doing its job, and it is why `per_ticket_warn` is
+calibrated against this figure rather than against 145,300 (§5.1).
 
 A genuine fast-lane example: replacing a hardcoded `#dc3545` with
 `var(--app-danger)` in one template. It reached ⑦, so smoke has run and has a
@@ -717,8 +844,16 @@ verdict. A `full` ticket's `gates` would additionally contain `security`,
 | `ticket.md` | **`main`** | ① | The ticket must be visible from `main` or the cockpit reports nothing |
 | `status.yml` | **`main`** | ① and every stage transition | Same; also the resume key |
 | `notes.md` | **`main`** | ① onward | §14 relies on it surviving branch deletion |
+| `.taller/resolved.json` | **`main`** | adopt, amend, ② | Generated; a branch must never carry its own (§4.6) |
+| `static/css/tokens.css` | **`main`** | adopt, brand amend | Generated from the hub brand (§4.2.1) |
 | `plan.md` | branch | ③ | Belongs to the work; merges with the PR |
 | `gates/*.md` | branch | ⑤, ⑥ | Belongs to the work; merges with the PR |
+
+The two generated files are `main`-side for the same reason as the ticket files,
+and `tickets.commit_to_main()` is the only writer of any of the five. They are
+marked `merge=ours` in `.gitattributes` and regenerated rather than merged
+(§4.6), so §7.3's rebase-safety argument holds: none of the five can conflict
+with application code.
 
 **On rejection at ⑦** the gate verdict files and the owner's reason are copied to
 `main` under `work/NNNN-slug/rejected/<timestamp>/` **before** the worktree and
@@ -1009,15 +1144,18 @@ condition explicitly; without it almost every fast ticket would match
 
 ### 9.3 Severity policy
 
+Severity decides **whether** something is acted on; `remediation` (§9.7) decides
+**who** acts.
+
 | Severity | Action |
 |---|---|
-| `BLOCKER`, `HIGH` | Auto-fix, maximum `thresholds.max_fix_rounds` (2), then stop and escalate |
+| `BLOCKER`, `HIGH` | Acted on per the rule's `remediation`: `agent` dispatches the fixer for up to `max_fix_rounds` (2); `command` runs a deterministic command; `escalate` stops and asks the owner with no automatic attempt |
 | `MEDIUM` | Reported in the owner's summary. Never auto-fixed. |
 | `LOW`, `NIT` | Logged in the ticket. No action unless the owner asks. |
 
 Applies identically to ⑤ gate findings and the ⑥ smoke gate. The 2-round cap is
 the cost control: without it, 12 findings spawn 12 fixes which re-trigger the
-gates, recursively.
+gates, recursively. **No fix round may modify a test file** (§9.7).
 
 ### 9.4 CI is a backstop, not a second opinion
 
@@ -1030,17 +1168,17 @@ It replaces `code-review.yml`, `security.yml` and `design-review.yml`.
 GitHub a required check that never reports leaves the pull request pending
 forever, making §13's "require `taller-ci` green" a merge deadlock.
 
-**Two check names, one workflow.** The job's first step classifies the push:
+**Two jobs in one workflow**, because one job emits exactly one check run:
 
-| Push touches | Reports as | Meaning |
+| Job | Check name | Behaviour |
 |---|---|---|
-| only `.taller/work/**/{ticket.md,status.yml,notes.md}` | `taller-ci` ✓ **and** `taller-ci-mode: ticket-files` | Trivially green; no gate ran |
-| anything else | `taller-ci` ✓/✗ **and** `taller-ci-mode: full` | Gates ran |
+| `gates` | `taller-ci` — **the required check** | Classifies the push. Ticket-file-only → exit 0 immediately. Otherwise run the three model-free gates. Always reports a conclusion. |
+| `mode` | `taller-ci-mode` — informational, not required | Reports `full` or `ticket-files` for the same push. |
 
-The required check is `taller-ci`, so the pull request never deadlocks. The
-second, informational check is what lets `taller doctor` (§15.4) distinguish a
-real green from an early exit — without it, the newest run on `main` is almost
-always a ticket-file commit and "CI is green" would be vacuous.
+The required check always reports, so the pull request never deadlocks. The
+informational check is what lets `taller doctor` (§15.4) distinguish a real green
+from an early exit — without it the newest run on `main` is almost always a
+ticket-file commit, and "CI is green" would be vacuous.
 
 ### 9.5 Repository scan mode
 
@@ -1058,9 +1196,48 @@ implementer. Configuration comes from `smoke` in the profile or project
 
 | `kind` | Behaviour |
 |---|---|
-| `http` | Run `boot` as a subprocess. Poll `ready` until HTTP 200 or `timeout_s`. GET every URL in `routes`, plus every **mapped route** (below). Any non-2xx/3xx, any unhandled exception in the captured log, or a timeout is a finding. Terminate the subprocess in a `finally`. |
+| `http` | Run `boot` as a subprocess in the isolated environment below. Poll `ready` until HTTP 200 or `timeout_s`. GET every URL in `routes`, plus every **mapped route** (below). Terminate the subprocess in a `finally`. |
 | `import` | Import `module` in a subprocess with `timeout_s`. Any exception is a finding. |
 | `none` | Gate reports `result: pass` with `metrics: {skipped: true}`. Declared explicitly, never inferred. |
+
+**A 200 is required, not a 3xx.** A hotel application redirects an
+unauthenticated request to a login page and returns 302 — which would pass a
+naive check while rendering nothing. Since §8.2's whole fast-lane argument is
+"⑥ is the only step that renders a template", the gate requires **HTTP 200 with a
+non-empty body** on every route, and reports `smoke.not-rendered` (HIGH) on a 3xx
+to an unauthenticated location. Redirects are followed only when `auth` is
+configured and the final response is 200.
+
+**Environment isolation.** The gate never touches live data, a live port, or
+another ticket's run:
+
+```yaml
+smoke:
+  kind:      http
+  boot:      "python run_local.py --port $TALLER_SMOKE_PORT"
+  ready:     "http://127.0.0.1:$TALLER_SMOKE_PORT/"
+  timeout_s: 30
+  routes:    ["/"]
+  data:      copy              # copy | fresh | none
+  env:
+    FLASK_ENV: testing
+    DATABASE_PATH: "$TALLER_SMOKE_DATA/payment_reconciliation.db"
+  auth:
+    kind:    basic             # none | basic | form
+    user:    "smoke"
+    secret:  "$TALLER_SMOKE_SECRET"   # from the environment, never in the file
+```
+
+| Key | Rule |
+|---|---|
+| `$TALLER_SMOKE_PORT` | **Allocated by the gate** — an ephemeral free port, injected into `boot`, `ready` and `env`. Never a fixed port, so a smoke run cannot collide with the owner's own dev server or with a second ticket's run. `ready: "auto"` means "use the allocated port at `/`". |
+| `data: copy` | A **copy** of the project database into a temporary `$TALLER_SMOKE_DATA`, discarded afterwards. `fresh` runs migrations on an empty file; `none` means the app needs no database. **The live database and its `-wal`/`-shm` files are never opened** — the same care §13.1 takes for staging, and the reason §7.3 keeps worktrees away from them. |
+| `env` | Merged over the subprocess environment, after `$TALLER_SMOKE_*` substitution. |
+| `auth` | How to reach an authenticated page. Secrets come from the environment; `taller doctor` reports an unset one rather than the gate failing mysteriously. |
+
+Rule ids: `smoke.boot-failed` (BLOCKER), `smoke.route-error` (BLOCKER),
+`smoke.not-rendered` (HIGH), `smoke.timeout` (HIGH),
+`smoke.unmapped-template` (MEDIUM).
 
 **Mapped routes** — how "the change is exercised" becomes decidable. At ② the
 explorer writes a `template → routes` map for the changed templates into
@@ -1069,41 +1246,68 @@ those routes. When a changed template cannot be mapped to any route (an
 `{% include %}` partial, or a dynamic name), the gate reports
 `smoke.unmapped-template` at `MEDIUM` and falls back to `routes` — so an
 unverifiable template is *visible to the owner at ⑦* rather than silently
-unchecked.
-
-Rule ids: `smoke.boot-failed` (BLOCKER), `smoke.route-error` (BLOCKER),
-`smoke.timeout` (HIGH), `smoke.unmapped-template` (MEDIUM).
+unchecked. The map is written to `status.yml` as `templates:` (§7.1).
 
 ### 9.7 Rule ids and default severities
 
 Three mechanisms key off severity — the fixer, the summary, and §4.5's
 downgrade — so severity belongs to the rule id, not to the implementer's
-judgement. Mechanical gates:
+judgement. Severity alone is not enough, though: **not every blocker should be
+handed to an LLM.** A `remediation` column decides who acts.
 
-| Rule id | Severity |
+| `remediation` | Meaning |
 |---|---|
-| `brand.hardcoded-color` | HIGH |
-| `brand.hardcoded-font` | HIGH |
-| `constitution.layer-violation` | HIGH |
-| `constitution.root-markdown` | MEDIUM |
-| `constitution.single-use-script` | MEDIUM |
-| `constitution.commit-message-shape` | MEDIUM |
-| `constitution.new-ui-literal` | MEDIUM |
-| `constitution.resolved-snapshot-stale` | HIGH |
-| `constitution.override-without-reason` | HIGH |
-| `constitution.override-expired` | HIGH |
-| `constitution.override-not-permitted` | BLOCKER |
-| `size.file-too-long` | MEDIUM |
-| `size.function-too-long` | MEDIUM |
-| `size.duplicate-block` | LOW |
-| `tests.failed` | BLOCKER |
-| `tests.error` | BLOCKER |
-| `tests.coverage-below-minimum` | MEDIUM (LOW when `min_coverage_pct` is 0) |
-| `smoke.*` | §9.6 |
+| `agent` | Dispatch the fixer (`worker`), up to `max_fix_rounds` |
+| `command` | Run the named deterministic command; never an LLM |
+| `escalate` | Stop and ask the owner. No automatic attempt. |
 
-The three LLM gates assign severity per finding, from guidance in their agent
-definition, and their rule ids are declared there. **Every security-gate rule is
-non-suppressible** regardless of severity (§4.5).
+| Rule id | Severity | Remediation |
+|---|---|---|
+| `brand.hardcoded-color` | HIGH | `agent` |
+| `brand.hardcoded-font` | HIGH | `agent` |
+| `constitution.layer-violation` | HIGH | `agent` |
+| `constitution.root-markdown` | MEDIUM | `agent` |
+| `constitution.single-use-script` | MEDIUM | `agent` |
+| `constitution.commit-message-shape` | MEDIUM | `agent` |
+| `constitution.new-ui-literal` | MEDIUM | — (owner summary only) |
+| `constitution.resolved-snapshot-stale` | HIGH | `command`: `taller resolve` |
+| `constitution.resolved-snapshot-modified` | BLOCKER | `escalate` |
+| `constitution.override-without-reason` | HIGH | `escalate` |
+| `constitution.override-expired` | HIGH | `escalate` |
+| `constitution.override-not-permitted` | BLOCKER | `escalate` |
+| `size.file-too-long` | MEDIUM | `escalate` |
+| `size.function-too-long` | MEDIUM | `agent` |
+| `size.duplicate-block` | LOW | — |
+| `tests.failed` | BLOCKER | `agent` — **restricted, see below** |
+| `tests.error` | BLOCKER | `escalate` |
+| `smoke.boot-failed` | BLOCKER | `escalate` |
+| `smoke.route-error` | BLOCKER | `agent` — **restricted** |
+| `smoke.not-rendered` | HIGH | `escalate` |
+| `smoke.timeout` | HIGH | `escalate` |
+| `smoke.unmapped-template` | MEDIUM | — (owner summary only) |
+
+Rationale for the four `escalate` rows that carry a BLOCKER or HIGH: a suite that
+could not run, an application that will not start, and a snapshot that was edited
+are **environment or intent failures**, not code defects — two LLM rounds are the
+wrong response and would burn a fix budget producing nothing. A file over the
+length threshold needs a decision about how to split it, which is the architect's
+work on a `full` ticket, not a fixer's.
+
+**The fixer may not modify tests.** No fix round may touch any path under
+`paths.tests_dir`, or any file matching `test_*.py` / `*_test.py`. The cheapest
+way to make a failing test pass is to change the test, and a system that is
+allowed to do that cannot be trusted by the person relying on it. An attempted
+write there aborts the round and escalates. This is enforced in `fixer.md` and
+asserted in §15.1.
+
+The three LLM gates assign severity and remediation per finding, from guidance in
+their agent definition, and their rule ids are declared there. **Every
+security-gate rule is non-suppressible** regardless of severity (§4.5).
+
+Coverage is reported as a `metrics` figure (§7.4), not as a rule. With
+`min_coverage_pct: 0` shipped, a coverage *finding* could never fire, so there is
+no `tests.coverage-below-minimum` id; a project that sets a non-zero minimum gets
+`tests.coverage-below-minimum` at MEDIUM, `escalate`.
 
 ### 9.8 Amendment, not argument
 
@@ -1338,7 +1542,13 @@ which is the owner's decision to make.
 | Two writers at once | Project, hub or registry lock + atomic replace (§10.3). Loser fails clearly after 5s. |
 | Spend cannot be fully attributed | `spend.partial: true`; rendered as a lower bound. Never estimated. |
 | `pricing` unset | `spend.cost: null`; the cockpit shows weighted tokens only; `doctor` notes cost is unavailable. |
-| Snapshot older than the hub | `constitution.resolved-snapshot-stale` HIGH, locally (§4.6). |
+| Snapshot older than the hub | `constitution.resolved-snapshot-stale` HIGH; remediated by `taller resolve`, a command, not an agent (§9.7). |
+| Snapshot edited by hand, or carried on a branch | `constitution.resolved-snapshot-modified` BLOCKER, escalated to the owner. Locally by byte-for-byte re-resolution; in CI by detecting the diff (§4.6). |
+| Amend touches a module six projects share | All six snapshots refreshed, each under its own lock; `/taller:amend` reports which projects it wrote. Any that fail leave `sync: pending` (§4.6, §7.3). |
+| Test suite could not run, or application will not boot | `escalate` — the owner is asked. No fixer round is spent on an environment failure (§9.7). |
+| Fixer attempts to modify a test file | Round aborted, escalated. Never permitted (§9.7). |
+| Smoke route returns 3xx to a login page | `smoke.not-rendered` HIGH — a redirect is not a render (§9.6). |
+| `smoke.auth.secret` unset | `taller doctor` reports it; the gate escalates rather than failing opaquely. |
 | Hub changed mid-ticket | Each verdict records `hub_sha`. At ⑦ the chief compares every verdict's `hub_sha` against the hub's **current `HEAD`** and warns that rules moved under the ticket. |
 | `gh` unauthenticated | Stage ① issue mirroring, ⑧ and ⑫ fail with a clear message. Local stages continue. |
 | Owner tries to force `fast` over a security-sensitive path | Refused, naming the matching glob (§8.2). |
@@ -1364,8 +1574,20 @@ Particular attention:
   list-replace elsewhere; missing module; unknown profile; `brand: none`; a slice
   provided by three files in profile order.
 - Snapshot: `write_snapshot()` then `load_snapshot()` round-trips a `RuleSet`
-  including slice text and brand tokens; a stale `hub_sha` produces
-  `constitution.resolved-snapshot-stale` locally and **not** in CI mode.
+  including slice text and brand tokens; `mode` is `"local"` from `resolve()` and
+  `"ci"` from `load_snapshot()`; a stale `hub_sha` produces
+  `constitution.resolved-snapshot-stale` in `local` mode and **not** in `ci` mode;
+  a byte-altered snapshot produces `constitution.resolved-snapshot-modified` in
+  `local` mode even when its `hub_sha` is correct.
+- Brand delivery: `resolve()` regenerates `static/css/tokens.css` verbatim from
+  the hub brand; the constitution gate exempts that path and flags an identical
+  value placed anywhere else; adopting a project whose tokens live in another file
+  lifts them to the hub rather than reporting them (§4.2.1).
+- Fixer restriction: a fix round attempting to write under `paths.tests_dir`, or
+  to `test_*.py` / `*_test.py`, aborts and escalates.
+- Remediation routing: `tests.error`, `smoke.boot-failed`, `smoke.not-rendered`
+  and `size.file-too-long` escalate without dispatching a fixer;
+  `constitution.resolved-snapshot-stale` runs `taller resolve`.
 - `overrides.py`: valid suppression downgrades to `NIT` with the reason attached;
   missing reason; expired `until` (distinct rule id from missing reason); a
   `never`-slice rule and a security rule both refused as non-suppressible.
@@ -1377,8 +1599,10 @@ Particular attention:
 - `commit_to_main()`: non-fast-forwardable `main` is rebased and succeeds; a
   rejected push leaves `sync: pending` and loses no transition; the next call
   retries the push first.
-- `gates/smoke.py`: `kind: http` boot failure, route 500, timeout with the
-  subprocess reaped; `kind: import` raising; `kind: none` passing with
+- `gates/smoke.py`: `kind: http` boot failure, route 500, 302-to-login producing
+  `smoke.not-rendered`, timeout with the subprocess reaped, two concurrent runs
+  getting distinct ports, `data: copy` leaving the source database and its `-wal`
+  file untouched; `kind: import` raising; `kind: none` passing with
   `skipped: true`; an unmappable template producing `smoke.unmapped-template`.
 
 ### 15.2 A fixture repository of deliberate violations
@@ -1424,12 +1648,13 @@ before every phase exists:
 | Check | Requires |
 |---|---|
 | `resolve()` succeeds; no unreasoned, expired or non-permitted override | A |
-| `resolved.json` present and not stale | A |
+| `resolved.json` present, not stale, and **byte-identical to a fresh `resolve()`** | A |
+| `static/css/tokens.css` present and byte-identical to the hub brand's | A |
 | Registry valid; every registered path exists; every `main` worktree present | A/D |
 | Every `status.yml` parses; no ticket left `sync: pending` | D |
 | Every configured model reachable (`models probe`) | B |
 | `pricing` set (advisory — notes that cost is unavailable if not) | B |
-| Every Python gate executes; `smoke` configuration valid for the profile; each LLM gate **dry-runs** (prompt assembles, model reachable — no inference) | C |
+| Every Python gate executes; `smoke` configuration valid for the profile; `smoke.auth.secret` resolvable if declared; each LLM gate **dry-runs** (prompt assembles, model reachable — no inference) | C |
 | Latest `taller-ci` run on `main` with `taller-ci-mode: full` is green (§9.4) | F |
 
 The dry-run rule keeps `taller doctor` free to run.
@@ -1454,7 +1679,7 @@ than one perfect filter.
 | 3 | Ticket resumable after a killed session | not possible | every ticket | D |
 | 4 | Tickets with a recorded `weighted_tokens` figure | 0 | every ticket | B |
 | 5 | Owner approval checkpoints before production | informal | 2 unconditional + 2 lane-dependent, enforced | B |
-| 6 | Unsuppressed `brand.hardcoded-*` findings on `main`, measured by `taller scan` | 26 in `cont` | **does not increase** ticket over ticket | C |
+| 6 | Tickets reaching ⑩ merge with an unsuppressed `brand.hardcoded-*` finding in their own constitution verdict | unmeasurable | 0 | C |
 | 7 | Review directories duplicated across projects | 6 projects | 0 | C |
 | 8 | `taller scan` produces Health figures for every project | not possible | all registered projects | C |
 | 9 | CI workflows per repository | 3 | 1 | F |
@@ -1466,11 +1691,17 @@ than one perfect filter.
 lines by design) and `resolved.json` (generated). Without those exclusions the
 criterion would be arithmetically unreachable.
 
-**Criterion 6** is measured, not assumed: `taller scan` at stage ① and again at
-⑫, comparing unsuppressed `brand.hardcoded-color` and `brand.hardcoded-font`
-counts. Findings downgraded by an active override (§4.5) are excluded, because
-§4.5 exists precisely to admit reasoned exceptions. Phrased as a ratchet rather
-than "0", since the 26 pre-existing values are cleared by their own tickets.
+**Criterion 6** measures G4 exactly, against the ticket's own verdict rather than
+a repository count. A ratchet on a scan total would pass a ticket that removes one
+hardcoded value and adds another — the count stays flat while a new value reached
+`main`, which is precisely what G4 forbids. The verdict is already on disk
+(§7.4), so the measure is: no ticket merges with an unsuppressed
+`brand.hardcoded-color` or `brand.hardcoded-font` finding of its own. Findings
+downgraded by an active override (§4.5) are excluded, because §4.5 exists to admit
+reasoned exceptions.
+
+The `taller scan` total remains the **trend figure** on the Health screen — how
+many of the 26 are left — which is a different and also useful question.
 
 **Criterion 11** is Phase F because doctor checks CI (§15.4), which does not
 exist until F.
@@ -1495,7 +1726,15 @@ counts them and the Health screen shows them trending down.
 | Slice text appends; only `overrides.md` suppresses, by rule id, with a reason | Project prose overriding hub prose | Append-vs-override was ambiguous on whether a project can delete a hub prohibition. It cannot. |
 | `never` and security rules are non-suppressible | All rules overridable | Otherwise `never` does not mean never, and a security BLOCKER could be downgraded to silence. |
 | `paths.security_sensitive` append-only, over a hub floor | Lists replace uniformly | A project able to narrow its own security surface would make the mandatory security gate optional. |
-| **Rule ids carry default severities (§9.7)** | Severity left to the implementer | The fixer, the summary and §4.5's downgrade all key off severity. Two implementers would have disagreed on whether a hardcoded hex burns a fix round. |
+| **Rule ids carry default severities and a `remediation` (§9.7)** | Severity left to the implementer; severity alone deciding who acts | The fixer, the summary and §4.5's downgrade all key off severity. And severity alone routed a suite that would not run and an application that would not boot into an LLM fixer for two rounds — environment failures where that is the wrong response and buys nothing. |
+| **The fixer may never modify a test file** | Trusting the fixer's judgement | The cheapest way to make a failing test pass is to change the test. A system allowed to do that cannot be trusted by the person relying on it. |
+| **Tamper check: local byte-for-byte re-resolution; CI rejects a branch that carries a snapshot** | Trusting the committed snapshot; relying on the diff being visible | `resolve()` is deterministic, so the snapshot is reproducible — and without the check a branch could raise its own thresholds or delete the `never` text and CI would pass it. `hub_sha` stays correct under a hand edit, so staleness alone catches nothing. Showing a diff in review is not checking it. |
+| **Generated `static/css/tokens.css` inside each project; `adopt` lifts existing tokens into the hub** | The hub `tokens.css` as the deployed file; flagging a project's existing token definitions | The hub is outside the repository and outside the Docker image, so the browser could never load it. And left alone, `cont`'s seven `--app-*` definitions in `admin.css` would each have been reported as a hardcoded value — 33 findings on a baseline of 26. |
+| **Smoke isolates data, port and auth; a 3xx is not a render** | A fixed port; whatever database the app config points at; accepting any 2xx/3xx | A fixed port collides with the owner's dev server and with a second ticket. Booting against the live SQLite file risks the WAL that §7.3 and §13.1 both protect. And a hotel app redirects an unauthenticated request to a login page — 302 would have passed while rendering nothing, which destroys the fast lane's only safety argument. |
+| **Criterion 6 measured from the ticket's own verdict** | A `taller scan` count ratchet | A ratchet passes a ticket that removes one hardcoded value and adds another: the count stays flat while a new value reaches `main`, which is exactly what G4 forbids. |
+| **`mode` in the `RuleSet`** | Gates reading the environment | The local-vs-CI difference is required behaviour and had no channel; putting it in the `RuleSet` keeps `gates/*.py` pure over their arguments. |
+| **Rule ids are `<domain>.<rule>`, domains declared per gate** | Ids prefixed by the gate | `brand.hardcoded-color` is found by the constitution gate, so a gate prefix would have made `Finding.gate` and `Finding.rule` contradict each other — and criterion 6 filters on the `brand.` prefix. |
+| **Two CI jobs, one required** | One job with an early exit, reporting two names | One job emits exactly one check run, so the informational name had no way to exist — and the required check is the one whose absence deadlocks the merge. |
 | Constitution gate fully mechanical; UI-language in the UX gate; `constitution.new-ui-literal` as the fast-lane fallback | A `cheap` model pass in the constitution gate; enforcing language mechanically | Language identification is a heuristic, and a gate that sometimes calls a model cannot promise no per-push cost. The fallback surfaces new strings without judging them, which is decidable. |
 | **Smoke fully specified: `kind`, boot, ready, timeout, mapped routes** | Leaving "the application boots" to the implementer | The fast lane's entire safety argument rests on ⑥, and "boots" means nothing for a PyInstaller app or a static site. |
 | Both lanes include ②, ⑥, ⑪ and ⑫ | Fast lane as a short prefix | ② loads the slices fast work most needs; ⑥ is the only step that renders a template, and fast work is template editing; omitting ⑪/⑫ meant fast tickets never deployed or closed. |
