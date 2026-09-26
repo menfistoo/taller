@@ -267,11 +267,18 @@ scopes (§4.7). The design has no dependency on any GitHub MCP server.
 defaults move.** `~/.taller/taller.yml` records `cli_min_version`, and `taller
 doctor` verifies that every flag §3.6's mapping table depends on —
 `-p`, `--output-format json`, `--json-schema`, `--append-system-prompt`, `--resume`,
-`--add-dir`, `--allowedTools`, `--disallowedTools`, `--agents`, `--model`,
-`--permission-mode`, `--permission-prompts` — is still accepted, and records the
-observed version. **Step 1 of the Phase A plan is to verify each flag against the
-installed binary and write the version down.** A mapping table written against an
-unrecorded CLI is a silent-breakage waiting to happen.
+`--session-id`, `--add-dir`, `--allowedTools`, `--disallowedTools`, `--agents`,
+`--model`, `--permission-mode` — is still accepted, and records the observed
+version. A mapping table written against an unrecorded CLI is silent breakage
+waiting to happen.
+
+**Verified on 2026-09-26 against `claude 2.1.74`:** all twelve required flags
+present. Two flags are **optional**, used when present and omitted when not:
+
+| Flag | Status on 2.1.74 | Behaviour without it |
+|---|---|---|
+| `--permission-prompts none` | absent (needs 2.1.259+) | `--permission-mode dontAsk` carries `unattended` on its own; the only loss is the hint telling Claude not to retry a denied call |
+| `--bare` | absent | Nothing to avoid yet. §3.6.2's guard is therefore **forward-looking**, and its `doctor` assertion is what will catch the day it arrives and becomes the default |
 | Python 3.11+ | hard | The library, CLI, gate scripts, spend accounting and cockpit are Python |
 | `pypdf`, `pillow` | hard for A | Brand extraction from a guide PDF and from a logo image (§4.2) |
 | `gh` CLI, authenticated | **hard for A**, D and F | `taller setup` rounds 1 and 3 call `gh auth status` and `gh repo list` (§4.7). Without it, Phase A discovery **degrades to disk-only** and says so; the greenfield path needs no `gh` at all. |
@@ -414,7 +421,7 @@ inside a subagent turn where `structured_output` does not reach.
 | `forbidden` | `--disallowedTools` specifiers — §3.6.1 |
 | `schema` | `--json-schema`; the answer arrives in `structured_output` |
 | `agents` (chief only; `None` for gates) | `--agents <json>` |
-| `unattended: true` | `--permission-mode dontAsk --permission-prompts none` |
+| `unattended: true` | `--permission-mode dontAsk`, plus `--permission-prompts none` when the CLI supports it (§3.4) |
 
 **Session ids are captured, never invented.** `Result.session_id` comes from the
 `session_id` field of the JSON result; the caller stores it and passes it back as
@@ -1174,7 +1181,7 @@ effort:                       # role key if present, else `default` (§4.4.1)
 
 fallback: worker              # unreachable model degrades, never crashes
 
-cli_min_version: "2.1.275"    # §3.4 — `doctor` verifies the flag surface
+cli_min_version: "2.1.74"     # §3.4 — verified 2026-09-26; `doctor` checks the flags
 
 language: null                # NO DEFAULT. Asked at `taller setup`, round 5.
                               # e.g. {code: en, ui: es, commits: en}
