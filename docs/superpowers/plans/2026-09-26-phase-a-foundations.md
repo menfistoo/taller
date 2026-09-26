@@ -62,10 +62,10 @@ taller/
 │   ├── doctor.py                   checks with pass/fail/skip-with-reason
 │   └── commands/                   one module per CLI verb; thin
 │       ├── setup.py  project.py  brand.py  settings.py  doctor.py
-├── templates/catalogue/
-│   ├── modules/                    stack/ security/ conventions/ ux/ never.md
-│   ├── profiles/                   flask-sqlite.yml static-site.yml python-packaged.yml
-│   └── scaffolds/<profile>/        manifest.yml + *.j2
+│   └── catalogue/                  INSIDE the package, so a wheel ships it
+│       ├── modules/                stack/ security/ conventions/ ux/ never.md
+│       ├── profiles/               flask-sqlite.yml static-site.yml python-packaged.yml
+│       └── scaffolds/<profile>/    manifest.yml + *.j2
 └── tests/
     ├── conftest.py                 tmp HOME, stub `claude` on PATH
     ├── stub_claude.py              the fake CLI every inference test runs against
@@ -85,6 +85,8 @@ taller/
 - **TDD:** the failing test comes first, every time. Run it, see it fail, then implement.
 - **No real inference in tests.** Every test that touches `inference.py` runs against `tests/stub_claude.py` placed on `PATH` by the fixture. A test suite that spends the owner's subscription window is a test suite nobody runs.
 
+> **⚠ The one bug that would cost real money.** On Windows, `CreateProcess` appends only `.exe` to an extensionless name, so `subprocess.run(["claude", ...])` **skips a `claude.cmd` earlier on `PATH`** and runs the real `claude.exe` instead. Reproduced on this machine: `shutil.which("claude")` returned the stub shim while `subprocess.run(["claude","--version"])` printed `2.1.74` from the real binary. Every module that spawns the CLI — `inference.py` and `cli_probe.py` — must therefore **resolve the executable to an absolute path with `shutil.which()` and spawn that.** Without it, the whole inference suite makes real billed dispatches, empties nothing into the argv log, and fails on a confusing assertion.
+
 Run the suite with:
 
 ```bash
@@ -98,7 +100,10 @@ python -m pytest -q
 ### Task 1: Repository skeleton and a green empty suite
 
 **Files:**
-- Create: `pyproject.toml`, `src/taller/__init__.py`, `src/taller/errors.py`, `tests/conftest.py`, `tests/unit/test_smoke.py`
+- Create: `pyproject.toml`, `src/taller/__init__.py`, `src/taller/errors.py`, `tests/unit/test_smoke.py`
+- Create (empty placeholders, filled in Chunk 4): `src/taller/catalogue/modules/.gitkeep`, `src/taller/catalogue/profiles/.gitkeep`, `src/taller/catalogue/scaffolds/.gitkeep`
+
+**Note:** the catalogue lives **inside the package** at `src/taller/catalogue/`, not at the repository root. A root `templates/` directory would ship nothing in a wheel, since `packages.find` only collects from `src`. The placeholders exist from Task 1 so that Task 2's catalogue assertion is not a forward reference.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -136,6 +141,9 @@ taller = "taller.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"taller" = ["catalogue/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -182,11 +190,15 @@ class DoctorFailure(TallerError):
 - [ ] **Step 6: Install in editable mode and run the test**
 
 ```bash
+mkdir -p src/taller/catalogue/modules src/taller/catalogue/profiles src/taller/catalogue/scaffolds
+touch src/taller/catalogue/modules/.gitkeep src/taller/catalogue/profiles/.gitkeep src/taller/catalogue/scaffolds/.gitkeep
 python -m pip install -e ".[dev]"
 python -m pytest tests/unit/test_smoke.py -q
 ```
 
-Expected: `1 passed`. Note that this also installs `pypdf`, which is **not currently present** on this machine.
+Expected: `1 passed`.
+
+Two things to know about this step: it is **the only step that needs the network**, because `pypdf` is confirmed absent on this machine (`PyYAML` and `pillow` are already present); and the `taller` console script it installs will **traceback until Chunk 8**, because `cli.py` does not exist yet. That is expected, not a broken Task 1.
 
 - [ ] **Step 7: Commit**
 
@@ -200,8 +212,7 @@ git commit -m "chore: package skeleton, error hierarchy, empty test suite"
 ### Task 2: `paths.py` — one place that knows where things live
 
 **Files:**
-- Create: `src/taller/paths.py`, `tests/unit/test_paths.py`
-- Modify: `tests/conftest.py`
+- Create: `src/taller/paths.py`, `tests/unit/test_paths.py`, `tests/conftest.py`
 
 **Why first:** every later test needs an isolated `HOME`. That only works if no module hardcodes a path (§4, §15.5 step 1).
 
@@ -239,9 +250,11 @@ def test_named_subpaths(tmp_home: Path):
     assert paths.main_worktree("demo") == tmp_home / ".taller-run" / "worktrees" / "demo-main"
 
 
-def test_catalogue_ships_with_the_package():
-    # The catalogue is inside the installed package, not in the hub (spec 4.0).
+def test_catalogue_ships_inside_the_package():
+    # Inside the installed package, not in the hub and not at the repo root,
+    # so a wheel ships it (spec 4.0).
     assert paths.catalogue().is_dir()
+    assert paths.catalogue().parent.name == "taller"
     assert (paths.catalogue() / "profiles").is_dir()
 ```
 
@@ -376,7 +389,8 @@ def smoke_dir(project_name: str, ticket_id: int) -> Path:
 # --- the catalogue: inside the installed package, inert until copied ---------
 
 def catalogue() -> Path:
-    return Path(__file__).resolve().parent.parent.parent / "templates" / "catalogue"
+    """Inside the installed package, so a wheel ships it (spec 4.0)."""
+    return Path(__file__).resolve().parent / "catalogue"
 
 
 # --- per project -------------------------------------------------------------
@@ -465,17 +479,22 @@ def test_second_process_times_out_and_the_file_survives(tmp_path: Path):
     target = tmp_path / "data.txt"
     target.write_text("original", encoding="utf-8")
 
+    ready = tmp_path / "ready"
     holder = subprocess.Popen(
         [sys.executable, "-c", textwrap.dedent(f"""
-            import time
+            import pathlib, time
             from taller import locking
             with locking.file_lock({str(lock)!r}):
+                pathlib.Path({str(ready)!r}).write_text("1")
                 time.sleep(8)
         """)],
     )
     try:
         import time
-        time.sleep(1.5)  # let the holder acquire
+        deadline = time.monotonic() + 20          # a readiness file, not a guessed sleep
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert ready.exists(), "holder process never acquired the lock"
         with pytest.raises(LockTimeout):
             with locking.file_lock(lock, timeout=5):
                 target.write_text("clobbered", encoding="utf-8")
@@ -483,6 +502,16 @@ def test_second_process_times_out_and_the_file_survives(tmp_path: Path):
     finally:
         holder.kill()
         holder.wait()
+
+
+def test_a_non_reentrant_lock_refuses_the_same_thread(tmp_path: Path):
+    """Semaphore slots must not be re-entrant, or a nested dispatch would exceed
+    the concurrency cap silently."""
+    lock = tmp_path / "slot-0.lock"
+    with locking.file_lock(lock, reentrant=False):
+        with pytest.raises(LockTimeout, match="semaphore slot"):
+            with locking.file_lock(lock, timeout=0.1, reentrant=False):
+                pass
 
 
 def test_atomic_write_replaces_in_place(tmp_path: Path):
@@ -524,41 +553,65 @@ from __future__ import annotations
 
 import contextlib
 import os
+import threading
 import time
-from collections import defaultdict
 from pathlib import Path
 from typing import Iterator
 
+from . import paths
 from .errors import LockTimeout
 
 DEFAULT_TIMEOUT = 5.0
 _POLL = 0.05
 
-# lock path (resolved, as str) -> re-entrancy depth for THIS process
-_depth: dict[str, int] = defaultdict(int)
+# lock path (resolved, as str) -> re-entrancy depth, per THREAD.
+# Thread-local because the cockpit (spec 12) is a threaded server in one process,
+# where a process-wide counter would let thread B believe it holds thread A's lock.
+_state = threading.local()
+
+
+def _depths() -> dict[str, int]:
+    if not hasattr(_state, "depth"):
+        _state.depth = {}
+    return _state.depth
 
 
 def held(lock_path: Path | str) -> bool:
-    """True when this process currently holds the lock."""
-    return _depth[str(Path(lock_path).resolve())] > 0
+    """True when this thread currently holds the lock. Reads without mutating."""
+    return _depths().get(str(Path(lock_path).resolve()), 0) > 0
 
 
 @contextlib.contextmanager
-def file_lock(lock_path: Path | str, timeout: float = DEFAULT_TIMEOUT) -> Iterator[None]:
-    """Hold an exclusive lock. Re-entrant within this process.
+def file_lock(
+    lock_path: Path | str,
+    timeout: float = DEFAULT_TIMEOUT,
+    reentrant: bool = True,
+) -> Iterator[None]:
+    """Hold an exclusive lock. Re-entrant within this thread by default.
 
     Raises LockTimeout rather than waiting indefinitely or forcing, so a stuck
     holder produces a clear message instead of a hang.
+
+    `reentrant=False` is for counting semaphores. A re-entrant lock used as a
+    semaphore silently stops capping: the second acquisition in the same thread
+    succeeds by design, so a nested dispatch would exceed the concurrency limit
+    without any error. Verified both ways before this was written.
     """
     path = Path(lock_path).resolve()
     key = str(path)
+    depth = _depths()
 
-    if _depth[key] > 0:            # already ours — just count deeper
-        _depth[key] += 1
+    if depth.get(key, 0) > 0:      # already ours
+        if not reentrant:
+            raise LockTimeout(
+                f"{path} is already held by this thread and was requested "
+                f"non-re-entrantly. It is a semaphore slot, not a mutex."
+            )
+        depth[key] += 1             # just count deeper
         try:
             yield
         finally:
-            _depth[key] -= 1
+            depth[key] -= 1
         return
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -579,13 +632,30 @@ def file_lock(lock_path: Path | str, timeout: float = DEFAULT_TIMEOUT) -> Iterat
 
     os.write(fd, str(os.getpid()).encode("ascii"))
     os.close(fd)
-    _depth[key] = 1
+    depth[key] = 1
     try:
         yield
     finally:
-        _depth[key] = 0
+        depth[key] = 0
         with contextlib.suppress(FileNotFoundError):
             path.unlink()
+
+
+# --- the three named locks of spec 10.2, as context managers ----------------
+
+def hub_lock(timeout: float = DEFAULT_TIMEOUT):
+    """Hub amendments."""
+    return file_lock(paths.hub_lock(), timeout)
+
+
+def registry_lock(timeout: float = DEFAULT_TIMEOUT):
+    """projects.json writes."""
+    return file_lock(paths.registry_lock(), timeout)
+
+
+def project_lock(project_name: str, timeout: float = DEFAULT_TIMEOUT):
+    """A project's main-side files, and a whole chief dispatch (spec 7.6)."""
+    return file_lock(paths.project_lock(project_name), timeout)
 
 
 def atomic_write(target: Path | str, data: bytes) -> None:
@@ -614,7 +684,7 @@ def atomic_write_text(target: Path | str, text: str) -> None:
 - [ ] **Step 4: Run the tests**
 
 Run: `python -m pytest tests/unit/test_locking.py -q`
-Expected: `5 passed`. The cross-process test takes ~6 seconds; that is the timeout being proved.
+Expected: `6 passed`. The cross-process test takes ~6 seconds; that is the timeout being proved.
 
 - [ ] **Step 5: Commit**
 
@@ -907,6 +977,20 @@ def test_security_sensitive_does_not_duplicate():
     assert config.deep_merge(base, over)["paths"]["security_sensitive"] == [".env*", "x/**"]
 
 
+def test_hub_sha_is_empty_when_the_hub_is_not_a_repo(tmp_home: Path):
+    cfg = config.load_hub_config()
+    assert cfg["hub_sha"] == ""      # the state a first-ever install is in
+
+
+def test_security_sensitive_rejects_a_scalar(tmp_home: Path):
+    # A string here would silently replace the floor (spec 4.4).
+    with pytest.raises(ConfigError, match="append-only"):
+        config.deep_merge(
+            {"paths": {"security_sensitive": [".env*"]}},
+            {"paths": {"security_sensitive": "billing/**"}},
+        )
+
+
 def test_resolve_model_maps_role_through_alias(tmp_home: Path):
     cfg = config.load_hub_config()
     assert config.resolve_model("chief", cfg) == "sonnet"
@@ -1025,8 +1109,15 @@ def deep_merge(base: Any, over: Any, _trail: tuple[str, ...] = ()) -> Any:
         for key, value in over.items():
             out[key] = deep_merge(out.get(key), value, _trail + (key,))
         return out
-    if isinstance(base, list) and isinstance(over, list) and _trail in APPEND_ONLY_LIST_PATHS:
-        merged = list(base)
+    if _trail in APPEND_ONLY_LIST_PATHS:
+        # Type-guarded: a scalar here would otherwise silently replace the hub
+        # floor, which is exactly what the append-only rule forbids (spec 4.4).
+        if not isinstance(over, list):
+            raise ConfigError(
+                f"{'.'.join(_trail)} must be a list; got {type(over).__name__}. "
+                f"It is append-only, so a scalar cannot replace it."
+            )
+        merged = list(base or [])
         merged.extend(item for item in over if item not in merged)
         return merged
     return copy.deepcopy(over)
@@ -1053,7 +1144,28 @@ def load_hub_config() -> HubConfig:
     cfg = deep_merge(SHIPPED_DEFAULTS, _read_yaml(paths.hub_config()))
     if cfg["billing"]["mode"] is None:
         cfg["billing"]["mode"] = detect_billing_mode()
+    cfg["hub_sha"] = hub_sha()
     return cfg
+
+
+def hub_sha() -> str:
+    """The hub's HEAD, recorded on every gate verdict (spec 4.4.1, 7.4).
+
+    Empty string when the hub is not yet a git repository, which is the state a
+    first-ever install is in.
+    """
+    import subprocess
+
+    if not (paths.hub() / ".git").exists():
+        return ""
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(paths.hub()), "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=30,
+        )
+    except OSError:
+        return ""
+    return out.stdout.strip() if out.returncode == 0 else ""
 
 
 def detect_billing_mode() -> str:
@@ -1094,7 +1206,7 @@ def resolve_effort(role: str, cfg: HubConfig) -> str:
 - [ ] **Step 4: Run the tests**
 
 Run: `python -m pytest tests/unit/test_config.py -q`
-Expected: `10 passed`
+Expected: `12 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -1228,7 +1340,7 @@ def add_project(*, path: Path | str, name: str, profile: str, brand: str | None)
         "brand": brand,
         "last_seen": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
-    with locking.file_lock(paths.registry_lock()):
+    with locking.registry_lock():
         projects = [p for p in _read() if p["path"] != resolved]
         projects.append(entry)
         projects.sort(key=lambda p: p["name"])
@@ -1240,7 +1352,7 @@ def add_project(*, path: Path | str, name: str, profile: str, brand: str | None)
 
 def remove_project(path: Path | str) -> None:
     resolved = str(Path(path).resolve())
-    with locking.file_lock(paths.registry_lock()):
+    with locking.registry_lock():
         projects = [p for p in _read() if p["path"] != resolved]
         locking.atomic_write_text(
             paths.registry(), json.dumps(projects, indent=2) + "\n"
@@ -1367,7 +1479,9 @@ def stub_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     if sys.platform == "win32":
         # A .cmd shim, because Windows will not execute a bare .py from PATH.
         shim = bindir / "claude.cmd"
-        shim.write_text(f'@echo off\r\n"{sys.executable}" "{source}" %*\r\n', encoding="utf-8")
+        # newline="" so text mode does not turn \n into \r\r\n.
+        shim.write_text(f'@echo off\n"{sys.executable}" "{source}" %*\n',
+                        encoding="utf-8", newline="")
     else:
         shim = bindir / "claude"
         shim.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{source}" "$@"\n', encoding="utf-8")
@@ -1409,18 +1523,20 @@ from taller.errors import InferenceError
 
 def _bootstrap_dispatch(**over):
     """A dispatch with no project — the first thing Phase A exercises (spec 3.6)."""
+    role = over.get("role", "scribe")
     base = dict(
-        role="scribe",
+        role=role,
         prompt="hello",
         ruleset=None,
         config=config.load_hub_config(),
-        cwd=None,            # -> scratch
+        cwd=None,                                   # -> scratch
         writable=[],
-        forbidden=[],
-        tools=["Read"],
+        tools=inference.role_tools(role),           # the spec 3.6.1 table
+        forbidden=inference.role_forbidden(role),
         agents=None,
         schema=None,
         unattended=True,
+        supports_permission_prompts=False,          # injected, never probed
     )
     base.update(over)
     return inference.Dispatch(**base)
@@ -1480,21 +1596,127 @@ def test_forbidden_expands_to_tool_specifiers_not_paths(tmp_home, stub_claude):
     assert "--disallowedTools tests/**" not in flags
 
 
-def test_a_role_with_forbidden_paths_never_gets_bare_bash(tmp_home, stub_claude):
+def test_the_role_table_never_gives_the_fixer_bare_bash(tmp_home):
+    # The table is the source of truth, so assert on the table itself.
+    assert "Bash" not in inference.role_tools("fixer")
+    assert inference.role_forbidden("fixer")            # it does restrict paths
+    assert any(t.startswith("Bash(") for t in inference.role_tools("fixer"))
+
+
+def test_the_implementer_keeps_bare_bash_and_forbids_nothing(tmp_home):
+    # It must run arbitrary commands to check its own work; --add-dir bounds it.
+    assert "Bash" in inference.role_tools("implementer")
+    assert inference.role_forbidden("implementer") == []
+
+
+def test_read_only_roles_get_no_write_tools_and_no_forbidden_list(tmp_home):
+    for role in ("explorer", "scribe", "summariser", "gate_security", "gate_ux"):
+        tools = inference.role_tools(role)
+        assert not {"Write", "Edit", "NotebookEdit"} & set(tools), role
+        assert inference.role_forbidden(role) == [], role
+
+
+def test_a_role_with_forbidden_paths_and_bare_bash_is_a_contract_violation(tmp_home, stub_claude):
     # A shell walks straight around a --disallowedTools specifier (spec 3.6.1).
+    # This is a bug in the caller, so it RAISES rather than returning a Result.
     with pytest.raises(InferenceError, match="bare Bash"):
         inference.infer(_bootstrap_dispatch(
             role="fixer", forbidden=["tests/**"], tools=["Read", "Write", "Bash"]
         ))
 
 
-def test_writable_becomes_add_dir_and_main_worktree_is_never_included(tmp_home, stub_claude, tmp_path):
+def test_writing_the_main_worktree_is_a_contract_violation(tmp_home, stub_claude):
+    # spec 15.1 requires this be asserted; gitio.commit_to_main() is the only
+    # writer of the main-side files.
+    forbidden_dir = paths.main_worktree("demo")
+    forbidden_dir.mkdir(parents=True)
+    with pytest.raises(InferenceError, match="main-worktree"):
+        inference.infer(_bootstrap_dispatch(
+            role="implementer", writable=[str(forbidden_dir)]
+        ))
+
+
+def test_a_project_directory_merely_named_foo_main_is_allowed(tmp_home, stub_claude, tmp_path):
+    # A name-suffix check would have rejected a legitimate checkout.
+    legit = tmp_path / "foo-main"
+    legit.mkdir()
+    result = inference.infer(_bootstrap_dispatch(
+        role="implementer", cwd=legit, writable=[str(legit)]
+    ))
+    assert result.ok
+
+
+def test_writable_becomes_add_dir(tmp_home, stub_claude, tmp_path):
     work = tmp_path / "wt"
     work.mkdir()
     inference.infer(_bootstrap_dispatch(role="implementer", cwd=work, writable=[str(work)]))
+    assert f"--add-dir {work.resolve()}" in stub_claude.flags()
+
+
+def test_effort_always_reaches_the_dispatch(tmp_home, stub_claude):
+    # Native flag, verified present on claude 2.1.74.
+    inference.infer(_bootstrap_dispatch(role="architect"))
+    assert "--effort high" in stub_claude.flags()
+
+
+def test_effort_survives_an_explicit_system_prompt(tmp_home, stub_claude):
+    # The bootstrap case: `system` replaces the briefing, never the effort.
+    inference.infer(_bootstrap_dispatch(role="architect", system="you are a planner"))
     flags = stub_claude.flags()
-    assert f"--add-dir {work}" in flags
-    assert "-main" not in flags
+    assert "--effort high" in flags
+    assert "you are a planner" in flags
+
+
+def test_a_schema_mismatch_is_its_own_failure(tmp_home, stub_claude, monkeypatch):
+    # spec 3.6.3 lists it among the failures that each need a distinct reason.
+    monkeypatch.setenv("STUB_CLAUDE_RESPONSE", (
+        '{"session_id":"s","is_error":false,"result":"prose, not structured",'
+        '"usage":{"input_tokens":1,"cache_creation_input_tokens":0,'
+        '"cache_read_input_tokens":0,"output_tokens":1}}'
+    ))
+    result = inference.infer(_bootstrap_dispatch(schema={"type": "object"}))
+    assert not result.ok
+    assert "structured_output" in result.error
+
+
+def test_a_failed_turn_still_reports_its_usage(tmp_home, stub_claude, monkeypatch):
+    # It was billed, so spend must see it (spec 7.5).
+    monkeypatch.setenv("STUB_CLAUDE_RESPONSE", (
+        '{"session_id":"s","is_error":true,"result":"refused",'
+        '"usage":{"input_tokens":5,"cache_creation_input_tokens":0,'
+        '"cache_read_input_tokens":0,"output_tokens":7}}'
+    ))
+    result = inference.infer(_bootstrap_dispatch())
+    assert not result.ok
+    assert result.usage and result.usage[0].output == 7
+
+
+def test_a_nested_slot_cannot_exceed_the_cap(tmp_home):
+    """One thread taking two slots from a one-slot pool must fail, not succeed."""
+    from taller.errors import LockTimeout
+
+    pool = paths.dispatch_slots() / "thinker"
+    pool.mkdir(parents=True, exist_ok=True)
+    outer = inference._acquire_slot(pool, limit=1)
+    try:
+        with pytest.raises(LockTimeout):
+            inference._acquire_slot(pool, limit=1)
+    finally:
+        outer.__exit__(None, None, None)
+    assert not list(pool.glob("*.lock")), "a slot leaked"
+
+
+def test_the_body_exception_is_not_swallowed_by_the_slot(tmp_home, stub_claude, monkeypatch):
+    """An earlier draft yielded inside a try/except in the acquisition loop, so a
+    body failure surfaced as `generator didn't stop after throw()`."""
+    import subprocess as sp
+
+    def boom(*args, **kwargs):
+        raise OSError("BODY BOOM")
+
+    monkeypatch.setattr(sp, "run", boom)
+    with pytest.raises(OSError, match="BODY BOOM"):
+        inference.infer(_bootstrap_dispatch())
 
 
 def test_schema_becomes_json_schema(tmp_home, stub_claude, monkeypatch):
@@ -1591,8 +1813,55 @@ from .errors import InferenceError
 # because --disallowedTools matches tools, not paths (spec 3.6.1).
 WRITE_TOOLS = ("Write", "Edit", "NotebookEdit")
 
-# Roles whose allowlist must never contain bare Bash while `forbidden` is set.
 BARE_BASH = "Bash"
+
+READ_ONLY = ["Read", "Glob", "Grep"]
+
+# Spec 3.6.1's per-role table, verbatim. It lives here rather than at each call
+# site because spec 15.1 asserts on the generated argument list and cannot be
+# written against "the specifiers it needs".
+#
+# Two properties worth noting:
+#   * A read-only role has NO forbidden list. It is granted no write-capable
+#     tool, so there is nothing to forbid.
+#   * `implementer` keeps bare Bash and has an empty forbidden list; it must be
+#     able to run arbitrary commands to check its own work, and is bounded by
+#     --add-dir alone. The no-test-file rule is the FIXER's, because "make a
+#     failing test pass by editing the test" is a fix round's temptation.
+ROLE_TOOLS: dict[str, list[str]] = {
+    "chief": READ_ONLY + ["Bash(git status*)", "Bash(git log*)", "Bash(git diff*)"],
+    "explorer": READ_ONLY,
+    "scribe": ["Read"],
+    "summariser": ["Read"],
+    "gate_security": READ_ONLY,
+    "gate_quality": READ_ONLY,
+    "gate_ux": READ_ONLY,
+    "architect": READ_ONLY + ["Write", "Edit"],
+    "implementer": READ_ONLY + ["Write", "Edit", "NotebookEdit", BARE_BASH],
+    "fixer": READ_ONLY + [
+        "Write", "Edit", "NotebookEdit",
+        "Bash(pytest*)", "Bash(python -m pytest*)",
+        "Bash(git diff*)", "Bash(git status*)",
+    ],
+}
+
+# Only the fixer restricts paths, and only the fixer therefore loses bare Bash.
+FIXER_FORBIDDEN = ["**/test_*.py", "**/*_test.py"]
+
+
+def role_tools(role: str) -> list[str]:
+    """The allowlist for a role. Raises rather than silently granting nothing."""
+    try:
+        return list(ROLE_TOOLS[role])
+    except KeyError as exc:
+        raise InferenceError(f"No tool allowlist defined for role {role!r}.") from exc
+
+
+def role_forbidden(role: str, tests_dir: str = "tests") -> list[str]:
+    """The forbidden globs for a role. Empty for every role but the fixer."""
+    if role != "fixer":
+        return []
+    return [f"{tests_dir}/**", *FIXER_FORBIDDEN]
 
 
 @dataclass
@@ -1623,6 +1892,10 @@ class Dispatch:
     agents: dict[str, Any] | None = None
     schema: dict[str, Any] | None = None
     unattended: bool = True
+    # Injected by the caller from cli_probe, never probed here: probing inside
+    # infer() spawned `claude --help` on the first dispatch of every process,
+    # which made a "never retries" assertion order-dependent.
+    supports_permission_prompts: bool = False
 
 
 @dataclass
@@ -1636,18 +1909,30 @@ class Result:
 
 
 def infer(dispatch: Dispatch, executable: str = "claude") -> Result:
-    """Perform one act of inference. Never retries — that is the caller's policy."""
-    try:
-        argv, cwd = _build(dispatch, executable)
-    except InferenceError as exc:
-        return Result(ok=False, error=str(exc))
+    """Perform one act of inference. Never retries — that is the caller's policy.
 
-    if shutil.which(executable) is None:
+    Two classes of failure, deliberately different:
+      * A *contract violation* by an internal caller — a role holding both bare
+        Bash and forbidden paths, or a dispatch trying to write the main worktree
+        — RAISES InferenceError. These are bugs in Taller, not runtime conditions,
+        and folding them into a Result would hide the guarantee spec 9.7 rests on.
+      * A *runtime* failure — bad exit, bad JSON, schema mismatch, missing binary
+        — returns ok: false with a distinct reason, for the caller's retry policy.
+    """
+    argv_tail, cwd = _build(dispatch, executable)   # may raise: see above
+
+    # Resolve to an absolute path BEFORE spawning. On Windows, CreateProcess
+    # appends only .exe to an extensionless name, so spawning bare "claude" skips
+    # a claude.cmd earlier on PATH and runs the real claude.exe instead — which
+    # would make the whole test suite issue real, billed dispatches.
+    resolved = shutil.which(executable)
+    if resolved is None:
         return Result(
             ok=False,
             error=f"The `{executable}` CLI is not on PATH. Taller performs every "
                   f"act of inference through it.",
         )
+    argv = [resolved, *argv_tail]
 
     with _slot(dispatch):
         completed = subprocess.run(
@@ -1672,8 +1957,21 @@ def infer(dispatch: Dispatch, executable: str = "claude") -> Result:
                                       f"JSON: {exc}")
 
     if payload.get("is_error"):
+        # A failed turn was still billed, so its usage must be recorded (spec 7.5).
         return Result(ok=False, error=str(payload.get("result", "unknown error")),
-                      session_id=payload.get("session_id", ""))
+                      session_id=payload.get("session_id", ""),
+                      usage=_usage(payload),
+                      cost_usd=payload.get("total_cost_usd"))
+
+    if dispatch.schema is not None and "structured_output" not in payload:
+        return Result(
+            ok=False,
+            error="A schema was requested but the answer carried no "
+                  "`structured_output`; the model did not satisfy it.",
+            session_id=payload.get("session_id", ""),
+            usage=_usage(payload),
+            cost_usd=payload.get("total_cost_usd"),
+        )
 
     value = payload.get("structured_output", payload.get("result"))
     return Result(
@@ -1704,9 +2002,13 @@ def _build(dispatch: Dispatch, executable: str) -> tuple[list[str], Path]:
     cwd = Path(dispatch.cwd) if dispatch.cwd else paths.scratch_cwd()
     cwd.mkdir(parents=True, exist_ok=True)
 
-    argv = [executable, "-p", "--output-format", "json", "--model", model]
+    # argv WITHOUT the executable; infer() prepends the resolved absolute path.
+    argv = ["-p", "--output-format", "json", "--model", model, "--effort", effort]
 
-    system = dispatch.system or _brief(dispatch, effort)
+    # `system` replaces the slice briefing, never the effort. An earlier draft
+    # computed effort and then discarded it whenever a caller supplied `system`,
+    # which is exactly the bootstrap case.
+    system = dispatch.system or _brief(dispatch)
     if system:
         argv += ["--append-system-prompt", system]
     if dispatch.resume:
@@ -1715,20 +2017,25 @@ def _build(dispatch: Dispatch, executable: str) -> tuple[list[str], Path]:
         argv += ["--allowedTools", ",".join(dispatch.tools)]
     if dispatch.forbidden:
         argv += ["--disallowedTools", ",".join(_expand_forbidden(dispatch.forbidden))]
+    worktrees_root = (paths.run_dir() / "worktrees").resolve()
     for directory in dispatch.writable:
-        if str(directory).endswith("-main"):
+        candidate = Path(directory).resolve()
+        # Compare against the real location, not a name suffix: a legitimate
+        # checkout called `foo-main` must not be rejected.
+        if candidate == worktrees_root or worktrees_root in candidate.parents:
             raise InferenceError(
-                "The `main` worktree must never be writable by a dispatch; "
-                "gitio.commit_to_main() is its only writer (spec 3.6.1)."
+                f"{candidate} is inside the main-worktree root and must never be "
+                f"writable by a dispatch; gitio.commit_to_main() is its only "
+                f"writer (spec 3.6.1)."
             )
-        argv += ["--add-dir", str(directory)]
+        argv += ["--add-dir", str(candidate)]
     if dispatch.schema is not None:
         argv += ["--json-schema", json.dumps(dispatch.schema)]
     if dispatch.agents is not None:
         argv += ["--agents", json.dumps(dispatch.agents)]
     if dispatch.unattended:
         argv += ["--permission-mode", "dontAsk"]
-        if _supports_permission_prompts(executable):
+        if dispatch.supports_permission_prompts:
             argv += ["--permission-prompts", "none"]
 
     # --bare is deliberately absent: it never reads OAuth credentials, so it
@@ -1736,30 +2043,18 @@ def _build(dispatch: Dispatch, executable: str) -> tuple[list[str], Path]:
     return argv, cwd
 
 
-def _brief(dispatch: Dispatch, effort: str) -> str:
+def _brief(dispatch: Dispatch) -> str:
+    """The role's slices, concatenated. Effort travels as --effort, not as prose."""
     slices = (dispatch.ruleset or {}).get("slices") or {}
-    parts = [f"/effort {effort}"]
-    for resolved in slices.values():
-        parts.append(resolved["text"] if isinstance(resolved, dict) else str(resolved))
+    parts = [
+        resolved["text"] if isinstance(resolved, dict) else str(resolved)
+        for resolved in slices.values()
+    ]
     return "\n\n".join(p for p in parts if p)
 
 
 def _expand_forbidden(globs: list[str]) -> list[str]:
     return [f"{tool}({glob})" for glob in globs for tool in WRITE_TOOLS]
-
-
-_PERMISSION_PROMPTS: dict[str, bool] = {}
-
-
-def _supports_permission_prompts(executable: str) -> bool:
-    if executable not in _PERMISSION_PROMPTS:
-        from . import cli_probe
-        try:
-            report = cli_probe.probe(executable)
-            _PERMISSION_PROMPTS[executable] = report.supports("--permission-prompts")
-        except Exception:
-            _PERMISSION_PROMPTS[executable] = False
-    return _PERMISSION_PROMPTS[executable]
 
 
 def _usage(payload: dict[str, Any]) -> list[UsageRecord]:
@@ -1794,34 +2089,75 @@ def _slot(dispatch: Dispatch):
     The limit being protected is a per-account usage window (spec 5.2), and the
     CLI, the cockpit and a Claude Code session can all dispatch at once — so a
     per-process counter would bound nothing that matters.
+
+    The slot is acquired BEFORE the yield and released in a finally. An earlier
+    draft yielded inside a `try/except Exception` inside the acquisition loop,
+    which caught the wrapped body's own exception, retried the loop, and surfaced
+    as `RuntimeError: generator didn't stop after throw()` with the real cause
+    gone — while abandoning the generator still holding the lock.
     """
+    from . import locking
+
     cfg = dispatch.ruleset or dispatch.config
     concurrency = cfg.get("concurrency", {})
     thinker = cfg.get("model_aliases", {}).get("thinker")
     model = dispatch.model or config.resolve_model(dispatch.role, cfg)
-    limit = (concurrency.get("max_parallel_thinker", 1) if model == thinker
-             else concurrency.get("max_parallel_gates", 3))
 
-    slots = paths.dispatch_slots()
-    slots.mkdir(parents=True, exist_ok=True)
+    # Two pools, matching spec 5.1's two keys. One shared namespace would make an
+    # Opus dispatch queue behind an unrelated Sonnet one, and would apply the gate
+    # limit to the chief, the implementer and the scribe as well.
+    if model == thinker:
+        pool, limit = "thinker", concurrency.get("max_parallel_thinker", 1)
+    else:
+        pool, limit = "worker", concurrency.get("max_parallel_gates", 3)
+    limit = max(1, int(limit))
+
+    pool_dir = paths.dispatch_slots() / pool
+    pool_dir.mkdir(parents=True, exist_ok=True)
+
+    acquired = _acquire_slot(pool_dir, limit)
+    try:
+        yield                       # exactly one yield, outside any except
+    finally:
+        acquired.__exit__(None, None, None)
+
+
+def _acquire_slot(pool_dir: Path, limit: int):
+    """Take the first free slot, or wait on slot 0 when all are busy.
+
+    Returns the entered context manager so the caller can release it in a
+    `finally`. Only slot acquisition is guarded here; the body is not.
+    """
     from . import locking
-    for index in range(max(1, limit)):
-        lock = slots / f"slot-{index}.lock"
+    from .errors import LockTimeout
+
+    for index in range(limit):
+        candidate = locking.file_lock(
+            pool_dir / f"slot-{index}.lock", timeout=0.05, reentrant=False
+        )
         try:
-            with locking.file_lock(lock, timeout=0.05):
-                yield
-                return
-        except Exception:
-            continue
-    # Every slot busy: wait for the first one rather than failing.
-    with locking.file_lock(slots / "slot-0.lock", timeout=300):
-        yield
+            candidate.__enter__()
+        except LockTimeout:
+            continue                # that slot is busy; try the next
+        return candidate
+
+    waiting = locking.file_lock(pool_dir / "slot-0.lock", timeout=300, reentrant=False)
+    waiting.__enter__()
+    return waiting
 ```
 
 - [ ] **Step 6: Run the tests**
 
 Run: `python -m pytest tests/unit/test_inference.py -q`
-Expected: `17 passed`
+Expected: `27 passed`
+
+Then confirm the stub really ran, which is the whole point of Task 7:
+
+```bash
+python -m pytest tests/unit/test_inference.py -q && echo "OK: no real dispatches"
+```
+
+If any test reports a `session_id` other than `11111111-2222-3333-4444-555555555555`, the real binary was invoked — stop and check that `infer` is spawning the resolved absolute path.
 
 - [ ] **Step 7: Commit**
 
@@ -1851,22 +2187,32 @@ def test_concurrency_cap_holds_across_processes(tmp_home, stub_claude, tmp_path,
     import textwrap
     import time
 
-    slots = paths.dispatch_slots()
-    slots.mkdir(parents=True, exist_ok=True)
+    pool = paths.dispatch_slots() / "thinker"      # two pools, per spec 5.1
+    pool.mkdir(parents=True, exist_ok=True)
+    ready = tmp_path / "slot-ready"
 
     # Occupy the single thinker slot from another process.
     holder = subprocess.Popen([sys.executable, "-c", textwrap.dedent(f"""
-        import time
+        import pathlib, time
         from taller import locking
-        with locking.file_lock({str(slots / 'slot-0.lock')!r}):
-            time.sleep(4)
+        with locking.file_lock({str(pool / 'slot-0.lock')!r}):
+            pathlib.Path({str(ready)!r}).write_text("1")
+            time.sleep(6)
     """)])
     try:
-        time.sleep(1.0)
+        # Wait for the holder to really have it, rather than guessing.
+        deadline = time.monotonic() + 20
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert ready.exists(), "holder never acquired the slot"
+
+        # Time the ACQUISITION, not the whole dispatch: timing infer() would pass
+        # with a per-process semaphore whenever a dispatch itself took >= 1.5s.
         started = time.monotonic()
-        inference.infer(_bootstrap_dispatch(role="architect"))  # thinker: limit 1
+        acquired = inference._acquire_slot(pool, limit=1)
         waited = time.monotonic() - started
-        assert waited >= 1.5, f"dispatch did not wait for the slot (waited {waited:.1f}s)"
+        acquired.__exit__(None, None, None)
+        assert waited >= 1.5, f"slot acquisition did not block (waited {waited:.1f}s)"
     finally:
         holder.kill()
         holder.wait()
@@ -1891,7 +2237,7 @@ git commit -m "test(inference): prove the concurrency cap holds across processes
 Chunks 1–3 give a package that can talk to `claude` safely, with configuration and locking underneath. Before continuing:
 
 - [ ] Run the whole suite: `python -m pytest -q` — expect everything green.
-- [ ] Confirm no test invoked the real binary: `grep -rn "subprocess" tests/ | grep -v stub` should show only the two deliberate second-process tests.
+- [ ] Confirm no test invoked the real binary: `grep -rn "Popen" tests/` should show exactly the two deliberate second-process tests (`test_locking.py`, `test_inference.py`) and nothing else.
 - [ ] Dispatch the plan reviewer on chunks 1–3 with the spec path, and fix what it finds before Chunk 4.
 
 ---

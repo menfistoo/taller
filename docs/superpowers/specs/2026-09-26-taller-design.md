@@ -412,7 +412,7 @@ inside a subagent turn where `structured_output` does not reach.
 |---|---|
 | `prompt` | stdin, with `-p --output-format json` |
 | `model`, else `config`/`ruleset` lookup for `role` | `--model` |
-| `effort`, else the `effort` lookup for `role`, else `effort.default` | `/effort <level>` in the prompt |
+| `effort`, else the `effort` lookup for `role`, else `effort.default` | `--effort <level>` (native flag; verified present on 2.1.74, accepting `low` `medium` `high` `max`) |
 | `system`, else the role's slices from `ruleset` | `--append-system-prompt` |
 | `resume` | `--resume <session_id>` |
 | `cwd` | process working directory |
@@ -514,6 +514,15 @@ dependency.
 embedded Agent SDK client — which would require an API key and forfeit
 subscription billing (§5.2) — changes this one module and nothing else.
 
+**The executable is resolved to an absolute path before it is spawned.** On Windows,
+`CreateProcess` appends only `.exe` to an extensionless name, so spawning bare
+`claude` skips a `claude.cmd` earlier on `PATH` and runs whatever `claude.exe` it
+finds instead. Verified on this machine: `shutil.which` returned the shim while
+`subprocess.run(["claude", ...])` ran the real binary. Since the test suite
+substitutes a stub `claude` on `PATH` (§15.1), resolving first is what keeps the
+suite from making real, billed dispatches — and on a subscription those consume the
+usage window that §5.2 exists to protect.
+
 **Failure handling.** A non-zero exit, unparseable JSON, a schema mismatch, or a
 missing `claude` binary all return `ok: false` with a distinct reason. `infer`
 never retries on its own; retry policy belongs to §14 and differs by caller. A
@@ -523,9 +532,15 @@ which `infer` reports as an error rather than an empty success.
 **`concurrency` is enforced across processes, not within one.** The limit it
 protects — a subscription usage window (§5.2) — is per account, while the CLI, the
 cockpit and a Claude Code session can all dispatch at once. `inference.py`
-therefore takes a slot from a counted semaphore under
-`~/.taller-run/dispatch/`, using the same lock mechanism as §10.3, and releases it
-in a `finally`. A per-process counter would bound nothing that matters.
+therefore takes a slot from a counted semaphore under `~/.taller-run/dispatch/`,
+using the same lock mechanism as §10.3, and releases it in a `finally`. A
+per-process counter would bound nothing that matters.
+
+**Two pools, not one**, matching §5.1's two keys: `dispatch/slots/thinker/` bounded
+by `max_parallel_thinker`, and `dispatch/slots/worker/` bounded by
+`max_parallel_gates`. One shared namespace would make an Opus dispatch queue behind
+an unrelated Sonnet one and would apply the gate limit to the chief, the
+implementer and the scribe as well.
 
 ---
 
