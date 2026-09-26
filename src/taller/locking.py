@@ -1,0 +1,141 @@
+"""File locks and atomic writes.
+
+Locks are re-entrant within a process, because spec 7.6 holds the project lock
+for a whole chief dispatch while a stage transition inside that window takes the
+same lock through gitio.commit_to_main(). A non-re-entrant lock would deadlock
+against itself on the most common path in the system.
+
+Cross-process exclusion uses an exclusive create (O_EXCL), which is atomic on
+both POSIX and Windows and needs no third-party dependency.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import os
+import threading
+import time
+from pathlib import Path
+from typing import Iterator
+
+from . import paths
+from .errors import LockTimeout
+
+DEFAULT_TIMEOUT = 5.0
+_POLL = 0.05
+
+# lock path (resolved, as str) -> re-entrancy depth, per THREAD.
+# Thread-local because the cockpit (spec 12) is a threaded server in one process,
+# where a process-wide counter would let thread B believe it holds thread A's lock.
+_state = threading.local()
+
+
+def _depths() -> dict[str, int]:
+    if not hasattr(_state, "depth"):
+        _state.depth = {}
+    return _state.depth
+
+
+def held(lock_path: Path | str) -> bool:
+    """True when this thread currently holds the lock. Reads without mutating."""
+    return _depths().get(str(Path(lock_path).resolve()), 0) > 0
+
+
+@contextlib.contextmanager
+def file_lock(
+    lock_path: Path | str,
+    timeout: float = DEFAULT_TIMEOUT,
+    reentrant: bool = True,
+) -> Iterator[None]:
+    """Hold an exclusive lock. Re-entrant within this thread by default.
+
+    Raises LockTimeout rather than waiting indefinitely or forcing, so a stuck
+    holder produces a clear message instead of a hang.
+
+    `reentrant=False` is for counting semaphores. A re-entrant lock used as a
+    semaphore silently stops capping: the second acquisition in the same thread
+    succeeds by design, so a nested dispatch would exceed the concurrency limit
+    without any error. Verified both ways before this was written.
+    """
+    path = Path(lock_path).resolve()
+    key = str(path)
+    depth = _depths()
+
+    if depth.get(key, 0) > 0:      # already ours
+        if not reentrant:
+            raise LockTimeout(
+                f"{path} is already held by this thread and was requested "
+                f"non-re-entrantly. It is a semaphore slot, not a mutex."
+            )
+        depth[key] += 1             # just count deeper
+        try:
+            yield
+        finally:
+            depth[key] -= 1
+        return
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + timeout
+    fd = None
+    while True:
+        try:
+            fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            break
+        except FileExistsError:
+            if time.monotonic() >= deadline:
+                raise LockTimeout(
+                    f"Could not take the lock at {path} within {timeout:g}s. "
+                    f"Another Taller process is probably still working. "
+                    f"If none is, remove the file."
+                )
+            time.sleep(_POLL)
+
+    os.write(fd, str(os.getpid()).encode("ascii"))
+    os.close(fd)
+    depth[key] = 1
+    try:
+        yield
+    finally:
+        depth[key] = 0
+        with contextlib.suppress(FileNotFoundError):
+            path.unlink()
+
+
+# --- the three named locks of spec 10.2, as context managers ----------------
+
+def hub_lock(timeout: float = DEFAULT_TIMEOUT):
+    """Hub amendments."""
+    return file_lock(paths.hub_lock(), timeout)
+
+
+def registry_lock(timeout: float = DEFAULT_TIMEOUT):
+    """projects.json writes."""
+    return file_lock(paths.registry_lock(), timeout)
+
+
+def project_lock(project_name: str, timeout: float = DEFAULT_TIMEOUT):
+    """A project's main-side files, and a whole chief dispatch (spec 7.6)."""
+    return file_lock(paths.project_lock(project_name), timeout)
+
+
+def atomic_write(target: Path | str, data: bytes) -> None:
+    """Write via a temporary file in the same directory, then os.replace.
+
+    Same directory so the replace cannot cross a filesystem boundary, which is
+    what makes it atomic.
+    """
+    target = Path(target)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_name(f".{target.name}.tmp{os.getpid()}")
+    try:
+        tmp.write_bytes(data)
+        os.replace(tmp, target)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            tmp.unlink()
+
+
+def atomic_write_text(target: Path | str, text: str) -> None:
+    """Always UTF-8 with LF endings, so generated files are byte-stable across
+    platforms — spec 4.6's tamper check compares bytes."""
+    atomic_write(target, text.replace("\r\n", "\n").encode("utf-8"))
