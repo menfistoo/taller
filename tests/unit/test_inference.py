@@ -261,3 +261,41 @@ def test_infer_never_retries(tmp_home, stub_claude, monkeypatch):
     monkeypatch.setenv("STUB_CLAUDE_FAIL_EXIT", "1")
     inference.infer(_bootstrap_dispatch())
     assert len(stub_claude.calls()) == 1
+
+
+def test_concurrency_cap_holds_across_processes(tmp_home, stub_claude, tmp_path, monkeypatch):
+    """A per-process counter would bound nothing (spec 3.6)."""
+    import subprocess
+    import sys
+    import textwrap
+    import time
+
+    pool = paths.dispatch_slots() / "thinker"      # two pools, per spec 5.1
+    pool.mkdir(parents=True, exist_ok=True)
+    ready = tmp_path / "slot-ready"
+
+    # Occupy the single thinker slot from another process.
+    holder = subprocess.Popen([sys.executable, "-c", textwrap.dedent(f"""
+        import pathlib, time
+        from taller import locking
+        with locking.file_lock({str(pool / 'slot-0.lock')!r}):
+            pathlib.Path({str(ready)!r}).write_text("1")
+            time.sleep(6)
+    """)])
+    try:
+        # Wait for the holder to really have it, rather than guessing.
+        deadline = time.monotonic() + 20
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert ready.exists(), "holder never acquired the slot"
+
+        # Time the ACQUISITION, not the whole dispatch: timing infer() would pass
+        # with a per-process semaphore whenever a dispatch itself took >= 1.5s.
+        started = time.monotonic()
+        acquired = inference._acquire_slot(pool, limit=1)
+        waited = time.monotonic() - started
+        acquired.__exit__(None, None, None)
+        assert waited >= 1.5, f"slot acquisition did not block (waited {waited:.1f}s)"
+    finally:
+        holder.kill()
+        holder.wait()
