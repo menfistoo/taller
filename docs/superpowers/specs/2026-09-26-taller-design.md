@@ -199,9 +199,22 @@ prohibition or a suppression the chief cannot see has no effect at read time.
 Discovering a hard prohibition at ⑤ rather than ② wastes a whole build. All nine
 slices of §4.3 appear in this table.
 
-`00-index.md` format: YAML front matter holding the routing table above, then
-prose of at most 40 lines summarising each slice in one sentence. It is
-**generated**, never hand-written, and excluded from the G3 measurement (§16).
+**`00-index.md` is produced mechanically, by `constitution.render_index(ruleset)`.**
+It is the whole of the Phase A context goal — the chief parses it, criterion 6
+measures it, criterion 7 excludes it — so it needs a named renderer, a writer and a
+refresh trigger like any other generated file:
+
+| | |
+|---|---|
+| **Format** | YAML front matter holding the routing table above, then one line per provided slice |
+| **Renderer** | `render_index(ruleset)` — **no model call.** The routing table is derived from the nine-slice vocabulary (§4.3) and `paths`; each slice's one-line summary is the `> ` blockquote that **every module file is required to begin with**, concatenated in profile order. |
+| **Writer** | `gitio.commit_to_main()`, as a `main`-side generated file (§7.2) |
+| **Refreshed** | On exactly the triggers in §4.6 — `project adopt`, `project new`, every `/taller:amend`, stage ②, and `taller resolve` — so an amendment cannot leave it stale |
+| **Conflicts** | `merge=ours`, regenerated not merged, like the other generated files |
+
+**The ≤ 800-token budget of criterion 6 is split explicitly:** `00-index.md` at most
+600 tokens, the `CLAUDE.md` stub at most 200. `render_index` counts its own output
+and fails rather than silently exceeding the budget the goal is measured on.
 
 ### 3.2 Four artifacts, plus runtime state
 
@@ -249,8 +262,19 @@ scopes (§4.7). The design has no dependency on any GitHub MCP server.
 | Dependency | Kind | Behaviour if absent |
 |---|---|---|
 | The `claude` CLI, authenticated | **hard** | Every act of inference goes through it (§3.6). `taller doctor` reports it missing or unauthenticated as a failure, not a skip. |
+
+**The `claude` flag surface is pinned, because §3.6.2 argues that this CLI's
+defaults move.** `~/.taller/taller.yml` records `cli_min_version`, and `taller
+doctor` verifies that every flag §3.6's mapping table depends on —
+`-p`, `--output-format json`, `--json-schema`, `--append-system-prompt`, `--resume`,
+`--add-dir`, `--allowedTools`, `--disallowedTools`, `--agents`, `--model`,
+`--permission-mode`, `--permission-prompts` — is still accepted, and records the
+observed version. **Step 1 of the Phase A plan is to verify each flag against the
+installed binary and write the version down.** A mapping table written against an
+unrecorded CLI is a silent-breakage waiting to happen.
 | Python 3.11+ | hard | The library, CLI, gate scripts, spend accounting and cockpit are Python |
-| `gh` CLI, authenticated | hard for D/F | Issue mirroring and PR stages fail with a clear error; local stages still work |
+| `pypdf`, `pillow` | hard for A | Brand extraction from a guide PDF and from a logo image (§4.2) |
+| `gh` CLI, authenticated | **hard for A**, D and F | `taller setup` rounds 1 and 3 call `gh auth status` and `gh repo list` (§4.7). Without it, Phase A discovery **degrades to disk-only** and says so; the greenfield path needs no `gh` at all. |
 | superpowers | **soft** | Taller falls back to its own minimal plan step |
 | Docker Compose | hard for staging only | Stage ⑨ is skipped with a clear message |
 
@@ -306,33 +330,73 @@ Dispatch = {
                                  #   explorer | scribe | summariser  (§6)
     "prompt":    str,
     "ruleset":   RuleSet | None, # None during bootstrap — see below
+    "config":    HubConfig,      # ALWAYS present; the only source of models/effort
+                                 #   when ruleset is None  (§4.4.1)
     "model":     str | None,     # explicit override; wins over role lookup
     "effort":    str | None,     # explicit override
     "system":    str | None,     # explicit briefing when there is no RuleSet
     "resume":    str | None,     # a session_id to continue; None starts fresh
-    "cwd":       str,            # the ticket worktree, never the live checkout
+    "cwd":       str,            # a worktree, or the bootstrap scratch dir below
     "writable":  [glob],         # path globs this dispatch may modify
-    "forbidden": [glob],         # path globs it may not — see rendering below
+    "forbidden": [glob],         # path globs it may not — §3.6.1
+    "tools":     [str],          # the allowlist for this role — §3.6.1
+    "agents":    dict | None,    # inline agent definitions, or None — see below
     "schema":    dict | None,    # JSON Schema the answer must satisfy
     "unattended": bool,          # nobody is available to answer a prompt
+}
+
+UsageRecord = {
+    "model":       str,          # concrete id as reported, never an alias
+    "input":       int,          # from input_tokens
+    "cache_write": int,          # from cache_creation_input_tokens
+    "cache_read":  int,          # from cache_read_input_tokens
+    "output":      int,          # from output_tokens
 }
 
 Result = {
     "ok": bool, "value": object | None, "error": str | None,
     "session_id": str,           # store it to continue this conversation
-    "usage": [UsageRecord],      # per-model usage for this dispatch (§7.5)
+    "usage": [UsageRecord],      # per-model usage for THIS dispatch (§7.5)
     "cost_usd": float | None,    # CUMULATIVE when resuming — see §7.5
 }
 ```
 
+`UsageRecord`'s field names are the four that `weights` and `pricing` are keyed by
+(§5.1), so the rename from the CLI's `cache_creation_input_tokens` /
+`cache_read_input_tokens` happens once, here, on both the `Result` path and the
+transcript fallback path.
+
 **`ruleset` is optional, because the first inference happens before one exists.**
 `resolve(path)` reads a project's `.taller/` and its profile, and the primary entry
-point runs inference *before either exists*: §11.4 synthesises a constitution and
-the first tickets from twelve free-text answers, and §11.1 runs the missing `setup`
-rounds on an empty hub where no profile has yet been copied. A `Dispatch` with
-`ruleset: None` must therefore be constructible, carrying `model`, `effort` and
-`system` directly. That is **bootstrap mode**, and it is the first thing Phase A
-exercises.
+point runs inference *before either exists*: §11.4 synthesises a constitution from
+twelve free-text answers, and §11.1 runs the missing `setup` rounds on an empty hub
+where no profile has yet been copied. That is **bootstrap mode**, and it is the
+first thing Phase A exercises.
+
+**`config` is always present, which is what makes bootstrap possible.** It is the
+hub-only configuration of §4.4.1 — `model_aliases`, `models`, `effort`, `fallback`,
+`concurrency`, `billing`, `weights`, `pricing` — loaded without any project. A
+bootstrap dispatch resolves `role → config["models"][role] → config["model_aliases"][alias]`
+exactly as a project dispatch does through its `RuleSet`. **No caller hardcodes a
+model name**, which §5.1 forbids: `model_aliases` remains the only place a concrete
+model id appears.
+
+**`cwd` during bootstrap is a scratch directory,** `~/.taller-run/dispatch/scratch/`,
+created empty and containing **no `CLAUDE.md` and no `.claude/`**. This matters more
+than it looks: §3.6.2 explains that a non-bare dispatch loads the working
+directory's `CLAUDE.md` and runs its hooks, so defaulting bootstrap to the process
+working directory would silently brief a probe or a wizard turn with whatever
+repository the owner happened to be standing in — the opposite of the empty-hub
+contract.
+
+**How a gate definition is applied — `--append-system-prompt`, not `--agents`.**
+The two are not interchangeable. A gate's answer must land in the top-level
+`structured_output` that `schema` depends on, so a gate runs **as the top-level
+turn**: its definition becomes `--append-system-prompt` and `schema` becomes
+`--json-schema`. `Dispatch.agents` is populated only for a dispatch that needs to
+delegate further — in practice the chief — and is `None` for every gate. An earlier
+draft implied gates were passed via `--agents`, which would have put their findings
+inside a subagent turn where `structured_output` does not reach.
 
 `infer(Dispatch) -> Result` is the whole surface. Its implementation builds a
 `claude` invocation:
@@ -340,15 +404,16 @@ exercises.
 | `Dispatch` | Becomes |
 |---|---|
 | `prompt` | stdin, with `-p --output-format json` |
-| `model`, else `ruleset["models"][role]` | `--model` |
-| `effort`, else `ruleset["effort"][role]` | `/effort <level>` in the prompt |
+| `model`, else `config`/`ruleset` lookup for `role` | `--model` |
+| `effort`, else the `effort` lookup for `role`, else `effort.default` | `/effort <level>` in the prompt |
 | `system`, else the role's slices from `ruleset` | `--append-system-prompt` |
 | `resume` | `--resume <session_id>` |
 | `cwd` | process working directory |
-| `writable` | `--add-dir`, and an `--allowedTools` allowlist |
-| `forbidden` | `--disallowedTools` specifiers — see below |
+| `tools` | `--allowedTools` |
+| `writable` | `--add-dir` |
+| `forbidden` | `--disallowedTools` specifiers — §3.6.1 |
 | `schema` | `--json-schema`; the answer arrives in `structured_output` |
-| gate agent definitions | `--agents <json>` |
+| `agents` (chief only; `None` for gates) | `--agents <json>` |
 | `unattended: true` | `--permission-mode dontAsk --permission-prompts none` |
 
 **Session ids are captured, never invented.** `Result.session_id` comes from the
@@ -357,13 +422,47 @@ exercises.
 machine, so a ticket's conversation is reachable from its worktree. Taller does not
 pre-generate uuids with `--session-id`, because a captured id cannot collide.
 
-### 3.6.1 How `forbidden` actually renders
+### 3.6.1 Tool allowlists, and how `forbidden` renders
+
+**Every role's allowlist is fixed and written down here**, because §15.1 asserts on
+the generated argument list and cannot be written against "the specifiers it needs".
+
+| Role | `tools` (→ `--allowedTools`) | `writable` | `forbidden` |
+|---|---|---|---|
+| `chief` | `Read Glob Grep Bash(git status*) Bash(git log*) Bash(git diff*)` | `[]` | `[]` |
+| `explorer` | `Read Glob Grep` | `[]` | `[]` |
+| `scribe` | `Read` | `[]` | `[]` |
+| `summariser` | `Read` | `[]` | `[]` |
+| `gate_security` · `gate_quality` · `gate_ux` | `Read Glob Grep` | `[]` | `[]` |
+| `architect` | `Read Glob Grep Write Edit` | the ticket folder only | `[]` |
+| `implementer` | `Read Glob Grep Write Edit NotebookEdit Bash` | the worktree | `[]` |
+| `fixer` | `Read Glob Grep Write Edit NotebookEdit Bash(pytest*) Bash(python -m pytest*) Bash(git diff*) Bash(git status*)` | the worktree | `paths.tests_dir/**`, `**/test_*.py`, `**/*_test.py` |
+
+Three things this table settles:
+
+**A read-only role needs no `forbidden` list at all.** It is granted no
+write-capable tool, so there is nothing to forbid. `forbidden: ["**"]` would be
+worse than useless — it is non-empty, so it would trip the `Bash` rule below for a
+role that has no `Bash` anyway.
+
+**The implementer keeps unrestricted `Bash` and has an empty `forbidden` list.** It
+must be able to run arbitrary commands to build and check its own work. It is
+bounded by `--add-dir`, which admits the ticket worktree and nothing else. §9.7's
+no-test-file rule applies to the **fixer**, not the implementer: the failure mode
+being prevented is "make a failing test pass by editing the test", which is a fix
+round's temptation, not a feature's.
+
+**The fixer's `Bash` is allowlisted precisely because its `forbidden` list is
+non-empty.** A shell walks straight around a `--disallowedTools` specifier, so the
+rule is: **a role with a non-empty `forbidden` list may not have bare `Bash`.** The
+fixer gets the specifiers it needs to verify a fix — running the test suite and
+reading the diff — and nothing that can write.
 
 `--disallowedTools` takes **permission rule syntax** — tool names and
 `Tool(pattern)` specifiers — **not bare paths.** A path passed to it would match no
-tool and silently restrict nothing, which would quietly void the claim that §9.7's
-no-test-file rule is harness-enforced. `inference.py` therefore expands each glob
-in `forbidden` across every write-capable tool:
+tool and silently restrict nothing, which would quietly void §9.7's guarantee.
+`inference.py` therefore expands each glob in `forbidden` across every
+write-capable tool:
 
 ```
 forbidden: ["tests/**", "**/test_*.py"]
@@ -371,16 +470,8 @@ forbidden: ["tests/**", "**/test_*.py"]
                         Write(**/test_*.py) Edit(**/test_*.py) NotebookEdit(**/test_*.py)"
 ```
 
-**A shell can still circumvent it,** so `forbidden` is not sufficient alone. A role
-with a non-empty `forbidden` list is additionally denied unrestricted `Bash`: it
-receives only the `Bash(...)` specifiers it needs, never the bare tool. The
-combination — an allowlisted `Bash`, denied edit specifiers, and `--add-dir`
-limited to `writable` — is what makes the restriction real. A role that needs
-unrestricted `Bash` cannot have a meaningful `forbidden` list, and the spec should
-not pretend otherwise.
-
 The `main` worktree (§7.3) is **never** in `writable` or `--add-dir` for any
-dispatch. `gitio.commit_to_main()` is the only writer of the five `main`-side
+dispatch. `gitio.commit_to_main()` is the only writer of the `main`-side generated
 files, and no dispatch should be able to reach them.
 
 ### 3.6.2 `--bare` must not be used
@@ -649,7 +740,8 @@ reviewed visually rather than as a list of hex codes.
 The hub is outside every project repository and outside the Docker image that
 gets deployed, so the hub `tokens.css` cannot be the file the browser loads.
 
-**`render_tokens(ruleset)` produces `<project>/static/css/tokens.css`** — a
+**`render_tokens(ruleset)` produces `<project>/<paths.brand_tokens>`** — a profile
+key (§7.2), not a fixed path, and unset when `brand` is `none` — a
 verbatim copy of the brand's `tokens.css` with a generated-file header — and
 `commit_to_main()` writes it as a `main`-side generated file alongside
 `resolved.json` (§4.6, §7.2). Same separation as the snapshot: the renderer is
@@ -663,7 +755,7 @@ font values anywhere else. Precisely:
 
 | Path | Rule |
 |---|---|
-| `static/css/tokens.css` (generated) | Exempt — it is the definition |
+| `paths.brand_tokens` (generated) | Exempt — it is the definition |
 | Anything else | `brand.hardcoded-color` / `brand.hardcoded-font` |
 
 **What this means at adoption.** A project that already defines its tokens in some
@@ -744,8 +836,10 @@ RuleSet = {
                    "layers": {glob: [str]}, "tests_dir": str},
     "smoke":      {str: object},                 # §9.6
     "thresholds": {str: int},
+    "model_aliases": {alias: model_id},          # §4.4.1 — needed to map `fallback`
     "models":     {role: model_id},              # aliases already resolved
-    "effort":     {role: str},
+    "fallback":   alias,
+    "effort":     {role: str},                   # includes a "default" key
     "billing":    {"mode": str},                 # §5.2
     "concurrency":{str: int},                    # §5.2 — enforced in §3.6
     "budget":     {str: int},
@@ -768,6 +862,42 @@ rather than reading the environment.
 **Determinism:** `resolve()` performs no network access and no model calls. It is
 pure over the filesystem, so it is directly unit-testable — which is what makes
 the byte-for-byte tamper check in §4.6 possible.
+
+### 4.4.1 `HubConfig` — configuration without a project
+
+`resolve(path)` needs a project. Three callers have none: `taller setup` before
+anything is registered, `taller models probe` (which belongs to no project), and
+`project new` before its brief is approved. They load the hub layer alone:
+
+```python
+HubConfig = {
+    "model_aliases": {alias: model_id},
+    "models":        {role: alias},
+    "effort":        {role: str},          # with a "default" key
+    "fallback":      alias,
+    "billing":       {"mode": str},
+    "concurrency":   {str: int},
+    "weights":       {str: float},
+    "pricing":       {"as_of": date, model_id: {str: float}} | None,
+    "language":      {...} | None,         # None on an unconfigured hub
+    "hub_sha":       str,
+}
+```
+
+`load_hub_config() -> HubConfig` reads `~/.taller/taller.yml` and nothing else. It
+succeeds on a completely empty hub, where `language` is `None` and every other key
+carries its shipped default.
+
+**`RuleSet` embeds a resolved `HubConfig`,** so the two paths differ only in whether
+project layers were merged on top. `RuleSet` therefore also carries
+`model_aliases` and `fallback` (§4.4) — without them nothing downstream could map
+an alias, which would make `models.py`'s fallback responsibility (§10.2) and §14's
+"fall back per `fallback:`" unimplementable, since `fallback: worker` is itself an
+alias.
+
+**Effort resolution, stated once:** `effort[role]` if present, else
+`effort["default"]`. Never a `KeyError` — §5.1's block names six roles explicitly
+and `default` covers the other four.
 
 `~/.taller/` is a git repository because one edit can affect six projects.
 Amendments have history and can be reverted. `hub_sha` is the hub's `HEAD` at
@@ -826,9 +956,30 @@ intent: an override is a decision to ship a known deviation.
 | Past `until` | `constitution.override-expired` | HIGH |
 | Targets a non-suppressible rule | `constitution.override-not-permitted` | BLOCKER |
 
-**Non-suppressible rules.** Every rule of the `never` slice and every rule of the
-security gate. This is what makes `never` mean never, and it guarantees no
-security `BLOCKER` can be downgraded to silence.
+**Non-suppressible rules** are, exactly:
+
+1. **Every rule of the security gate** — by domain, so no new security rule is
+   suppressible by default.
+2. **Every rule id listed in a `never.md` front matter `non_suppressible:` array**,
+   at hub or project level, unioned.
+
+```markdown
+---
+non_suppressible:
+  - brand.hardcoded-color
+  - constitution.layer-violation
+---
+
+Prose prohibitions, for a human and for the chief's briefing.
+```
+
+There is deliberately **no `never.*` rule domain**. The `never` slice is prose, and
+prose has no mechanical rules to enumerate — an earlier draft implied otherwise and
+left `overrides.py` with a predicate it could not compute. What `never.md` does
+instead is name *existing* ids from any domain as un-overridable, which is what
+"never means never" actually requires and is decidable. A `non_suppressible:` entry
+naming an id no gate declares is itself reported, as
+`constitution.unknown-rule-id` (MEDIUM).
 
 ### 4.6 The resolved snapshot
 
@@ -874,6 +1025,7 @@ writer. It is refreshed:
 | `taller project adopt` | that project |
 | `/taller:amend` or the cockpit Constitution screen | **every project whose profile includes the changed module or brand** |
 | stage ② of every ticket | that project, on `main`, before the branch exists |
+| any of the above | `resolved.json`, `00-index.md`, and `paths.brand_tokens` when a brand is set — all three are regenerated together, so none can be stale relative to another |
 | `taller resolve` | on demand |
 
 An amend to `security/web-app.md` therefore writes to all six `flask-sqlite`
@@ -953,7 +1105,9 @@ none of which would have surfaced from a blank `brand new` prompt.
 
 **Pickers, not typed slugs.** Wherever the spec says a profile or brand is chosen
 — §11.1 steps ⑨ and ⑩, `brand edit`, the cockpit — it is a numbered list of what
-exists plus `create new…` and, for brands, `none`. Never a free-text field whose
+the hub holds, **plus what the catalogue offers** (§4.0), plus `create new…` and,
+for brands, `none`. The catalogue entries matter most on a genuinely empty hub,
+which is Phase A's own pilot: a picker listing only the hub would offer nothing. Never a free-text field whose
 value has to be spelled correctly to match a directory name.
 
 **Keeping it fresh.** `taller project discover` re-runs rounds 3 and 4 and reports
@@ -1008,7 +1162,8 @@ models:                       # role -> alias. Ten roles, matching §6.
   scribe:        cheap
   summariser:    cheap
 
-effort:
+effort:                       # role key if present, else `default` (§4.4.1)
+  chief:         low          # routing is low-judgement work
   architect:     high
   implementer:   medium       # named explicitly: code-writing must not be `low`
   fixer:         medium
@@ -1018,6 +1173,8 @@ effort:
   default:       low          # explorer, scribe, summariser
 
 fallback: worker              # unreachable model degrades, never crashes
+
+cli_min_version: "2.1.275"    # §3.4 — `doctor` verifies the flag surface
 
 language: null                # NO DEFAULT. Asked at `taller setup`, round 5.
                               # e.g. {code: en, ui: es, commits: en}
@@ -1074,9 +1231,6 @@ paths:
 A new model release is **one line in `model_aliases`**, not one edit per agent
 file. `fallback` means a model name the account cannot reach degrades to `worker`
 rather than failing mid-ticket.
-
-**There is no `chief` key, deliberately.** The chief is the owner's own session,
-and Taller cannot set the model of the session it runs inside. See §6.1.
 
 ### 5.2 Settings — one surface, and how Claude is reached
 
@@ -1225,9 +1379,10 @@ verdicts:
   size:         {result: pass, blocker: 0, high: 0, medium: 0, low: 0, nit: 0, hub_sha: a3f9c21}
   tests:        {result: pass, blocker: 0, high: 0, medium: 0, low: 2, nit: 0, hub_sha: a3f9c21}
   smoke:        {result: pass, blocker: 0, high: 0, medium: 0, low: 0, nit: 0, hub_sha: a3f9c21}
+blocked: null              # null, or {reason, at_stage, since} — §8.4
 fix_rounds: 1
 chief_session: 9f2c1b74-0a3e-4d51-8b6c-2e7f4a1d905c   # §7.6; null before ②
-sync: ok                   # ok | pending  — remote mirror state (§7.3)
+sync: ok                   # ok | local | pending — remote mirror state (§7.3)
 templates:                 # written at ②; drives the smoke gate (§9.6)
   templates/dia.html: ["/dia", "/dia/<fecha>"]
 checkpoints:               # pending | approved | rejected | skipped
@@ -1271,15 +1426,21 @@ verdict. A `full` ticket's `gates` would additionally contain `security`,
 | `status.yml` | **`main`** | ① and every stage transition | Same; also the resume key |
 | `notes.md` | **`main`** | ① onward | §14 relies on it surviving branch deletion |
 | `.taller/resolved.json` | **`main`** | adopt, amend, ② | Generated; a branch must never carry its own (§4.6) |
-| `static/css/tokens.css` | **`main`** | adopt, brand amend | Generated from the hub brand (§4.2.1) |
+| `.taller/constitution/00-index.md` | **`main`** | adopt, amend, ② | Generated by `render_index()` (§3.1) |
+| `paths.brand_tokens` | **`main`** | adopt, brand amend | Generated from the hub brand (§4.2.1). **Absent when `brand` is `none`.** |
 | `plan.md` | branch | ③ | Belongs to the work; merges with the PR |
 | `gates/*.md` | branch | ⑤, ⑥ | Belongs to the work; merges with the PR |
 
-The two generated files are `main`-side for the same reason as the ticket files,
-and `gitio.commit_to_main()` is the only writer of any of the five. They are
-marked `merge=ours` in `.gitattributes` and regenerated rather than merged
-(§4.6), so §7.3's rebase-safety argument holds: none of the five can conflict
-with application code.
+The three generated files are `main`-side for the same reason as the ticket files,
+and `gitio.commit_to_main()` is the only writer of any of them. They are marked
+`merge=ours` in `.gitattributes` and regenerated rather than merged (§4.6), so
+§7.3's rebase-safety argument holds: none can conflict with application code.
+
+**The brand token path is a profile key, not a constant.** `paths.brand_tokens` is
+`static/css/tokens.css` for `flask-sqlite`, `tokens.css` for `static-site` (whose
+assets sit at the repository root), and **unset** for `python-packaged`, which has
+`brand: none`. A hardcoded path would have missed for two of the three shipped
+profiles, including the gate exemption in §9.1.
 
 **On rejection at ⑦** the gate verdict files and the owner's reason are copied to
 `main` under `work/NNNN-slug/rejected/<timestamp>/` **before** the worktree and
@@ -1297,25 +1458,42 @@ database's write-ahead log.
 `gitio.commit_to_main(project, files, message)`:
 
 1. Take the project lock (§10.3).
-2. `git -C <wt> fetch && git -C <wt> merge --ff-only origin/main`.
+2. **If `origin` exists:** `git -C <wt> fetch && git -C <wt> merge --ff-only origin/main`.
 3. Write the files atomically; commit.
-4. `git -C <wt> push`.
+4. **If `origin` exists:** `git -C <wt> push`.
+
+**No-remote mode is the greenfield default, not an error path.** §11.4 ends
+`project new` with `git init`, one commit, and a remote *only if asked*; §13.2 makes
+local-only the default for the hub too. A `git fetch` with no `origin` exits
+non-zero, so without this branch Phase A's own pilot — the thing criterion 2
+measures — would either crash or sit permanently in `sync: pending`, which `doctor`
+reports as a failure. `sync` therefore has three values:
+
+| `sync` | Meaning |
+|---|---|
+| `ok` | A remote exists and the local commit is pushed |
+| `local` | **No remote is configured.** Nothing to sync; not a fault. `doctor` passes. |
+| `pending` | A remote exists but the push has not landed. `doctor` reports it. |
+
+**Ordering constraint.** `ensure_main_worktree()` cannot create a worktree in a
+repository with no commits, so on the greenfield path it runs **after** `project
+new`'s initial commit, not before it. `project adopt` has commits already and is
+unaffected.
 
 **Local state is the truth; the remote is a mirror.** Every failure degrades to
 `sync: pending` rather than losing a transition:
 
 | Failure | Behaviour |
 |---|---|
-| Fast-forward merge refused (owner committed on `main`, or the remote moved) | **Rebase** the five `main`-side paths (§7.2) onto `origin/main` and retry once. Four are under `.taller/`, so they cannot conflict with application code. The fifth, `static/css/tokens.css`, sits inside the application's static tree, so a brand amend can collide with a branch that also touched it — it is generated, so the conflict is resolved by **discarding both sides and re-running `render_tokens()`**, exactly as for `resolved.json` (§4.6). No generated file is ever merged. |
+| Fast-forward merge refused (owner committed on `main`, or the remote moved) | **Rebase** the `main`-side paths (§7.2) onto `origin/main` and retry once. All but one are under `.taller/`, so they cannot conflict with application code. `paths.brand_tokens` sits inside the application's own tree, so a brand amend can collide with a branch that also touched it — it is generated, so the conflict is resolved by **discarding both sides and re-running `render_tokens()`**, exactly as for `resolved.json` (§4.6). No generated file is ever merged. |
 | Rebase also fails, or the push is rejected | Commit stays local. `sync: pending` written to `status.yml`. The cockpit shows the ticket as unsynced with the reason. Work continues. |
-| `sync: pending` present at the next `commit_to_main` | Retry the push first. `taller doctor` reports any ticket left `pending`. |
+| `sync: pending` present at the next `commit_to_main` | Retry the push first. `taller doctor` reports any ticket left `pending`, and ignores `local`. |
 
 Commit-and-push is not atomic, and §10.3's atomic replace covers files only —
 hence `sync` as an explicit, visible state rather than an assumed invariant.
 
 `main` requires a pull request, with the owner's admin bypass retained and used
-**only** by this function, for the five `main`-side paths of §7.2 — nothing else,
-ever.
+**only** by this function, for the `main`-side paths of §7.2 — nothing else, ever.
 
 ### 7.4 `Finding` and verdict format
 
@@ -1358,11 +1536,17 @@ is treated as `BLOCKER` for flow purposes and never as a pass.
 
 ### 7.5 Spend, weights and budget
 
-**`Result.usage` is the authoritative source.** Every dispatch goes through
-`infer()` (§3.6), which returns the usage for that dispatch, so attribution needs
-no heuristic: `spend.py` accumulates what the ticket's own dispatches reported.
-`--output-format json` carries session metadata including usage and a per-model
-cost breakdown.
+**`Result.usage` is the authoritative source, and `status.yml` is the store.**
+Every dispatch goes through `infer()` (§3.6), which returns `[UsageRecord]` for
+that dispatch, so attribution needs no heuristic. `spend.fold(ticket, result)`
+merges those records into `status.yml`'s `spend.by_model` block **at dispatch
+completion, under the project lock** — the rollup *is* the store, so there is no
+separate usage log and no file for the records to be lost from. `for_ticket(t)`
+then simply reads what has accumulated.
+
+This is why `spend.py` depends on `tickets` and `locking`, not only on transcript
+files: a module that could see only transcripts could never reach the authoritative
+path, and every ticket would silently fall back to parsing.
 
 **One trap, stated because it would silently double-count.** `cost_usd` from a
 **resumed** session reports the *whole conversation's* cumulative total, earlier
@@ -1442,7 +1626,7 @@ would add cost without adding memory. One id per ticket, stored as
 | ② → ③ → ④ → ⑤ → ⑥ → ⑦ forward | **Kept.** This is the continuity the design is for. |
 | **Promotion to `full` at ④** (§8.2) | **Kept.** The chief is mid-ticket, the diff is retained, and the architect it now dispatches is one-shot anyway. |
 | **Rejection at ⑦** → back to ② | **Abandoned.** `chief_session` is set to `null` and a fresh conversation starts. A conversation holding a rejected plan and code that no longer exists is worse than a clean start, and the owner's reason is in `notes.md` (§7.2), which briefs the new session. |
-| `stage: blocked` → resumed | Kept. Nothing was thrown away. |
+| `blocked` set, then resumed (§8.4) | Kept. Nothing was thrown away. |
 | ⑫ close | Retained in `status.yml` for the record; never resumed. |
 
 **Where the conversation cannot follow.** `/taller:resume` inside a Claude Code
@@ -1537,10 +1721,11 @@ Anything else is `full`. When in doubt, `full`.
 **Re-laning at ④.** Lane selection at ② is a prediction. The ticket is
 **promoted to `full`** when the actual diff exceeds
 `thresholds.max_fast_lane_lines`, adds or deletes a file, touches a second file,
-or **touches any path matching `paths.security_sensitive`**. `lane: full` is
-written to `status.yml`, the owner is told, and the ticket re-enters ③. **The
-existing diff is kept** and handed to the architect as input; `plan.md` documents
-what was already written. A ticket is never demoted from `full` to `fast`.
+or **touches any path matching `paths.security_sensitive`**. `lane: full` is written
+to `status.yml`, `checkpoints.design` is rewritten from `skipped` to `pending`, the
+owner is told, and the ticket re-enters ③. **The existing diff is kept** and handed
+to the architect as input; `plan.md` documents what was already written. The chief's
+session is **kept** (§7.6). A ticket is never demoted from `full` to `fast`.
 
 **Precedence — one rule.** A path matching `paths.security_sensitive` forces
 `full` at ② and forces promotion at ④. **The owner cannot override into `fast`
@@ -1574,6 +1759,28 @@ records an estate using `feat/` and `feature/` interchangeably.
 long-lived branch. Such branches drift until merging them becomes its own project.
 Under Taller it becomes a series of tickets merged individually. An observation;
 out of scope (§18).
+
+### 8.4 `blocked` is a flag, not a stage
+
+There are exactly twelve stages and `blocked` is none of them. A ticket that stops
+**keeps its stage** and sets an orthogonal field:
+
+```yaml
+blocked:
+  reason:    "constitution gate: brand.hardcoded-color survived 2 fix rounds"
+  at_stage:  5
+  since:     2026-09-26T11:02:00
+```
+
+Written this way for four reasons: §14's own wording is "blocks at its current
+stage"; `/taller:resume` needs to know which stage to resume *to*; §12's Board
+renders columns by stage ① → ⑫, so a ticket whose stage was overwritten with
+`blocked` would appear in no column at all; and §15.4's "every `status.yml` parses"
+cannot be asserted against a twelve-value enum that sometimes holds a thirteenth
+value. The Board shows a blocked ticket in its own column with a marker.
+
+Clearing `blocked` is what `/taller:resume` does, along with whatever the reason
+required.
 
 ---
 
@@ -1764,6 +1971,7 @@ handed to an LLM.** A `remediation` column decides who acts.
 | `constitution.override-without-reason` | HIGH | `escalate` |
 | `constitution.override-expired` | HIGH | `escalate` |
 | `constitution.override-not-permitted` | BLOCKER | `escalate` |
+| `constitution.unknown-rule-id` | MEDIUM | `escalate` |
 | `size.file-too-long` | MEDIUM | `escalate` |
 | `size.function-too-long` | MEDIUM | `agent` |
 | `size.duplicate-block` | LOW | — |
@@ -1870,16 +2078,35 @@ Python gates.
 | `registry.py` | Read/write the project registry | `list_projects()`, `add_project()`, `get_project(path)` | filesystem, `locking` |
 | `discovery.py` | Find candidate projects and brands | `scan_disk(roots)`, `scan_remote()`, `reconcile()` → buckets (§4.7), `cluster_palettes(projects)`, `find_brand_assets(path)` | filesystem, `gh` |
 | `scaffold.py` | Materialise a catalogue scaffold | `load(profile)`, `render(manifest, answers) -> {path: bytes}` | catalogue files only |
-| `constitution.py` | Resolve both chains; render and load generated artefacts | `resolve(path) -> RuleSet` (**pure, writes nothing**), `render_snapshot(rs) -> bytes`, `render_tokens(rs) -> bytes`, `load_snapshot(path) -> RuleSet` | `registry`, `overrides`, filesystem (reads only) |
+| `constitution.py` | Resolve both chains; render and load generated artefacts | `load_hub_config() -> HubConfig` (§4.4.1), `resolve(path) -> RuleSet` (**pure, writes nothing**), `render_snapshot(rs) -> bytes`, `render_tokens(rs) -> bytes`, `render_index(rs) -> bytes` (§3.1), `load_snapshot(path) -> RuleSet` | `registry`, `overrides`, filesystem (reads only) |
 | `gitio.py` | The `main` worktree and the only write path to it | `ensure_main_worktree(p)`, `commit_to_main(p, files, msg) -> SyncState` | git, network, `locking` |
 | `overrides.py` | Parse `overrides.md`; downgrade matching findings | `parse(text) -> [Override]`, `apply(findings, ruleset) -> [Finding]` | nothing but its arguments |
 | `tickets.py` | Create, read, update, list, transition tickets | `create()`, `load(id)`, `save(t)`, `list(p)`, `transition(t, stage)` | filesystem, `gh`, `locking`, `gitio` |
 | `inference.py` | Perform one act of inference; the only module that spawns `claude` | `infer(Dispatch) -> Result` (§3.6) | the `claude` CLI, `RuleSet` |
 | `locking.py` | Serialise writes | `project_lock(p)`, `hub_lock()`, `registry_lock()` — context managers | filesystem |
 | `models.py` | Resolve aliases; read the probe result; apply fallback | `resolve(role, ruleset)`, `load_probe()` | `RuleSet`, `models-probe.json` |
-| `spend.py` | Attribute and weight transcript usage | `for_ticket(t) -> Spend` (§7.5) | transcript files |
-| `gates/*.py` | Findings for one dimension | `run(diff, ruleset)`; `scan(tree, ruleset)` except smoke | nothing but its arguments |
-| `brands.py` | Derive, write and render a brand | `from_css()`, `from_image()`, `write()`, `swatch()` | filesystem |
+| `spend.py` | Fold a dispatch's usage into the ticket; weight and total it | `fold(ticket, result)`, `for_ticket(t) -> Spend` (§7.5) | `tickets`, `locking`, and transcript files for the fallback path only |
+| `gates/*.py` | Findings for one dimension | `run(diff: Diff, ruleset)`; `scan(tree, ruleset)` except smoke | nothing but its arguments |
+
+`Diff` is what makes the gates pure, so it must carry everything they inspect —
+three constitution rules are otherwise uncomputable from a bare patch:
+
+```python
+Diff = {
+    "base": str, "head": str,                    # commit shas
+    "commits": [{"sha": str, "message": str}],   # → constitution.commit-message-shape
+    "files": [{
+        "path":    str,
+        "status":  str,                          # added | modified | deleted | renamed
+                                                 #   → root-markdown, single-use-script,
+                                                 #     both defined on NEW files only
+        "added":   [{"line": int, "text": str}], # → new-ui-literal, brand.hardcoded-*
+        "removed": [{"line": int, "text": str}],
+        "content": str | None,                   # full text, for whole-file rules
+    }],
+}
+```
+| `brands.py` | Derive, write and render a brand | `from_pdf()` (§4.2, the preferred source), `from_css()`, `from_image()`, `write()`, `swatch()` | filesystem, `pypdf`, `pillow` |
 | `chief` skill | Classify, choose lane, select gates, dispatch | prompt contract; consumes `RuleSet`, writes `status.yml` | all of the above |
 | `cockpit` | Render and write ticket state | HTTP; imports the same library as the CLI | `tickets`, `registry`, `constitution`, `spend`, `gates` |
 
@@ -1900,6 +2127,13 @@ Every file write inside a lock is an atomic replace: write to a temporary file i
 the same directory, then `os.replace`. A writer that cannot take a lock within 5
 seconds fails with a clear message rather than waiting or forcing.
 
+**Locks are re-entrant within a process.** §7.6 holds the project lock for the whole
+of a chief dispatch, and a stage transition inside that window calls
+`gitio.commit_to_main()`, which takes the same lock. A non-re-entrant lock would
+deadlock against itself and fail after 5s on the system's most common path.
+`locking.py` therefore keys a recursive counter by lock path and process, releasing
+only when the outermost holder exits.
+
 ### 10.4 Build order
 
 **The pilot is a greenfield project first.** Phase A proves itself by running
@@ -1909,7 +2143,7 @@ point (G0); adoption is the harder case and goes second.
 
 | Phase | Contents | Effort | Delivers |
 |---|---|---|---|
-| **A** | **`inference.py`** (§3.6), empty-hub contract + catalogue, `~/.taller-run/`, slice vocabulary, both resolution chains, `overrides.md`, snapshot + `tokens.css` rendering, `taller.yml` inheritance, **`locking.py`**, **`main` worktree + `commit_to_main()`**, `taller setup` discovery, **`project new` + scaffolds**, `project adopt`, `project brief`, brands | ~4 sessions | G0, G1, G3, G8, G9 |
+| **A** | CLI flag verification (§3.4); **`inference.py`** with bootstrap mode (§3.6); `HubConfig` + `load_hub_config()` (§4.4.1); empty-hub contract + catalogue; `~/.taller-run/`; slice vocabulary; both resolution chains; `overrides.md` + non-suppressible predicate; `render_snapshot` / `render_index` / `render_tokens`; `taller.yml` inheritance; `locking.py` (re-entrant); `main` worktree + `commit_to_main()` incl. no-remote mode; `taller setup` discovery; `project new` + scaffolds + `queue.yml`; `project adopt`; `project brief`; brands incl. `from_pdf()` | ~4 sessions | G0, G1, G3, G8, G9 |
 | **D** | Tickets, `status.yml`, `sync` handling, transitions, issue mirroring | ~1 session | G5 |
 | **B** | Chief, routing, lanes, per-ticket sessions, model roster, `models probe`, `spend.py`, `billing.py`, `settings.py` | ~2 sessions | G2, G6, G7 |
 | **C** | Gates — constitution first, then size/tests/smoke, then the three LLM gates. `scan()` mode. `project adopt` removes the superseded `code-review/`, `security-review/`, `design-review/` directories. | ~2–3 sessions | G4 |
@@ -1992,7 +2226,9 @@ project.
 `taller setup` round 5 (§4.7), which a first-ever `taller project new` will not
 have run. Rather than making `setup` a precondition the owner has to know about,
 `project new` detects `language: null` — or an empty hub generally — and runs
-`setup` rounds 1, 2 and 5 inline first, then continues into the twelve questions.
+`setup` **rounds 1 and 5** inline first, then continues into the twelve questions.
+Round 2 (project roots) is deliberately skipped: only rounds 3–4 consume it, and
+neither runs here, so asking would collect an answer nothing reads.
 The twelve are unchanged and unrenumbered; the prerequisites simply get collected
 when they are missing. A project must never be created with `language` unset,
 because §8.2's `constitution.new-ui-literal` and the UX gate's language rule both
@@ -2069,13 +2305,24 @@ Taller then adds what every project gets regardless of profile:
 | Added | From |
 |---|---|
 | `.taller/constitution/` | The twelve answers |
+| `.taller/queue.yml` | Answer ⑫, as **proposed** tickets — see the phase note below |
 | `.taller/resolved.json` | `resolve()` + `commit_to_main()` (§4.6) |
 | `static/css/tokens.css` | `render_tokens()` (§4.2.1) — omitted when brand is `none` |
 | `CLAUDE.md` | Stub pointing at `00-index.md` |
-| `.taller/work/0001…000N` | The first tickets, from answer ⑫ |
 
-Finally: `git init`, one commit, and — **only if asked** — `gh repo create
---private`. No remote is created without the owner saying so (§13.2).
+Finally: `git init`, one commit, `ensure_main_worktree()` (which needs that commit
+to exist, §7.3), and — **only if asked** — `gh repo create --private`. No remote is
+created without the owner saying so (§13.2), so the greenfield path normally lands
+at `sync: local`.
+
+**Phase boundary for answer ⑫.** Onboarding is Phase A; tickets are Phase D. So
+`project new` writes answer ⑫ as `.taller/queue.yml` — a list of proposed pieces of
+work, in the owner's own words — and **does not create ticket folders**. Phase D adds
+`taller ticket new --from-queue`, which converts each entry into a real ticket and
+empties the queue. §11.1 ⑫'s promise that onboarding "ends with a board that already
+has work on it" is therefore true from Phase D onward; in Phase A it ends with a
+queue, which `taller project show` prints. This keeps Phase A free of the ticket
+machinery it would otherwise have to build early.
 
 ---
 
@@ -2145,7 +2392,7 @@ which is the owner's decision to make.
 
 | Failure | Behaviour |
 |---|---|
-| `BLOCKER` survives `max_fix_rounds` | Stop. `stage: blocked`. Escalate with what was attempted and why it failed. Never proceeds quietly. |
+| `BLOCKER` survives `max_fix_rounds` | Stop. Set `blocked` (§8.4), keeping the stage. Escalate with what was attempted and why it failed. Never proceeds quietly. |
 | Gate returns `result: error` | Treated as `BLOCKER`, never as a pass. Ticket blocks. |
 | Smoke gate fails at ⑥ | A `Finding` like any other; §9.3 recovery. |
 | A changed template maps to no route | `smoke.unmapped-template` MEDIUM; surfaced to the owner at ⑦ rather than silently unchecked (§9.6). |
@@ -2220,7 +2467,9 @@ Particular attention:
   `constitution.resolved-snapshot-stale` runs `taller resolve`.
 - `overrides.py`: valid suppression downgrades to `NIT` with the reason attached;
   missing reason; expired `until` (distinct rule id from missing reason); a
-  `never`-slice rule and a security rule both refused as non-suppressible.
+  rule id listed in `never.md`'s `non_suppressible:` and any security-gate rule are
+  both refused (§4.5); an id in that list that no gate declares is reported as
+  `constitution.unknown-rule-id`.
 - `spend.py`: recorded transcript fixtures, including one unattributable record
   asserting `partial: true`; `weighted_tokens` differs from `total_tokens` on a
   cache-heavy fixture; `cost` stays `null` on every `billing.mode` but `api`.
@@ -2282,6 +2531,7 @@ application containing known violations:
 - an `overrides.md` entry with no reason
 - an `overrides.md` entry past its `until`
 - an `overrides.md` entry targeting a security rule (must be refused)
+- a `never.md` `non_suppressible:` entry, and an override targeting it (must be refused)
 - an import violating `paths.layers`
 - a template that raises on render (must fail smoke, not `pytest`)
 - a stale `resolved.json`
@@ -2308,15 +2558,17 @@ before every phase exists:
 
 | Check | Requires |
 |---|---|
-| The `claude` CLI is present, and a trivial dispatch succeeds **with no `ANTHROPIC_API_KEY` set** — proving subscription auth still works and `--bare` has not become the default (§3.6.2) | A |
+| The `claude` CLI is present at or above `cli_min_version`, and **every flag in §3.6's mapping table is accepted** by `claude --help` (§3.4) | A |
+| A trivial dispatch succeeds **with no `ANTHROPIC_API_KEY` set** — proving subscription auth still works and `--bare` has not become the default (§3.6.2) | A |
 | Every profile in the hub names only modules the hub contains (§4.0) | A |
 | `language` is set — not `null` — for every registered project (§11.1) | A |
 | `resolve()` succeeds; no unreasoned, expired or non-permitted override | A |
 | `resolved.json` present, not stale, and byte-identical to an **in-memory** `render_snapshot(resolve(path))` — nothing written | A |
-| `static/css/tokens.css` present and byte-identical to an in-memory `render_tokens()` | A |
-| No ticket branch carries its own `resolved.json` or `tokens.css` | A |
+| **When `brand` is not `none`:** `paths.brand_tokens` present and byte-identical to an in-memory `render_tokens()`. Skipped with reason when the brand is `none`, so `python-packaged` passes. | A |
+| `00-index.md` present, byte-identical to an in-memory `render_index()`, and within its 600-token budget | A |
+| No ticket branch carries its own `resolved.json`, `00-index.md` or brand tokens | A |
 | Registry valid; every registered path exists; every `main` worktree present | A/D |
-| Every `status.yml` parses; no ticket left `sync: pending` | D |
+| Every `status.yml` parses; no ticket left `sync: pending` (`local` is fine) | D |
 | Every configured model reachable, per the last `taller models probe` result | B |
 | `billing.mode` matches the detected environment; `pricing.as_of` within 90 days when mode is `api` (advisory) | B |
 | Every Python gate executes; `smoke` configuration valid for the profile; `smoke.auth.secret` resolvable if declared; each LLM gate **dry-runs** — prompt assembles and its model appears reachable in the cached `models-probe.json`, with no inference performed | C |
@@ -2336,7 +2588,8 @@ integration test, not the lightest:
    those skipped. Checks belonging to unbuilt phases report skipped-with-reason
    (§15.4) and do not fail the test.
 4. From Phase C: assert the smoke gate boots the result and returns 200 with a body.
-5. Assert the first tickets exist and one runs ① → ⑩.
+5. Assert `queue.yml` exists with the entries answer ⑫ implied. From Phase D: assert
+   `ticket new --from-queue` converts them. From Phase B: assert one runs ① → ⑩.
 6. Assert `manifest.yml` omissions held: no compose files when the answer was
    local-only, no auth scaffolding when the answer was single-operator, no audit
    logging when the answer was no money or personal data.
@@ -2384,7 +2637,7 @@ adoption criteria were calibrated from.
 | 1 | A fresh install has an empty hub: no brand, no profile, no project, no `language` | verified on a clean machine | A |
 | 2 | `taller project new` on an empty hub produces a repository that **passes every `taller doctor` check Phase A provides**, with none of those skipped | passes | A |
 | 3 | That repository **boots under the smoke gate** on its first commit | passes | **C** — smoke is built in C (§10.4) |
-| 4 | It carries the first tickets from answer ⑫, and one of them runs ① → ⑩ end to end | passes | B |
+| 4 | Answer ⑫ lands as `queue.yml` (A); `ticket new --from-queue` converts it (D); one of those tickets runs ① → ⑩ end to end (B) | passes | A → D → B |
 | 5 | The plugin repository contains **no occurrence of the domain vocabulary list** (§15.6) | 0 | A |
 
 **Adoption:**
