@@ -2600,7 +2600,8 @@ A project's own checkout may be sitting on a ticket branch with a running applic
 | 4 | `commit_to_main(project, files, message)` writes only paths on §7.2's allowed list, and **raises** on anything else | It holds the owner's admin bypass; nothing else may ride it |
 | 5 | **No-remote mode**: with no `origin`, fetch and push are skipped and `sync` is `local` | The greenfield pilot has no remote, and `git fetch` with no origin exits non-zero. Without this, Phase A's own proof either crashes or sits permanently in `pending`, which `doctor` reports as failure. |
 | 6 | With a remote and a clean fast-forward: `sync` is `ok` | |
-| 7 | With a remote whose `main` has moved: the ticket-file commits are **rebased** and retried once | These paths cannot conflict with application code |
+| 7 | With a remote whose `main` has moved: the ticket-file commits are **rebased** and retried once — **in Taller's detached worktree only**. With the owner on `main`, their branch is never rebased or merged; the call returns `pending` | These paths cannot conflict with application code; the owner's branch is theirs (§7.3) |
+| 11 | `main` is **never checked out in two places**: the worktree is detached, `main` moves by `update-ref` compare-and-swap, and with the owner on `main` Taller commits in their checkout with `commit --only` | Sharing the ref lost data in both directions (§7.3); both are regression-tested |
 | 8 | When the push fails: the commit stays local, `sync` is `pending`, and **the transition is not lost** | Local state is the truth; the remote is a mirror |
 | 9 | Every write is an atomic replace under the project lock | §10.3 |
 | 10 | Writes are **LF**, whatever the platform | The tamper check compares bytes (§4.6) |
@@ -2626,11 +2627,143 @@ Build real git repositories in `tmp_path`: one with no remote, one with a bare r
 
 ---
 
-## Chunks 7–8: written after Chunk 6 is green
+## Chunk 7: Brands, scaffolds, discovery
 
-| Chunk | Contents | Spec |
+The three library modules the wizard of chunk 8 drives. None of them asks a question — asking is the command layer's job (§3.5) — so each is testable as plain functions over files. Same style as chunks 4–6: contracts, invariants and the non-obvious decisions; the tests are the gate.
+
+### Task 15: `brands.py` (§4.2)
+
+**Files:** `src/taller/brands.py`, `tests/unit/test_brands.py`, `paths.swatch()`; a PDF builder in `tests/support.py`
+
+```python
+Proposal = {                       # what an extractor proposes; never a decision
+    "source":  str,                # "pdf" | "css" | "image" | "scratch"
+    "colours": list[{"hex": str, "count": int, "first": int}],   # ranked
+    "fonts":   list[str],          # in order of first appearance, deduplicated
+    "notes":   list[str],          # e.g. "no text layer - nothing extracted"
+}
+from_pdf(path) -> Proposal         from_css(path) -> dict[str, str]    # --name -> value
+from_image(path) -> Proposal       propose_tokens(Proposal) -> dict[str, str]
+write(slug, tokens, prose, *, assets=(), replace=False) -> Path
+swatch(slug) -> Path               list_brands() -> list[str]
+```
+
+| # | Invariant | Why |
 |---|---|---|
-| **7** | `brands.py` (`from_pdf` first, it is the preferred source), `scaffold.py`, `discovery.py` | §4.2, §4.7, §11.4 |
-| **8** | `cli.py`, the command modules, `doctor.py`, and the greenfield acceptance test of §15.5 | §3.5, §15.4, §15.5 |
+| 1 | `from_pdf` collects **hex** (`#abc` expands to `#aabbcc`, lowercased), **CMYK** (`C 0 M 45 Y 100 K 0`, converted), and **Pantone-with-hex** (the hex is what is kept) from the text layer, and font names from both **labelled lines** (`Font:`, `Typeface:`, `Typography:`) and the PDF's **embedded font resources** (subset prefix `ABCDEF+` and style suffix `-Bold` stripped) | A brand guide is typeset in its own brand fonts, so the embedded list is evidence, not noise |
+| 2 | Colours rank by **count desc, then first appearance asc** | §4.2: how often a colour is declared, then how early |
+| 3 | A PDF with **no text layer** yields empty colours and a note saying so — never a guess from pixels | §4.2 |
+| 4 | `from_css` reads every `--*` custom property, in file order, last declaration wins | The CSS path is also adoption's lift (§4.2.1 step 1) |
+| 5 | `from_image`: raster via pillow — quantise, drop fully transparent pixels, rank by pixel count; **SVG** by its literal `fill`/`stroke`/`stop-color` hex values, since pillow cannot read SVG and a rasteriser is not a dependency | |
+| 6 | `propose_tokens` names the first two colours `--color-primary`, `--color-accent`, the rest `--color-3`…; the first font `--font-body`, a second `--font-heading` | A proposal the swatch page can show; the owner renames |
+| 7 | `write` validates the slug (`^[a-z0-9][a-z0-9-]{0,62}$`), writes `tokens.css` as a single `:root` block, LF, and `brand.md` whose **first line is a `> ` summary** (the index collects it, §3.1); copies `assets` into `assets/`; **refuses to overwrite** an existing brand unless `replace=True`; takes the hub lock | A brand is the owner's once written |
+| 8 | What `write` produces **round-trips through `constitution._resolve_brand`** to the same tokens | The resolver is the only reader that matters |
+| 9 | `swatch` writes one self-contained HTML file to `~/.taller-run/swatches/<slug>.html` — no network, **every value HTML-escaped** — showing each colour token as a block with its name and value, and each font token as sample text | A brand name or a token value is owner input rendered into HTML |
+| 10 | No extractor writes anything | They propose; `write` is the only writer |
 
-The acceptance test in chunk 8 is the phase's real exit condition: `project new` against an empty `HOME`, once per catalogue profile, then `doctor` green with nothing skipped that Phase A provides.
+**Test fixture:** there is no PDF-writing library in the dependency set, so `tests/support.py` gains `make_pdf(path, lines, fonts=("Helvetica",))` — a hand-assembled PDF with a correct xref, one text object per line. A second call with `lines=[]` and no content stream is the "scanned" case.
+
+- [ ] Write the tests · run failing · implement · expect **~18 passed** · commit `feat(brands): propose from PDF, CSS or logo; write and swatch`
+
+### Task 16: `scaffold.py` and the three scaffolds (§11.4)
+
+**Files:** `src/taller/scaffold.py`, `src/taller/catalogue/scaffolds/<profile>/…`, `tests/unit/test_scaffold.py`, `paths.project_claude_md()`
+
+A scaffold is a **template directory plus `manifest.yml`**, not generated code — auditable, and editable without Python:
+
+```yaml
+# scaffolds/flask-sqlite/manifest.yml
+files:
+  - {path: app.py, substitute: true}
+  - {path: templates/_brand.html, omit_when: {brand: [none]}}
+  - {path: auth.py, substitute: true, omit_when: {users: [solo]}}
+  - {path: audit.py, omit_when: {sensitive_data: ["no"]}}
+  - {path: docker-compose.yml, substitute: true, omit_when: {deploy: [local]}}
+```
+
+| Key | Meaning |
+|---|---|
+| `path` | Destination, POSIX, relative to the project root |
+| `source` | Template file, relative to the scaffold directory. Defaults to `path` |
+| `substitute` | `true`: replace `%%key%%` markers. Default `false`: copied byte for byte |
+| `omit_when` | `{fact: [values]}` — omitted if **any** fact matches |
+| `only_when` | `{fact: [values]}` — included only if **every** fact matches |
+
+**The facts** are the normalised answers the manifest may test, and nothing else: `users` (`solo`/`team`/`public`, ④), `deploy` (`local`/`docker`, ⑪), `sensitive_data` (`yes`/`no`, ⑧), `phone` (`yes`/`no`, ⑥), `brand` (`none`/`set`, ⑩). A manifest naming any other fact is a `ConfigError` — a typo would otherwise omit a file silently for ever.
+
+**Why `%%key%%` and not Jinja.** A Flask scaffold's templates *are* Jinja: `{{ url_for(...) }}` must reach the project untouched. A second template language with a marker Jinja never uses avoids escaping every Flask template. The variables are fixed: `name`, `package` (the name as a Python identifier), `description`, `ui_lang`. An unknown marker raises; so does a marker left over after substitution.
+
+```python
+render(profile, *, name, description, facts, ui_lang) -> dict[str, bytes]    # pure
+create_project(target, *, name, profile, brand, answers) -> CreateReport
+```
+
+`create_project` is the library half of `taller project new` (§11.4); the command collects the twelve answers and the brief approval, then calls it once:
+
+1. **Validate everything before writing anything:** name (the brand slug pattern), `target` absent or an empty directory, profile in the catalogue or hub, brand in the hub or `none`, hub `language` set (§11.1 — a project must never be created with it unset).
+2. Install the profile into the hub if absent (atomic with its modules, §4.0).
+3. Build the project in a sibling staging directory: the rendered scaffold; `.taller/taller.yml` (empty — a new project has no deviations, §5); `.taller/constitution/product.md` from ①③④⑤⑥⑦⑧⑪; `never.md` from ②; `overrides.md` with an empty list; `.taller/queue.yml` from ⑫; `CLAUDE.md` pointing at `00-index.md`.
+4. `git init -b main`, add all, one commit. Then rename staging to `target`.
+5. Register; `ensure_main_worktree()`; `resolve()`; `commit_to_main()` the snapshot, the index and — unless the brand is `none` — the tokens. Return the sync state.
+
+| # | Invariant | Why |
+|---|---|---|
+| 1 | `render` is pure and deterministic; LF; every manifest file exists in the scaffold | |
+| 2 | Each omission rule of §11.4 holds: no Docker files when local, no auth when solo, no audit when no sensitive data, no brand include when brand is `none` | "A scaffold is shaped by the answers, not pasted whole" |
+| 3 | Flask template syntax survives substitution byte for byte | |
+| 4 | Unknown fact, unknown marker, leftover marker, missing source, and two entries landing on one path all raise `ConfigError` | Manifest bugs fail loudly |
+| 5 | Every scaffold ships `.gitattributes` (eol=lf, merge=ours for the generated files) and a `.gitignore` covering `*.db`, `*-wal`, `*-shm`, `venv/`, `.env`, `*.egg-info/` | §4.6's tamper check on Windows; §11.4 |
+| 6 | **A failed validation writes nothing** — no hub change, no directory, no registry entry | §11.1: nothing is written before approval, and nothing half-written after a refusal |
+| 7 | Answers are flattened to single lines and the `product.md` summary is capped, so an answer can neither inject a second `> ` summary nor push the index over its 600-token budget | `_summary_of` collects every `> ` line (§3.1) |
+| 8 | The created project: branch `main`, clean status, registered, snapshot/index/tokens committed, **tamper-clean** (committed bytes equal a fresh render), `sync` is `local` with no remote | The chunk 8 acceptance test builds on this |
+| 9 | `queue.yml` holds ⑫ as proposed entries; **no ticket folders** | §11.4 phase boundary |
+| 10 | A generated project's own test suite passes (`pytest` inside it) for every profile | A scaffold that ships red tests teaches the owner to ignore red |
+
+- [ ] Write the tests · run failing · author the three scaffolds · implement · expect **~20 passed** · commit `feat(scaffold): render profile scaffolds by manifest; create a project end to end`
+
+### Task 17: `discovery.py` (§4.7)
+
+**Files:** `src/taller/discovery.py`, `tests/unit/test_discovery.py`
+
+```python
+LocalRepo  = {"path": str, "name": str, "origin": str | None, "key": str | None}
+RemoteRepo = {"name": str, "key": str, "url": str, "private": bool}
+scan_roots(roots, *, max_depth=4) -> list[LocalRepo]
+list_remote() -> tuple[list[RemoteRepo] | None, str]        # None + reason when gh is unusable
+remote_key(url) -> str | None                               # "github.com/owner/repo"
+reconcile(local, remote, *, reachable=_ls_remote) -> Buckets # linked, local_only, remote_only, stale
+guess_profile(path) -> str | None
+palette(path) -> dict[str, str]                             # --name -> normalised value
+cluster_palettes(repos) -> list[{"tokens": dict, "repos": list[str]}]
+brand_assets(path) -> {"logos": [...], "favicons": [...], "guides": [...]}
+```
+
+| # | Invariant | Why |
+|---|---|---|
+| 1 | `scan_roots` finds repositories by `.git` (directory **or** file), does not descend into a found repository or into `node_modules`, `venv`, `.venv`, `__pycache__`, or hidden directories, and respects `max_depth` | A root holding one project with a `node_modules` must not take minutes |
+| 2 | `remote_key` normalises https, `git@host:owner/repo`, `ssh://`, trailing `.git` and case — and **strips credentials** from `https://user:token@host/…` | A token in a remote URL must never reach a report or the registry |
+| 3 | `list_remote` returns `(None, reason)` when `gh` is missing or unauthenticated — never raises | §4.7 round 1 reports it; discovery still works locally |
+| 4 | `reconcile` sorts into §4.7's four buckets. An origin **absent from the listing** is checked with `git ls-remote` (injectable) before being called stale, since the listing covers only the account's repositories | A repository in someone else's organisation is not stale |
+| 5 | `remote_only` is reported, never cloned | Default no (§4.7) |
+| 6 | `guess_profile`: Flask in requirements or an `app.py`/`wsgi.py` importing it → `flask-sqlite`; a `*.spec` or packaged Python without Flask → `python-packaged`; a root `index.html` with no server → `static-site`; otherwise `None` | Shown for correction, never applied silently |
+| 7 | `palette` reads `--*` properties from `:root` blocks of the repository's CSS, skipping vendored and `*.min.css` files; colour values normalised as in `brands` | Identical palettes must compare equal however they were written |
+| 8 | `cluster_palettes` groups repositories with **identical** palettes; repositories with no tokens are one separate group | §4.7: "share an identical set of tokens" |
+| 9 | `brand_assets` finds `logo.*`, `favicon.*`, and PDFs whose name suggests a guide (`brand`, `guide`, `manual`, `identity`, `style`) | |
+| 10 | **Discovery writes nothing** — asserted by mtimes, as for `resolve()` | §4.7: nothing is written before the final approval |
+
+- [ ] Write the tests · run failing · implement · expect **~18 passed** · commit `feat(discovery): find projects and brands on disk and on GitHub, writing nothing`
+
+### Deferred from chunk 7, recorded rather than forgotten
+
+- **④ choosing the security module** (`web-app` vs `minimal`, §11.1). Chain 1 cannot change a profile's module list, so in Phase A ④ is recorded in `product.md` and drives the auth omission only. Choosing the module needs a project-level module override, which is a spec change — raised with the owner, not improvised.
+- **`.github/workflows/taller-ci.yml`** in the scaffolds is Phase C (§9.4).
+
+---
+
+## Chunk 8: written after Chunk 7 is green
+
+| Contents | Spec |
+|---|---|
+| `cli.py`, the command modules (`setup`, `project new/adopt/brief/show/discover`, `brand new`, `settings`, `doctor`), `doctor.py`, and the greenfield acceptance test | §3.5, §4.7, §11, §15.4, §15.5 |
+
+The acceptance test is the phase's real exit condition: `project new` against an empty `HOME`, once per catalogue profile, then `doctor` green with nothing skipped that Phase A provides.
