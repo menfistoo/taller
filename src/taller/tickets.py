@@ -21,7 +21,7 @@ from typing import Any, Mapping
 
 import yaml
 
-from . import gitio, locking, registry
+from . import gitio, issues, locking, registry
 from .errors import ConfigError
 from .scaffold import flatten
 
@@ -158,17 +158,27 @@ def _has_origin(project: Path | str) -> bool:
 
 
 def write(project: Path | str, ticket: Ticket, message: str, *,
-          note: str | None = None, extra: Mapping[str, bytes] | None = None) -> Ticket:
+          note: str | None = None, extra: Mapping[str, bytes] | None = None,
+          retry_issue: bool = True) -> Ticket:
     """The one path to `main` for a ticket: status, a note, any extra files.
 
     `status.yml` cannot contain the result of its own push, so `sync` is written
     as expected (`local` with no remote, else `ok`); when the push fails, it is
     corrected to `pending` in one more commit, which stays local until the next
     push carries both (7.3).
+
+    A ticket whose GitHub issue could not be opened at ① gets another attempt
+    here, quietly, until it has a number (14).
     """
     entry = registry.get_project(project)
     with locking.project_lock(entry["name"]):
         folder = ticket_dir(ticket)
+        if retry_issue and ticket.get("issue") is None and ticket["stage"] != "close":
+            number, _ = issues.open_issue(project, {**ticket, "words": _words(project, ticket)})
+            if number:
+                ticket["issue"] = number
+                note = f"{note}; GitHub issue #{number} opened" if note \
+                    else f"GitHub issue #{number} opened"
         files: dict[str, bytes] = dict(extra or {})
         if note:
             notes_path = f"{folder}/notes.md"
@@ -209,11 +219,36 @@ def create(project: Path | str, *, title: str, words: str, kind: str) -> Ticket:
         }
         body = str(words) if str(words).endswith("\n") else f"{words}\n"
         ticket_md = (f"# {title}\n\n- Kind: {kind}\n- Created: {created}\n\n"
-                     f"## In the owner's words\n\n{body}")
+                     f"{WORDS_HEADING}\n\n{body}")
         folder = ticket_dir(ticket)
-        return write(project, ticket, f"ticket {ticket['id']:04d}: {title}",
-                     note="created at ① intake",
-                     extra={f"{folder}/ticket.md": ticket_md.encode("utf-8")})
+        number, reason = issues.open_issue(project, {**ticket, "words": words})
+        ticket["issue"] = number
+        note = "created at ① intake"
+        if number:
+            note += f"; GitHub issue #{number}"
+        elif reason:
+            note += f"; GitHub issue not opened ({reason}) - retried at the next move"
+        return write(project, ticket, f"ticket {ticket['id']:04d}: {title}", note=note,
+                     extra={f"{folder}/ticket.md": ticket_md.encode("utf-8")},
+                     retry_issue=False)
+
+
+WORDS_HEADING = "## In the owner's words"
+
+
+def _words(project: Path | str, ticket: Mapping[str, Any]) -> str:
+    """The owner's words back out of `ticket.md`, for a retried issue's body."""
+    raw = read_main(project, f"{ticket_dir(ticket)}/ticket.md")
+    text = raw.decode("utf-8", errors="replace") if raw else ""
+    return text.split(f"{WORDS_HEADING}\n\n", 1)[1] if WORDS_HEADING in text else ""
+
+
+def _close_issue_note(project: Path | str, ticket: Mapping[str, Any]) -> str:
+    if not ticket.get("issue"):
+        return ""
+    failure = issues.close_issue(project, ticket)
+    return (f"; GitHub issue #{ticket['issue']} not closed ({failure})" if failure
+            else f"; GitHub issue #{ticket['issue']} closed")
 
 
 # --- the stage machine (spec 8) ------------------------------------------------
@@ -329,7 +364,7 @@ def advance(project: Path | str, ticket_id: int, *, lane: str | None = None) -> 
         elif target == "close":
             ticket["outcome"] = "done"
             done = _clean_up(project, ticket, delete_unmerged=False)
-            extra = f"; {', '.join(done)}" if done else ""
+            extra = (f"; {', '.join(done)}" if done else "") + _close_issue_note(project, ticket)
         ticket["stage"] = target
         return write(project, ticket, f"ticket {ticket_id:04d}: {stage} -> {target}",
                      note=f"{_label(stage)} → {_label(target)}{detail}{extra}")
@@ -481,4 +516,5 @@ def close(project: Path | str, ticket_id: int, *, abandon_reason: str | None = N
         ticket.update({"stage": "close", "outcome": "abandoned", "blocked": None})
         return write(project, ticket, f"ticket {ticket_id:04d}: abandoned",
                      note=f"abandoned at {_label(stage)}: {abandon_reason}"
-                          + (f"; {', '.join(done)}" if done else ""))
+                          + (f"; {', '.join(done)}" if done else "")
+                          + _close_issue_note(project, ticket))
