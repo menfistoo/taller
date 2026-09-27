@@ -64,6 +64,16 @@ def onboarding(name: str) -> Path:
     return run_dir() / "onboarding" / f"{name}.yml"
 
 
+def onboarding_brief(name: str) -> Path:
+    """The brief page, beside the answers it renders (spec 11.1)."""
+    return run_dir() / "onboarding" / f"{name}.html"
+
+
+def doctor_dispatch_cache() -> Path:
+    """When the live dispatch check last passed; see doctor.py."""
+    return run_dir() / "doctor-dispatch.json"
+
+
 def main_worktree(project_name: str) -> Path:
     return run_dir() / "worktrees" / f"{project_name}-main"
 
