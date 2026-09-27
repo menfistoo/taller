@@ -1,0 +1,30 @@
+# A packaged program with no user interface, run on a machine without Python.
+name: python-packaged
+description: Python program frozen into a single executable with PyInstaller, no UI
+modules:
+  - stack/python-packaged
+  - security/minimal
+  - conventions/python
+  - never
+
+# Asked, never assumed (spec 4.0). A project with no interface will most likely
+# answer "none", but that is its answer to give, not this file's.
+brand: null
+
+paths:
+  security_sensitive:
+    - "build.py"
+    - "*.spec"
+  # No interface, so no UI paths and no UI-language rules to apply.
+  ui: []
+  layers: {}
+  tests_dir: "tests"
+  # No brand and therefore no generated token file: there is nothing to style.
+  brand_tokens: null
+
+smoke:
+  # Import the entry module and assert it raises nothing. There is no port to
+  # poll, and a frozen build is verified by running it, not by importing source.
+  kind: import
+  module: "main"
+  timeout_s: 20

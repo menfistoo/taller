@@ -1,0 +1,35 @@
+# A static page with an optional helper script, no server of its own.
+name: static-site
+description: Static HTML, CSS and JS with no build step, plus an optional Python helper
+modules:
+  - stack/static-site
+  - security/minimal
+  - conventions/js
+  - ux/bootstrap
+  - never
+
+# Asked, never assumed (spec 4.0). No `language` key here either.
+brand: null
+
+paths:
+  # Empty: this profile adds nothing to the hub floor (spec 5.1), which still
+  # applies. Append-only, so an entry can be added but never removed.
+  security_sensitive: []
+  ui:
+    - "*.html"
+    - "*.css"
+    - "*.js"
+  layers: {}
+  tests_dir: "tests"
+  # The assets of a static site sit at its root, so the generated token file
+  # does too. This is why brand_tokens is per profile and never hardcoded.
+  brand_tokens: "tokens.css"
+
+smoke:
+  # Served by a plain file server, not by the site: there is no application to
+  # boot. `ready: auto` takes the port from the boot process (spec 9.6).
+  kind: http
+  boot: "python -m http.server 0 --directory ."
+  ready: "auto"
+  timeout_s: 15
+  routes: ["/index.html"]

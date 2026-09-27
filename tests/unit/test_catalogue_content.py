@@ -69,6 +69,14 @@ DOMAIN_VOCABULARY = (
 REQUIRED_PATH_KEYS = {"security_sensitive", "ui", "layers", "tests_dir", "brand_tokens"}
 SMOKE_KINDS = {"http", "import", "none"}
 
+# Where render_tokens writes the generated token file, per profile. The static
+# site keeps its assets at the root; a program with no UI has no brand at all.
+EXPECTED_BRAND_TOKENS = {
+    "flask-sqlite": "static/css/tokens.css",
+    "static-site": "tokens.css",
+    "python-packaged": None,
+}
+
 
 def module_files() -> list[Path]:
     return sorted(MODULES_DIR.rglob("*.md"))
@@ -155,3 +163,65 @@ def test_every_module_sits_in_a_slice_of_the_closed_vocabulary(path: Path):
     """Spec 4.3's list is closed. Chain 2 keys resolved text by slice name, so a
     module filed under an unknown one would resolve into nothing."""
     assert slice_of(path) in SLICES
+
+
+# --- invariant 6 -------------------------------------------------------------
+
+def test_the_catalogue_ships_exactly_three_profiles():
+    """Spec 4.1. Three shapes cover most small estates; a fourth is a decision,
+    not a drive-by addition (spec 4.0's growth rule)."""
+    assert {path.stem for path in profile_files()} == EXPECTED_PROFILES
+
+
+# --- invariant 7 -------------------------------------------------------------
+
+@pytest.mark.parametrize("path", profile_files(), ids=lambda p: p.stem)
+def test_no_profile_assumes_a_brand_or_a_language(path: Path):
+    """Spec 4.0: both are asked, never assumed. A shipped default here is
+    precisely how a tool ends up knowing whose it is.
+
+    The byte checks ride along rather than taking a case of their own: a
+    non-ASCII default IS a leaked language, and spec 4.6 needs the LF.
+    """
+    raw = path.read_bytes()
+    assert b"\r\n" not in raw, f"{path.name} has CRLF endings"
+    text = raw.decode("utf-8")
+    assert all(ord(char) <= 127 for char in text), f"{path.name} holds non-ASCII text"
+
+    data = yaml.safe_load(text)
+    assert "brand" in data, "the key is present and null, so onboarding has a slot to fill"
+    assert data["brand"] is None, f"{path.name} ships a brand default"
+    assert "language" not in data, f"{path.name} ships a language default"
+
+
+# --- invariant 8 -------------------------------------------------------------
+
+@pytest.mark.parametrize("path", profile_files(), ids=lambda p: p.stem)
+def test_every_module_a_profile_names_exists(path: Path):
+    """A profile copy is atomic with its modules (spec 4.0). A dangling name
+    would make the first `project new` on a fresh hub fail."""
+    named = yaml.safe_load(path.read_text(encoding="utf-8"))["modules"]
+    assert named, f"{path.name} names no modules"
+    missing = [module for module in named if module not in EXPECTED_MODULES]
+    assert missing == [], f"{path.name} names modules the catalogue lacks: {missing}"
+
+
+# --- invariant 9 -------------------------------------------------------------
+
+@pytest.mark.parametrize("path", profile_files(), ids=lambda p: p.stem)
+def test_every_profile_carries_the_keys_resolution_reads(path: Path):
+    """These are the keys resolve() (spec 4.4) and the smoke gate (spec 9.6)
+    read. A missing one fails at dispatch time, far from its cause."""
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert data["name"] == path.stem, "the name is how the registry refers to the profile"
+    assert data["description"].strip(), "the picker shows this line (spec 4.7)"
+
+    assert REQUIRED_PATH_KEYS <= set(data["paths"]), (
+        f"paths is missing {sorted(REQUIRED_PATH_KEYS - set(data['paths']))}"
+    )
+    assert data["smoke"]["kind"] in SMOKE_KINDS
+
+    # brand_tokens is per profile and must not be hardcoded anywhere else: the
+    # static site's assets sit at its root, and a program with no UI has no
+    # generated token file at all.
+    assert data["paths"]["brand_tokens"] == EXPECTED_BRAND_TOKENS[path.stem]

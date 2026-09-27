@@ -1,0 +1,49 @@
+# A server-rendered web application with a database. Inert until copied into a
+# hub (spec 4.0): nothing here is resolved or enforced from the catalogue.
+name: flask-sqlite
+description: Flask + SQLite WAL + Jinja2 + Bootstrap 5 + gunicorn + Docker Compose
+modules:
+  - stack/flask-sqlite
+  - security/web-app
+  - conventions/python
+  - conventions/js
+  - ux/bootstrap
+  - never
+
+# Asked, never assumed (spec 4.0). The key exists so onboarding has a slot to
+# fill; a default here is how a generic tool ends up knowing whose it is. There
+# is deliberately no `language` key at all.
+brand: null
+
+paths:
+  # APPENDS to the hub floor and can never be narrowed (spec 4.4): a project
+  # able to shrink its own security surface would make the gate optional.
+  security_sensitive:
+    - "routes/**"
+    - "blueprints/**"
+    - "database.py"
+    - "**/auth*.py"
+    - "**/permissions*.py"
+    - "migrate_*.py"
+    - "wsgi.py"
+    - "docker-compose*.yml"
+  ui:
+    - "templates/**"
+    - "static/**/*.css"
+    - "static/**/*.js"
+  # What each layer is allowed to import. An empty list means "nothing local".
+  layers:
+    "routes/**": ["database", "utils.*"]
+    "blueprints/**": ["database", "utils.*"]
+    "database.py": []
+  tests_dir: "tests"
+  # Where render_tokens writes the generated token file, inside the project, so
+  # the browser loads a file the image contains (spec 4.2.1).
+  brand_tokens: "static/css/tokens.css"
+
+smoke:
+  kind: http
+  boot: "python run_local.py"
+  ready: "http://127.0.0.1:5000/"
+  timeout_s: 30
+  routes: ["/"]
