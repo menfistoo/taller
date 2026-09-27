@@ -73,3 +73,12 @@ def stub_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             return " ".join(self.last())
 
     return Stub()
+
+
+@pytest.fixture
+def identity(monkeypatch: pytest.MonkeyPatch):
+    """Commits must not depend on the machine's git identity."""
+    for role in ("AUTHOR", "COMMITTER"):
+        monkeypatch.setenv(f"GIT_{role}_NAME", "Taller Test")
+        monkeypatch.setenv(f"GIT_{role}_EMAIL", "test@example.invalid")
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")

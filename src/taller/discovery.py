@@ -151,6 +151,37 @@ def list_remote() -> tuple[list[RemoteRepo] | None, str]:
     ], ""
 
 
+REQUIRED_GH_SCOPES = ("repo", "workflow")
+
+
+def gh_auth_status() -> dict[str, Any]:
+    """Setup round 1 (spec 4.7): who `gh` is signed in as, and what it may do.
+
+    Parsed, never echoed: the raw output carries a (masked) token line, and a
+    report is no place for any part of a token.
+    """
+    completed = _run_gh(["auth", "status"])
+    if completed is None:
+        return {"ok": False, "account": None, "scopes": [], "missing": [],
+                "message": "gh is not installed. GitHub is optional: projects work "
+                           "locally, and a remote is only created when you ask."}
+    text = f"{completed.stdout}\n{completed.stderr}"
+    account = re.search(r"Logged in to \S+ (?:account|as) (\S+)", text)
+    if completed.returncode != 0 or not account:
+        return {"ok": False, "account": None, "scopes": [], "missing": [],
+                "message": "gh is not signed in. Run `gh auth login` when you want "
+                           "GitHub; nothing here needs it."}
+    scope_line = re.search(r"Token scopes:\s*(.*)", text)
+    scopes = re.findall(r"'([^']+)'", scope_line.group(1)) if scope_line else []
+    missing = [scope for scope in REQUIRED_GH_SCOPES if scope not in scopes]
+    message = f"gh is signed in as {account.group(1)}."
+    if missing:
+        message += (f" It lacks {', '.join(missing)}; run "
+                    f"`gh auth refresh -s {','.join(missing)}` before pushing workflows.")
+    return {"ok": True, "account": account.group(1), "scopes": scopes,
+            "missing": missing, "message": message}
+
+
 def _run_gh(args: list[str]) -> subprocess.CompletedProcess | None:
     """`gh`, resolved to an absolute path (Windows skips `.cmd` otherwise)."""
     executable = shutil.which("gh")

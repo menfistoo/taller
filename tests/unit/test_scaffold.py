@@ -52,15 +52,6 @@ def git(cwd: Path, *args: str) -> str:
 
 
 @pytest.fixture
-def identity(monkeypatch: pytest.MonkeyPatch):
-    """Commits must not depend on the machine's git identity."""
-    for role in ("AUTHOR", "COMMITTER"):
-        monkeypatch.setenv(f"GIT_{role}_NAME", "Taller Test")
-        monkeypatch.setenv(f"GIT_{role}_EMAIL", "test@example.invalid")
-    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
-
-
-@pytest.fixture
 def hub(tmp_home: Path, identity) -> Path:
     """A hub that has been through `setup` round 5: `language` is set."""
     support.write(paths.hub_config(), yaml.safe_dump({"language": LANGUAGE}))
