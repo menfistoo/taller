@@ -83,6 +83,11 @@ def dispatch_slots() -> Path:
     return run_dir() / "dispatch" / "slots"
 
 
+def swatch(slug: str) -> Path:
+    """A brand's review page (spec 4.2): opened locally, never committed."""
+    return run_dir() / "swatches" / f"{slug}.html"
+
+
 def smoke_dir(project_name: str, ticket_id: int) -> Path:
     return run_dir() / "smoke" / f"{project_name}-{ticket_id}"
 

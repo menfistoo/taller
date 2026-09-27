@@ -112,3 +112,46 @@ def tree_mtimes(root: Path) -> dict[str, tuple[float, int]]:
         for path in sorted(root.rglob("*"))
         if path.is_file()
     }
+
+
+def make_pdf(path: Path, lines: list[str], *, fonts: tuple[str, ...] = ("Helvetica",)) -> Path:
+    """A minimal, valid PDF: one page, one text line per entry, `fonts` embedded.
+
+    Hand-assembled because no PDF-writing library is a dependency. The first font
+    sets the text; every font is listed in the page's resources, which is where a
+    real brand guide's typefaces show up. `lines=[]` gives a page with no content
+    stream at all - the shape of a scanned PDF with no text layer.
+    """
+    def escape(text: str) -> str:
+        return text.replace("\\", "\\\\").replace("(", "\(").replace(")", "\)")
+
+    font_refs = " ".join(f"/F{i} {5 + i} 0 R" for i in range(len(fonts)))
+    objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        f"/Resources << /Font << {font_refs} >> >>"
+        + (" /Contents 4 0 R" if lines else "") + " >>",
+    ]
+    body = "".join(
+        f"BT /F0 11 Tf 72 {740 - 16 * n} Td ({escape(line)}) Tj ET\n"
+        for n, line in enumerate(lines)
+    )
+    objects.append(f"<< /Length {len(body.encode('latin-1'))} >>\nstream\n{body}endstream")
+    objects.extend(
+        f"<< /Type /Font /Subtype /Type1 /BaseFont /{name} >>" for name in fonts
+    )
+
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for number, obj in enumerate(objects, start=1):
+        offsets.append(len(out))
+        out += f"{number} 0 obj\n{obj}\nendobj\n".encode("latin-1")
+    xref = len(out)
+    out += f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n".encode("latin-1")
+    out += "".join(f"{o:010d} 00000 n \n" for o in offsets).encode("latin-1")
+    out += (f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
+            f"startxref\n{xref}\n%%EOF\n").encode("latin-1")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(bytes(out))
+    return path
