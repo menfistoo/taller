@@ -179,3 +179,36 @@ def make_repo(path: Path, files: Mapping[str, str], *, origin: str | None = None
         subprocess.run(["git", *identity, "-C", str(path), "commit", "--quiet", "-m",
                         "initial"], check=True)
     return path
+
+
+ANSWERS = {
+    "what_it_does": "Keeps track of which neighbour has borrowed which tool.",
+    "what_it_is_not": "A marketplace.", "must_never_break": "Who has which tool.",
+    "users": "team", "reach": "a private network", "phone": False,
+    "stores": "Tools and loans.", "sensitive_data": False, "deploy": "local",
+    "first_version": ["List the tools", "Record a loan", "Show who has what"],
+}
+
+
+def new_project(name: str = "toolshed", *, brand: str | None = None,
+                origin: str | None = None) -> Path:
+    """A project as `taller project new` leaves it: committed, registered, resolved.
+
+    Needs the `tmp_home` and `identity` fixtures. `origin` adds a remote after
+    creation - a path that does not exist makes every push fail, which is how a
+    test reaches `sync: pending`.
+    """
+    import subprocess
+
+    from taller import hub, scaffold
+
+    if not (hub.read_config().get("language") or {}).get("code"):
+        hub.update_config({"language": {"code": "en", "ui": "es", "commits": "en"}})
+        hub.commit("setup")
+    target = paths.home() / "projects" / name
+    scaffold.create_project(target, name=name, profile="flask-sqlite", brand=brand,
+                            answers=ANSWERS)
+    if origin:
+        subprocess.run(["git", "-C", str(target), "remote", "add", "origin", origin],
+                       check=True)
+    return target

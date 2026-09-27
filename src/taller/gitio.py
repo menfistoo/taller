@@ -94,6 +94,8 @@ WORK_DIR = "work"
 
 FIXED_ALLOWED = (
     f"{TALLER_DIR}/resolved.json",
+    # Emptied as `ticket new --from-queue` turns it into tickets (spec 11.4).
+    f"{TALLER_DIR}/queue.yml",
     f"{TALLER_DIR}/constitution/00-index.md",
     ".gitattributes",
 )
