@@ -15,6 +15,7 @@ that asks it. Two properties matter more than any wording:
 from __future__ import annotations
 
 import html
+import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -164,7 +165,8 @@ def _pick(raw: str, options: tuple[Choice, ...]) -> str | None:
 def _prompt(question: Question, options: tuple[Choice, ...], default: Any) -> str:
     lines = ["  " + (f"{question.number} " if question.number else "") + question.text]
     if question.why:
-        lines.append(f"     ({question.why})")
+        lines.append(textwrap.fill(f"({question.why})", width=64,
+                                   initial_indent="     ", subsequent_indent="      "))
     # One choice per line: side by side they wrap badly in a narrow terminal.
     lines += [f"     {n}) {label}" for n, (_, label) in enumerate(options, 1)]
     if question.kind == "yes_no":
