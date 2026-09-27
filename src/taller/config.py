@@ -23,7 +23,10 @@ from .errors import ConfigError
 HubConfig = dict[str, Any]
 
 # Lists normally replace on merge. This one appends, at every level.
-APPEND_ONLY_LIST_PATHS = {("paths", "security_sensitive")}
+APPEND_ONLY_LIST_PATHS = {
+    ("paths", "security_sensitive"),
+    ("non_suppressible",),       # spec 4.5 - a project may add, never remove
+}
 
 SHIPPED_DEFAULTS: HubConfig = {
     "cli_min_version": "2.1.74",
@@ -77,6 +80,11 @@ SHIPPED_DEFAULTS: HubConfig = {
         "dup_block_lines": 12,
     },
     "paths": {"security_sensitive": [".env*", "**/*secret*", "**/*credential*"]},
+    # Rule ids no override may suppress (spec 4.5). Configuration, not prose:
+    # an earlier draft put this in never.md front matter, where a parser
+    # expecting it at line 1 would have read it as empty and silently made
+    # every rule suppressible.
+    "non_suppressible": [],
 }
 
 

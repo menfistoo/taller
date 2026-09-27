@@ -225,3 +225,14 @@ def test_every_profile_carries_the_keys_resolution_reads(path: Path):
     # static site's assets sit at its root, and a program with no UI has no
     # generated token file at all.
     assert data["paths"]["brand_tokens"] == EXPECTED_BRAND_TOKENS[path.stem]
+
+
+def test_never_md_carries_no_front_matter():
+    """non_suppressible is configuration (spec 4.5), resolved through chain 1.
+    A prose slice file is chain 2. Keeping a config list here would also have
+    collided with the mandatory first-line summary, and a parser expecting front
+    matter at line 1 would have read it as empty - silently making every rule
+    suppressible."""
+    text = (paths.catalogue() / "modules" / "never.md").read_text(encoding="utf-8")
+    assert "non_suppressible" not in text
+    assert not text.lstrip().startswith("---")

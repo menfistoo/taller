@@ -1,12 +1,5 @@
 > Prohibitions that hold in every stack, whatever the ticket says and whoever is asking.
 
-<!-- The summary line above comes first because render_index collects the first line
-     of every module verbatim (spec 3.1). The front matter follows it. -->
-
----
-non_suppressible: []
----
-
 Each rule below is here because breaking it destroys something that cannot be
 restored by the next commit: a leaked secret, lost data, or the credibility of the
 test suite. They are not stylistic. A ticket that appears to require one of them is a

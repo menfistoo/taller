@@ -858,11 +858,13 @@ hub taller.yml  →  profile  →  project taller.yml
 ```
 
 Covers `models`, `model_aliases`, `effort`, `fallback`, `billing`, `concurrency`,
-`budget`, `weights`, `pricing`, `thresholds`, `language`, `paths`, `smoke`.
+`budget`, `weights`, `pricing`, `thresholds`, `language`, `paths`, `smoke`,
+`non_suppressible`.
 **Nothing in `constitution/` sets configuration.**
 
-**List merge rule.** Lists **replace** by default, with one exception:
-`paths.security_sensitive` is **append-only** at every level. The hub defines a
+**List merge rule.** Lists **replace** by default, with two exceptions:
+`paths.security_sensitive` and `non_suppressible` are **append-only** at every
+level. The hub defines a
 global floor; profiles and projects add to it; nothing can remove an entry. A
 project able to narrow its own security surface would make §8.2's mandatory gate
 optional.
@@ -906,6 +908,7 @@ RuleSet = {
     "language":   {"code": str, "ui": str,
                    "commits": str} | None,       # None on an unconfigured hub
     "overrides":  [Override],                    # §4.5
+    "non_suppressible": [str],                   # §4.5 — append-only rule ids
     "hub_sha":    str,
     "mode":       str,                           # "local" | "ci"  — §4.6
 }
@@ -1023,181 +1026,35 @@ intent: an override is a decision to ship a known deviation.
 
 1. **Every rule of the security gate** — by domain, so no new security rule is
    suppressible by default.
-2. **Every rule id listed in a `never.md` front matter `non_suppressible:` array**,
-   at hub or project level, unioned.
+2. **Every rule id in `non_suppressible`**, a configuration list resolved through
+   chain 1 (§4.4) and **append-only**: the hub declares a floor, a profile and a
+   project may add to it, and nothing can remove an entry.
 
-```markdown
----
+```yaml
+# ~/.taller/taller.yml, or a project's
 non_suppressible:
   - brand.hardcoded-color
   - constitution.layer-violation
----
-
-Prose prohibitions, for a human and for the chief's briefing.
 ```
 
+**Why configuration and not `never.md` front matter.** An earlier draft put this
+list in the `never` slice file. Two problems, both found while building the
+catalogue:
+
+- It contradicted §4.4's own rule that **nothing in `constitution/` sets
+  configuration**. A prose slice is chain 2; a list of rule ids is chain 1.
+- Every module file must open with a one-line `> ` summary for `render_index`
+  (§3.1), so front matter could not be the first thing in the file — and a parser
+  expecting it at line 1 would have read `non_suppressible` as empty and **silently
+  made every rule suppressible**. A security-relevant default that fails open
+  because of a formatting collision is exactly the kind of defect that survives
+  review and surfaces in production.
+
 There is deliberately **no `never.*` rule domain**. The `never` slice is prose, and
-prose has no mechanical rules to enumerate — an earlier draft implied otherwise and
-left `overrides.py` with a predicate it could not compute. What `never.md` does
-instead is name *existing* ids from any domain as un-overridable, which is what
-"never means never" actually requires and is decidable. A `non_suppressible:` entry
-naming an id no gate declares is itself reported, as
-`constitution.unknown-rule-id` (MEDIUM).
-
-### 4.6 The resolved snapshot
-
-CI cannot see the hub. The hub is a local-only git repository (§13.2), so a
-hosted GitHub runner cannot resolve a `RuleSet`, cannot read the brand
-`tokens.css`, cannot know `paths.layers` or `thresholds`, and cannot record
-`hub_sha`. Without a fix, the constitution and size gates could not run in CI at
-all — which would make §9.4, §13's required check, and §15.7's defence-in-depth
-argument false.
-
-**A snapshot of the `RuleSet` is therefore committed to the project repository at
-`<project>/.taller/resolved.json`.** It contains the full `RuleSet` with slice
-text included, plus the brand's parsed tokens. CI's gates load the snapshot
-instead of resolving.
-
-**Four functions, deliberately separated,** so that `resolve()` stays pure
-(§4.4) and `constitution.py` never depends on `tickets.py` (§10.2):
-
-| Function | Does | Touches |
-|---|---|---|
-| `resolve(path) -> RuleSet` | Reads the hub, profile and project. **Pure. Writes nothing.** | reads only |
-| `render_snapshot(ruleset) -> bytes` | Serialises a `RuleSet` deterministically | nothing |
-| `render_tokens(ruleset) -> bytes` | Renders the project's `tokens.css` from the brand (§4.2.1) | nothing |
-| `gitio.commit_to_main(project, files, msg)` | Writes and commits the bytes to `main` | filesystem, git, network |
-
-Only `commit_to_main()` writes. `taller resolve` is the composition of the four.
-Determinism means `render_snapshot(resolve(p))` reproduces the committed bytes
-exactly, which is what makes the tamper check below possible **without rewriting
-the file it is checking**.
-
-| Property | Consequence |
-|---|---|
-| Committed and diffable | A pull request shows when the rules governing it changed |
-| Self-contained | CI needs no hub, no remote, no secrets, no deploy key |
-| Carries `hub_sha` | Verdicts from CI are as traceable as local ones |
-
-**Where it is written and by whom.** The snapshot is a `main`-side generated file,
-like the three ticket files (§7.2), and `gitio.commit_to_main()` is the only
-writer. It is refreshed:
-
-| When | Scope |
-|---|---|
-| `taller project adopt` | that project |
-| `/taller:amend` or the cockpit Constitution screen | **every project whose profile includes the changed module or brand** |
-| stage ② of every ticket | that project, on `main`, before the branch exists |
-| any of the above | `resolved.json`, `00-index.md`, and `paths.brand_tokens` when a brand is set — all three are regenerated together, so none can be stale relative to another |
-| `taller resolve` | on demand |
-
-An amend to `security/web-app.md` therefore writes to all six `flask-sqlite`
-projects: six project locks, six commits, six pushes, six `sync` states. That is
-the honest cost of one shared rule and the reason `/taller:amend` reports which
-projects it touched. The alternative — refreshing one project — leaves the other
-five reporting `constitution.resolved-snapshot-stale` at HIGH until someone
-notices.
-
-**Conflicts.** `resolved.json` is generated, so it is never merged.
-`.gitattributes` marks it `merge=ours`, and any conflict or divergence is resolved
-by discarding both sides and running `resolve()` again. **`ours` is not a built-in
-driver** — it does nothing unless `merge.ours.driver` is configured — so `taller
-setup` and `project new` both set `git config merge.ours.driver true`, and `doctor`
-checks it. Without that, the attribute is decoration and git silently falls back to
-a three-way merge of a generated file. A ticket branch never
-carries its own snapshot: it inherits `main`'s.
-
-**Line endings are pinned to LF, and this is load-bearing.** The byte-for-byte
-comparison below is meaningless if git rewrites the file on the way out of the
-index. With `core.autocrlf = true` — the default on Windows — a file committed as
-LF is returned as CRLF, so the check would report
-`constitution.resolved-snapshot-modified` at BLOCKER on a repository nobody had
-touched. Verified during implementation: `b"alpha
-beta
-"` in the index came back
-from the worktree as `b"alpha
-beta
-"`.
-
-Every repository Taller writes generated files into therefore carries a
-`.gitattributes` pinning at least those files to `eol=lf`, and **`project new`
-scaffolds one into every project it creates** (§11.4). A renderer that always emits
-LF and a VCS that silently rewrites it is a defect that no unit test catches,
-because unit tests never round-trip a file through git.
-
-**Tamper check.** CI validates against a file a pull request can edit — a branch
-that raised `max_file_lines`, emptied `paths.ui`, deleted the `never` slice text
-or appended an override would otherwise get a green CI run against its own
-weakened rules, and a hand-edited snapshot keeps the correct `hub_sha`.
-
-**The two checks are ordered, not simultaneous.** Once the hub moves the bytes
-necessarily differ, so an unordered pair would raise a BLOCKER on every ticket in
-flight during a routine amend — which §14 expects to be a warning at ⑦, not a
-block:
-
-| Condition | Verdict | Rule id |
-|---|---|---|
-| `hub_sha` ≠ hub `HEAD` | **Stale** — checked first. The bytes are *expected* to differ; no tamper conclusion is drawn. | `constitution.resolved-snapshot-stale` (HIGH, `command: taller resolve`) |
-| `hub_sha` = hub `HEAD` **and** bytes ≠ `render_snapshot(resolve(path))` | **Modified** — the snapshot cannot legitimately differ from a same-version resolution | `constitution.resolved-snapshot-modified` (BLOCKER, `escalate`) |
-
-The comparison is against an **in-memory** render; nothing is written, so the
-check cannot launder the file it is testing.
-
-In CI there is no hub, so neither comparison is possible. CI instead rejects any
-diff touching `resolved.json` on a ticket branch — a branch must never carry its
-own snapshot (§7.2) — reporting `constitution.resolved-snapshot-modified`
-(BLOCKER). CI cannot verify the snapshot's *content*, but it can verify that the
-branch did not change it — which is sufficient, because the local ordered check
-runs at stage ② before any pull request exists and its verdict is committed with
-the work.
-
-### 4.7 `taller setup` — how projects and brands are found
-
-A hub starts empty (§4.0), and registering ten projects by hand is something
-nobody does twice. `taller setup` populates it by discovery. It is re-runnable and
-writes nothing before its final approval.
-
-| Round | Does |
-|---|---|
-| **1 · Connect** | Runs `gh auth status`; reports the account and token scopes, and prints the exact `gh auth refresh -s <scope>` command if `repo` or `workflow` is missing. Asks for the deployment host (§13.1) if there is one. |
-| **2 · Locate** | Asks for one or more **project roots** on disk. Proposes the parent directory of the current repository as a starting guess. |
-| **3 · Discover projects** | Walks the roots for `.git` directories; lists remote repositories with `gh repo list`; matches the two by remote URL. |
-| **4 · Discover brands** | Clusters design tokens and locates brand guides across the projects chosen in round 3. |
-| **5 · Language & conventions** | Asks for `language` — code, UI and commit-message languages. **No default.** |
-| **6 · Review** | Everything it is about to write: projects to register with a guessed profile each, brands to create, catalogue entries to copy. Approve / edit / cancel. |
-
-**Round 3 sorts what it finds into four buckets,** each with a different offer:
-
-| Bucket | Offer |
-|---|---|
-| Local **and** remote | Register. A stack guess is shown for correction. |
-| Local, **no remote** | Register, and offer to create a private remote. |
-| **Remote, not cloned** | List it. Offer to clone — **default no**, since a listed repository is not necessarily wanted. |
-| Local, remote **does not resolve** | Flag it. A renamed or deleted repository leaves a stale `origin`, which is worth knowing before Taller starts pushing to it. |
-
-**Round 4 turns brand creation into brand confirmation.** For every project being
-registered it:
-
-1. Extracts `--*` custom properties from CSS and clusters projects by palette.
-2. Locates candidate brand assets — `logo.*`, `favicon.*`, and **brand guide PDFs**.
-3. Reports the clusters and proposes a brand per cluster, for naming.
-
-So the question is never "invent a brand" but *"these projects share an identical
-set of tokens, and this PDF looks authoritative — what is this brand called?"* A.4
-documents an estate where this found one brand guide, five disagreeing palettes
-across six projects of the same business, and one project with no tokens at all —
-none of which would have surfaced from a blank `brand new` prompt.
-
-**Pickers, not typed slugs.** Wherever the spec says a profile or brand is chosen
-— §11.1 steps ⑨ and ⑩, `brand edit`, the cockpit — it is a numbered list of what
-the hub holds, **plus what the catalogue offers** (§4.0), plus `create new…` and,
-for brands, `none`. The catalogue entries matter most on a genuinely empty hub,
-which is Phase A's own pilot: a picker listing only the hub would offer nothing. Never a free-text field whose
-value has to be spelled correctly to match a directory name.
-
-**Keeping it fresh.** `taller project discover` re-runs rounds 3 and 4 and reports
-what is new, moved, or gone. `taller doctor` already fails on a registered path
-that no longer exists (§15.4).
+prose has no mechanical rules to enumerate. What `non_suppressible` does instead is
+name *existing* ids from any domain as un-overridable, which is what "never means
+never" actually requires and is decidable. An entry naming an id no gate declares is
+reported as `constitution.unknown-rule-id` (MEDIUM).
 
 ---
 
@@ -2570,7 +2427,7 @@ Particular attention:
   `constitution.resolved-snapshot-stale` runs `taller resolve`.
 - `overrides.py`: valid suppression downgrades to `NIT` with the reason attached;
   missing reason; expired `until` (distinct rule id from missing reason); a
-  rule id listed in `never.md`'s `non_suppressible:` and any security-gate rule are
+  rule id in the resolved `non_suppressible` list and any security-gate rule are
   both refused (§4.5); an id in that list that no gate declares is reported as
   `constitution.unknown-rule-id`.
 - `spend.py`: recorded transcript fixtures, including one unattributable record
@@ -2634,7 +2491,8 @@ application containing known violations:
 - an `overrides.md` entry with no reason
 - an `overrides.md` entry past its `until`
 - an `overrides.md` entry targeting a security rule (must be refused)
-- a `never.md` `non_suppressible:` entry, and an override targeting it (must be refused)
+- a `non_suppressible` entry, and an override targeting it (must be refused)
+- a project attempting to REMOVE a hub `non_suppressible` entry (must not succeed)
 - an import violating `paths.layers`
 - a template that raises on render (must fail smoke, not `pytest`)
 - a stale `resolved.json`

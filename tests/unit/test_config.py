@@ -96,3 +96,33 @@ def test_malformed_yaml_is_a_clear_error(tmp_home: Path):
     paths.hub_config().write_text("this: [unclosed", encoding="utf-8")
     with pytest.raises(ConfigError, match="taller.yml"):
         config.load_hub_config()
+
+
+def test_non_suppressible_ships_empty(tmp_home: Path):
+    """A fresh install forbids nothing extra; the owner adds to it (spec 4.5)."""
+    assert config.load_hub_config()["non_suppressible"] == []
+
+
+def test_non_suppressible_is_append_only():
+    """A project may add a rule nobody may override; it may not remove one the hub
+    declared. Configuration, not prose - an earlier draft kept this in never.md
+    front matter, where a parser expecting it at line 1 would have read it as empty
+    and silently made every rule suppressible."""
+    merged = config.deep_merge(
+        {"non_suppressible": ["brand.hardcoded-color"]},
+        {"non_suppressible": ["size.file-too-long"]},
+    )
+    assert merged["non_suppressible"] == ["brand.hardcoded-color", "size.file-too-long"]
+
+
+def test_non_suppressible_cannot_be_narrowed():
+    merged = config.deep_merge(
+        {"non_suppressible": ["brand.hardcoded-color", "constitution.layer-violation"]},
+        {"non_suppressible": ["brand.hardcoded-color"]},
+    )
+    assert "constitution.layer-violation" in merged["non_suppressible"]
+
+
+def test_non_suppressible_rejects_a_scalar():
+    with pytest.raises(ConfigError, match="append-only"):
+        config.deep_merge({"non_suppressible": []}, {"non_suppressible": "brand.x"})
