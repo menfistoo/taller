@@ -17,12 +17,25 @@ from . import config, gitio, locking, paths
 from .errors import ConfigError
 
 
+# The registry is not versioned. Its paths are absolute and mean nothing on
+# another machine, and it changes on every registration: versioned, adding one
+# project would move the hub's HEAD and mark every other project's snapshot stale
+# (spec 4.6) although no rule had changed. The hub's history is its rules.
+GITIGNORE = (
+    "# Machine-local: absolute paths, rewritten on every registration.\n"
+    "projects.json\n"
+)
+
+
 def ensure_repo() -> None:
     """`~/.taller` as a git repository on `main`. Idempotent."""
     root = paths.hub()
     root.mkdir(parents=True, exist_ok=True)
     if not (root / ".git").exists():
         gitio.git(root, "init", "--quiet", "-b", gitio.MAIN_BRANCH)
+    ignore = root / ".gitignore"
+    if not ignore.exists():
+        locking.atomic_write_text(ignore, GITIGNORE)
 
 
 def commit(message: str) -> bool:

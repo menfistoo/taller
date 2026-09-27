@@ -45,6 +45,9 @@ def build_parser() -> argparse.ArgumentParser:
     brand_new.add_argument("--no-open", action="store_true",
                            help="do not open the swatch page in a browser")
 
+    resolve = verbs.add_parser("resolve", help="regenerate a project's generated files")
+    resolve.add_argument("path", nargs="?", help="the project (default: the one you are in)")
+
     doctor = verbs.add_parser("doctor", help="check the hub and every project")
     doctor.add_argument("--live", action="store_true",
                         help="make the trivial Claude dispatch even if it passed today")
@@ -52,12 +55,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _handler(args: argparse.Namespace) -> Handler:
-    from .commands import brand, doctor, project, setup
+    from .commands import brand, doctor, project, resolve, setup
 
     table: dict[tuple[str, str | None], Handler] = {
         ("setup", None): setup.run,
         ("project", "new"): project.new,
         ("brand", "new"): brand.run,
+        ("resolve", None): resolve.run,
         ("doctor", None): doctor.run,
     }
     return table[(args.command, getattr(args, "action", None))]

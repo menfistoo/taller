@@ -25,7 +25,7 @@ from typing import Any, Mapping
 
 import yaml
 
-from . import brands, catalogue, config, constitution, gitio, paths, registry
+from . import brands, catalogue, config, generated, gitio, hub, paths, registry
 from .errors import ConfigError
 
 # The facts a manifest may test, with their values. Closed on purpose: a typo in
@@ -262,6 +262,9 @@ def create_project(target: Path | str, *, name: str, profile: str,
     installed = None
     if profile not in catalogue.installed_profiles():
         installed = catalogue.install_profile(profile)
+        # Committed before anything is resolved: the snapshot records the hub's
+        # HEAD, and a hub commit after it would mark it stale at birth (4.6).
+        hub.commit(f"profile: add {profile}")
     brand_tokens = catalogue.read_hub_profile(profile).get("paths", {}).get("brand_tokens")
 
     # 3-4. Build and commit in a staging directory, then move it into place, so
@@ -292,19 +295,11 @@ def create_project(target: Path | str, *, name: str, profile: str,
     # 5. Register, then write the generated files through the only writer.
     registry.add_project(path=target, name=name, profile=profile, brand=brand_slug)
     gitio.ensure_main_worktree(target)
-    ruleset = constitution.resolve(target)
-    generated: dict[str, bytes] = {
-        ".taller/resolved.json": constitution.render_snapshot(ruleset),
-        ".taller/constitution/00-index.md": constitution.render_index(ruleset),
-    }
-    tokens = constitution.render_tokens(ruleset)
-    tokens_path = gitio.brand_tokens_path(target)
-    if tokens is not None and tokens_path:
-        generated[tokens_path] = tokens
-    sync = gitio.commit_to_main(target, generated, "taller: resolve the constitution")
+    written = generated.render_all(target)
+    sync = gitio.commit_to_main(target, written, "taller: resolve the constitution")
 
     return CreateReport(path=target.resolve(), sync=sync,
-                        files=sorted([*files, *generated]), profile_installed=installed)
+                        files=sorted([*files, *written]), profile_installed=installed)
 
 
 def _validate_answers(answers: Mapping[str, Any]) -> dict[str, Any]:

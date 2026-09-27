@@ -57,7 +57,7 @@ def test_on_an_empty_hub_setup_runs_first_then_the_project_is_created(tmp_home: 
     prompter.assert_all_used()
     assert registry.get_project(target())["profile"] == "flask-sqlite"
     assert not paths.onboarding("toolshed").exists(), "the resume file outlived the project"
-    assert hub_log() == ["project: add toolshed", "setup: connection and languages"]
+    assert hub_log() == ["profile: add flask-sqlite", "setup: connection and languages"]
     report = prompter.said[-1]
     assert "Created toolshed" in report and "not pushed: no remote" in report
     assert "Record a loan" in report

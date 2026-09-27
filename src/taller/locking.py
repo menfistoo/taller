@@ -137,6 +137,18 @@ def _reap_if_stale(path: Path) -> bool:
     return False
 
 
+def is_stale(path: Path | str) -> bool:
+    """A lock file whose recorded owner is dead. Reads only; `doctor` reports it.
+
+    An unreadable or PID-less file is not called stale: a holder may be mid-write.
+    """
+    try:
+        raw = Path(path).read_text(encoding="ascii").strip()
+    except (OSError, UnicodeDecodeError):
+        return False
+    return raw.isdigit() and not _pid_alive(int(raw))
+
+
 def _pid_alive(pid: int) -> bool:
     if pid <= 0:
         return False

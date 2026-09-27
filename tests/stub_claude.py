@@ -26,6 +26,28 @@ def main() -> int:
         with open(argv_path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(sys.argv[1:]) + "\n")
 
+    # The informational flags `cli_probe` reads. The help text lists every flag
+    # Taller knows, minus any a test hides, so `taller doctor` can be driven to
+    # both verdicts without the real binary.
+    if sys.argv[1:] == ["--version"]:
+        _out(os.environ.get("STUB_CLAUDE_VERSION", "2.1.74 (Claude Code)") + "\n")
+        return 0
+    if sys.argv[1:] == ["--help"]:
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+        from taller import cli_probe
+        hidden = set(os.environ.get("STUB_CLAUDE_HIDE_FLAGS", "").split())
+        flags = [f for f in [*cli_probe.REQUIRED_FLAGS, *cli_probe.OPTIONAL_FLAGS]
+                 if f not in hidden]
+        _out("Usage: claude [options]\n\nOptions:\n"
+             + "".join(f"  {flag} <value>   stub\n" for flag in flags))
+        return 0
+
+    # Stands in for "this binary would have billed an API key": doctor's live
+    # check must prove the dispatch succeeds with none in the environment.
+    if os.environ.get("STUB_CLAUDE_REFUSE_API_KEY") and os.environ.get("ANTHROPIC_API_KEY"):
+        sys.stderr.write("stub: ANTHROPIC_API_KEY reached the CLI\n")
+        return 3
+
     if os.environ.get("STUB_CLAUDE_FAIL_EXIT"):
         sys.stderr.write("stub failure\n")
         return int(os.environ["STUB_CLAUDE_FAIL_EXIT"])

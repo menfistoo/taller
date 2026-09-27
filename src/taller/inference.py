@@ -135,6 +135,9 @@ class Dispatch:
     # infer() spawned `claude --help` on the first dispatch of every process,
     # which made a "never retries" assertion order-dependent.
     supports_permission_prompts: bool = False
+    # Environment variables removed for this one dispatch. `taller doctor` uses it
+    # to prove subscription auth works with no API key in sight (spec 15.4).
+    unset_env: tuple[str, ...] = ()
 
 
 @dataclass
@@ -211,6 +214,8 @@ def infer(dispatch: Dispatch, executable: str = "claude") -> Result:
                 errors="replace",
                 cwd=str(cwd),
                 timeout=DISPATCH_TIMEOUT,
+                env=({k: v for k, v in os.environ.items() if k not in dispatch.unset_env}
+                     if dispatch.unset_env else None),
             )
         except subprocess.TimeoutExpired:
             return Result(

@@ -12,7 +12,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from .. import brands, config, discovery, gitio, hub, onboarding, scaffold
+from .. import brands, config, discovery, gitio, onboarding, scaffold
 from ..errors import ConfigError
 from ..onboarding import Question, ask
 from ..prompter import Prompter
@@ -61,7 +61,6 @@ def new(args: Any, prompter: Prompter) -> int:
 
     report = scaffold.create_project(target, name=name, profile=answers["profile"],
                                      brand=answers["brand"], answers=answers)
-    hub.commit(f"project: add {name}")
     onboarding.discard_progress(name)
 
     remote = _offer_remote(name, target, prompter)
