@@ -2939,8 +2939,8 @@ Chunk 8 proved the greenfield path. This chunk brings an **existing** repository
 | **The twelve answers are kept, in `.taller/brief.yml`**, written by `new` and `adopt` | §11.1.1 reopens "the same twelve questions with the current answers filled in"; parsing them back out of `product.md` would be guesswork. Not a slice: never loaded into context, not counted by criterion 7 |
 | **`adopt` and `brief` write on `main`, in a clean checkout, and refuse otherwise** | They change authored files and — at adoption — the application's stylesheet. One reviewable commit on `main`, never mixed into someone's branch |
 | **A hub change fans out** (`generated.refresh_affected`) | §4.6: an amend refreshes every project whose profile includes the changed module or brand. `setup` (language), `settings set` and `brand edit` all use it and report which projects they touched |
-| *Pending the owner:* how the old `CLAUDE.md` becomes local content | See Task 24 |
-| *Pending the owner:* what "register" means in `setup` | See Task 26 |
+| **Decided (A1):** the old `CLAUDE.md` is distilled by one read-only dispatch into `architecture.md`, reviewed in the brief | Owner's choice, 2026-09-27. See Task 24 |
+| **Decided (B1):** `setup` registers discovered projects without adopting them; `doctor` skips them with the reason | Owner's choice, 2026-09-27. See Task 26 |
 
 ### Task 24: `adopt.py` and `taller project adopt`
 
@@ -2959,7 +2959,7 @@ The interview is the same twelve, with ⑨ ⑩ ⑪ **shown as inferred, for corr
 
 Then register, `ensure_main_worktree()`, `generated.refresh()`.
 
-> **Decision A — the old `CLAUDE.md`.** Adopted projects carry up to ~7,000 tokens of it (Appendix A); criterion 6 wants the always-loaded preamble ≤ 800 and criterion 7 wants local content < 2,000 characters. §11.3 says adoption *deletes what the hub already says*. Deciding which paragraphs duplicate a hub rule is judgement, not string matching.
+> **Decision A — the old `CLAUDE.md`. Decided: A1.** Adopted projects carry up to ~7,000 tokens of it (Appendix A); criterion 6 wants the always-loaded preamble ≤ 800 and criterion 7 wants local content < 2,000 characters. §11.3 says adoption *deletes what the hub already says*. Deciding which paragraphs duplicate a hub rule is judgement, not string matching.
 > - **A1 (recommended):** one dispatch (`architect` role, read-only) reads the old file beside the resolved hub slices and proposes an `architecture.md` holding only what is specific to this project, under 2,000 characters. Shown in the brief, editable, approved like everything else. The original stays in git history. Costs one dispatch per adoption.
 > - **A2:** no inference. The old file moves to `.taller/archive/CLAUDE.md` — kept, never loaded — and `architecture.md` starts empty for the owner to write. Free, but the project loses what its old file knew until someone rewrites it.
 
@@ -2984,7 +2984,7 @@ Then register, `ensure_main_worktree()`, `generated.refresh()`.
 
 Rounds 2–4 and 6 of §4.7 over `discovery.py`: project roots (default: the parent of the current repository) → scan + `gh` listing → the four buckets → palette clusters and brand guides → **one review screen** (register which projects with which profile; create which brands from which cluster or guide PDF — named, not typed from scratch; copy which catalogue profiles) → approve / edit / cancel. `discover` re-runs rounds 3–4 and reports what is new, moved or gone. Nothing is written before approval; `remote_only` is listed, never cloned; a `stale` origin is reported by name.
 
-> **Decision B — what "register" means.** Criterion 8 asks for every discovered project registered in one pass; a full adoption asks six to eight questions per project.
+> **Decision B — what "register" means. Decided: B1.** Criterion 8 asks for every discovered project registered in one pass; a full adoption asks six to eight questions per project.
 > - **B1 (recommended):** `setup` registers each project as *discovered* — profile and brand recorded, nothing written into the repository. `doctor` reports a discovered project as **skipped: not adopted yet — `taller project adopt`**, never failed. Adopt one project at a time, when you choose.
 > - **B2:** `setup` runs the adoption interview for every project it registers, one after another, in the same pass.
 
