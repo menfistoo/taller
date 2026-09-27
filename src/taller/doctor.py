@@ -155,6 +155,11 @@ def _project(entry: dict[str, Any]) -> list[Check]:
     repo = Path(entry["path"])
     if not repo.is_dir():
         return []                                      # reported by _registry
+    if not registry.is_adopted(entry):
+        # Decision B1: registered by `setup`, nothing written into it yet. Not a
+        # fault, and not a pass either: there is nothing of Taller's to check.
+        return [Check(f"{label}: not adopted yet", SKIP,
+                      f"`taller project adopt {repo}` when you are ready")]
     checks: list[Check] = []
 
     worktree = paths.main_worktree(label)

@@ -45,14 +45,20 @@ def get_project(path: Path | str) -> Project:
     )
 
 
-def add_project(*, path: Path | str, name: str, profile: str, brand: str | None) -> Project:
-    """Add or update by resolved path. Idempotent, so re-adopting is safe."""
+def add_project(*, path: Path | str, name: str, profile: str, brand: str | None,
+                adopted: bool = True) -> Project:
+    """Add or update by resolved path. Idempotent, so re-adopting is safe.
+
+    `adopted=False` is a project `taller setup` discovered and registered without
+    writing anything into it (decision B1): known to the hub, not yet run by it.
+    """
     resolved = str(Path(path).resolve())
     entry: Project = {
         "path": resolved,
         "name": name,
         "profile": profile,
         "brand": brand,
+        "adopted": adopted,
         "last_seen": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
     with locking.registry_lock():
@@ -77,3 +83,8 @@ def remove_project(path: Path | str) -> None:
 def missing_paths() -> list[str]:
     """Registered paths that no longer exist. `taller doctor` fails on these."""
     return [p["path"] for p in _read() if not Path(p["path"]).is_dir()]
+
+
+def is_adopted(entry: Project) -> bool:
+    """Entries written before the flag existed were all adopted."""
+    return bool(entry.get("adopted", True))

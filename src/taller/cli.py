@@ -38,6 +38,13 @@ def build_parser() -> argparse.ArgumentParser:
     new.add_argument("--no-open", action="store_true",
                      help="do not open the brief and swatch pages in a browser")
 
+    brief = project_verbs.add_parser("brief", help="reopen the twelve answers")
+    brief.add_argument("path", nargs="?", help="the project (default: the one you are in)")
+    brief.add_argument("--no-open", action="store_true",
+                       help="do not open the brief page in a browser")
+    show = project_verbs.add_parser("show", help="the brief and the queue")
+    show.add_argument("path", nargs="?", help="the project (default: the one you are in)")
+
     brand = verbs.add_parser("brand", help="create a brand")
     brand_verbs = brand.add_subparsers(dest="action", required=True, metavar="action")
     brand_new = brand_verbs.add_parser("new", help="create a brand, guided")
@@ -60,6 +67,8 @@ def _handler(args: argparse.Namespace) -> Handler:
     table: dict[tuple[str, str | None], Handler] = {
         ("setup", None): setup.run,
         ("project", "new"): project.new,
+        ("project", "brief"): project.brief,
+        ("project", "show"): project.show,
         ("brand", "new"): brand.run,
         ("resolve", None): resolve.run,
         ("doctor", None): doctor.run,

@@ -112,6 +112,8 @@ def ask(prompter: Prompter, question: Question,
     """Ask one question until the answer is valid. Never crashes on input."""
     options = tuple(choices if choices is not None else question.choices)
     default = default if default is not None else question.default
+    if options and default is not None and default not in [value for value, _ in options]:
+        default = None                  # a stale default must not crash the picker
     prompt = _prompt(question, options, default)
 
     while True:
@@ -120,6 +122,8 @@ def ask(prompter: Prompter, question: Question,
             items = [item for item in items if item]
             if items:
                 return items
+            if default:
+                return list(default)
             prompter.say("  At least one piece of work is needed.")
             continue
 
@@ -169,14 +173,27 @@ def _prompt(question: Question, options: tuple[Choice, ...], default: Any) -> st
     elif default is not None and options:
         index = next(n for n, (value, _) in enumerate(options, 1) if value == default)
         lines.append(f"     [{index}]")
+    elif question.kind == "text" and default:
+        lines.append(f"     [{default}]")
+    elif question.kind == "list" and default:
+        lines.append("     [" + "; ".join(default) + "]  (Enter keeps these)")
     return "\n".join(lines)
 
 
 # --- the interview -----------------------------------------------------------
 
 def run(name: str, prompter: Prompter, *,
-        new_brand: Callable[[Prompter], str | None] | None = None) -> Answers:
-    """All twelve, resuming from the answers file when there is one."""
+        new_brand: Callable[[Prompter], str | None] | None = None,
+        presets: Mapping[str, Any] | None = None,
+        extra_brands: tuple[Choice, ...] = ()) -> Answers:
+    """All twelve, resuming from the answers file when there is one.
+
+    `presets` are inferred answers (adoption, spec 11.2): still asked, with the
+    inference as the default, so a fact is shown for correction rather than
+    requested. `extra_brands` lead the brand picker - adoption's "lift these
+    tokens" option.
+    """
+    presets = presets or {}
     answers = load_progress(name)
     if answers:
         resume = ask(prompter, Question("resume", "resume", 0,
@@ -194,20 +211,30 @@ def run(name: str, prompter: Prompter, *,
         if question.round != current_round:
             current_round = question.round
             prompter.say(f"\nRound {current_round} of 4 — {ROUND_TITLES[current_round]}")
-        answers[question.key] = ask_one(prompter, question, answers, new_brand)
+        answers[question.key] = ask_one(prompter, question, answers, new_brand,
+                                        current=presets.get(question.key),
+                                        extra_brands=extra_brands)
         save_progress(name, answers)
     return answers
 
 
 def ask_one(prompter: Prompter, question: Question, answers: Mapping[str, Any],
-            new_brand: Callable[[Prompter], str | None] | None = None) -> Any:
-    """One question, with the pickers and defaults that depend on earlier answers."""
+            new_brand: Callable[[Prompter], str | None] | None = None, *,
+            current: Any = None, extra_brands: tuple[Choice, ...] = ()) -> Any:
+    """One question, with the pickers and defaults that depend on earlier answers.
+
+    `current` is the answer to keep on Enter: an inference, or the answer being
+    edited.
+    """
     if question.key == "profile":
-        return ask(prompter, question, profile_choices())
+        return ask(prompter, question, profile_choices(), default=current)
     if question.key == "brand":
-        default = "none" if answers.get("profile") == "python-packaged" else None
+        default = current
+        if default is None and answers.get("profile") == "python-packaged":
+            default = "none"
+        choices = [*extra_brands, *brand_choices()]
         while True:
-            value = ask(prompter, question, brand_choices(), default=default)
+            value = ask(prompter, question, choices, default=default)
             if value != NEW_BRAND:
                 return value
             if new_brand is None:
@@ -217,7 +244,7 @@ def ask_one(prompter: Prompter, question: Question, answers: Mapping[str, Any],
             if slug:
                 return slug
             prompter.say("  No brand was created; choose again.")
-    return ask(prompter, question)
+    return ask(prompter, question, default=current)
 
 
 def edit(name: str, prompter: Prompter, answers: Answers, number: int,
@@ -226,7 +253,8 @@ def edit(name: str, prompter: Prompter, answers: Answers, number: int,
     if not 1 <= number <= len(QUESTIONS):
         raise ConfigError(f"There is no question {number}; they run from 1 to 12.")
     question = QUESTIONS[number - 1]
-    answers[question.key] = ask_one(prompter, question, answers, new_brand)
+    answers[question.key] = ask_one(prompter, question, answers, new_brand,
+                                    current=answers.get(question.key))
     save_progress(name, answers)
     return answers
 

@@ -155,6 +155,27 @@ def git(cwd: Path | str, *args: str, check: bool = True) -> subprocess.Completed
     return _git(cwd, *args, check=check)
 
 
+def require_clean_main(repo: Path | str, doing: str) -> None:
+    """Refuse unless the checkout is on `main` with nothing uncommitted.
+
+    `adopt` and `brief` change authored files - and at adoption, the
+    application's stylesheet - in one reviewable commit on `main`. Mixed into a
+    branch or into someone's uncommitted work, that commit could not be reviewed
+    or reverted on its own.
+    """
+    repo = Path(repo)
+    if not (repo / ".git").exists():
+        raise GitError(f"{repo} is not a git repository, so {doing} has nowhere to commit.")
+    branch = _current_branch(repo)
+    if branch != MAIN_BRANCH:
+        raise GitError(f"{doing} commits to `{MAIN_BRANCH}`, and {repo} is on "
+                       f"{branch or 'a detached HEAD'}. Switch to `{MAIN_BRANCH}` first.")
+    dirty = _git(repo, "status", "--porcelain", "--untracked-files=no").stdout.strip()
+    if dirty:
+        raise GitError(f"{repo} has uncommitted changes. Commit or stash them first, so "
+                       f"{doing} is one commit you can review on its own:\n{dirty}")
+
+
 def _ok(cwd: Path | str, *args: str) -> bool:
     return _git(cwd, *args, check=False).returncode == 0
 

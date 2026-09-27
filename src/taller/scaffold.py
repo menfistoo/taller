@@ -245,7 +245,7 @@ def create_project(target: Path | str, *, name: str, profile: str,
             "without it: the UI-language rules guard on it and would silently do "
             "nothing (spec 11.1). Run `taller setup` first."
         )
-    clean = _validate_answers(answers)
+    clean = validate_answers(answers)
     facts = {
         "users": clean["users"],
         "deploy": clean["deploy"],
@@ -271,7 +271,7 @@ def create_project(target: Path | str, *, name: str, profile: str,
     # a failure half way leaves nothing where the project was meant to be.
     files = dict(rendered)
     files[".gitattributes"] = render_gitattributes(brand_tokens if brand_slug else None)
-    files.update(_taller_files(name, clean))
+    files.update(taller_files(name, clean, profile=profile, brand=brand_slug))
     staging = target.parent / f".{target.name}.taller-staging"
     if staging.exists():
         shutil.rmtree(staging)                     # ours, from an interrupted run
@@ -302,7 +302,7 @@ def create_project(target: Path | str, *, name: str, profile: str,
                         files=sorted([*files, *written]), profile_installed=installed)
 
 
-def _validate_answers(answers: Mapping[str, Any]) -> dict[str, Any]:
+def validate_answers(answers: Mapping[str, Any]) -> dict[str, Any]:
     missing = [key for key in REQUIRED_ANSWERS if key not in answers]
     if missing:
         raise ConfigError(f"Onboarding answers are missing: {', '.join(missing)}.")
@@ -348,9 +348,18 @@ def _cap(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
-def _taller_files(name: str, answers: Mapping[str, Any]) -> dict[str, bytes]:
-    """What every project gets whatever its profile (spec 11.4)."""
-    product = "\n".join([
+PRODUCT_MD = ".taller/constitution/product.md"
+NEVER_MD = ".taller/constitution/never.md"
+OVERRIDES_MD = ".taller/constitution/overrides.md"
+ARCHITECTURE_MD = ".taller/constitution/architecture.md"
+QUEUE_YML = ".taller/queue.yml"
+BRIEF_YML = ".taller/brief.yml"
+PROJECT_CONFIG = ".taller/taller.yml"
+
+
+def product_md(name: str, answers: Mapping[str, Any]) -> bytes:
+    """The product slice, from answers 1, 3-8 and 11. Validated answers only."""
+    return "\n".join([
         f"> {_cap(answers['what_it_does'], SUMMARY_MAX)}",
         "",
         f"# {name}",
@@ -377,8 +386,12 @@ def _taller_files(name: str, answers: Mapping[str, Any]) -> dict[str, bytes]:
         "",
         DEPLOY_LABEL[answers["deploy"]],
         "",
-    ])
-    never = "\n".join([
+    ]).encode("utf-8")
+
+
+def never_md(answers: Mapping[str, Any]) -> bytes:
+    """The project's own prohibitions, appended to the hub's (answer 2)."""
+    return "\n".join([
         "## This project",
         "",
         "It deliberately does not do the following. Work that would make it do so",
@@ -386,8 +399,56 @@ def _taller_files(name: str, answers: Mapping[str, Any]) -> dict[str, bytes]:
         "",
         f"- {answers['what_it_is_not']}",
         "",
-    ])
-    overrides = "\n".join([
+    ]).encode("utf-8")
+
+
+def queue_yml(answers: Mapping[str, Any]) -> bytes:
+    return (
+        "# The smallest useful version, in the owner's words (onboarding answer 12).\n"
+        "# `taller ticket new --from-queue` turns each entry into a ticket.\n"
+        + yaml.safe_dump(
+            {"proposed": [{"title": title} for title in answers["first_version"]]},
+            allow_unicode=True, sort_keys=False,
+        )
+    ).encode("utf-8")
+
+
+def brief_yml(answers: Mapping[str, Any], *, profile: str, brand: str | None) -> bytes:
+    """The twelve answers, kept so `taller project brief` can reopen them (11.1.1).
+
+    Stored in the shape the interview produces, so reopening is a plain load.
+    Not a slice: never loaded into a session's context.
+    """
+    record = {key: answers[key] for key in TEXT_ANSWERS}
+    record.update({
+        "users": answers["users"],
+        "phone": answers["phone"] == "yes",
+        "sensitive_data": answers["sensitive_data"] == "yes",
+        "deploy": answers["deploy"],
+        "first_version": list(answers["first_version"]),
+        "profile": profile,
+        "brand": brand or "none",
+    })
+    return (
+        "# The onboarding answers. `taller project brief` edits them; hand edits are\n"
+        "# fine, and are read the next time the brief is opened.\n"
+        + yaml.safe_dump(record, allow_unicode=True, sort_keys=False)
+    ).encode("utf-8")
+
+
+def load_brief(project: Path | str) -> dict[str, Any]:
+    path = Path(project) / BRIEF_YML
+    if not path.is_file():
+        raise ConfigError(f"{project} has no {BRIEF_YML}. It was not created or adopted "
+                          f"by Taller, so there are no answers to reopen.")
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if not isinstance(data, dict):
+        raise ConfigError(f"{path} must contain a mapping.")
+    return data
+
+
+def overrides_md() -> bytes:
+    return "\n".join([
         "---",
         "overrides: []",
         "---",
@@ -395,28 +456,30 @@ def _taller_files(name: str, answers: Mapping[str, Any]) -> dict[str, bytes]:
         "Record a deliberate deviation from a rule here, with a reason and, if it",
         "is temporary, an `until` date. A deviation with no reason is reported.",
         "",
-    ])
-    queue = (
-        "# The smallest useful version, in the owner's words (onboarding answer 12).\n"
-        "# `taller ticket new --from-queue` turns each entry into a ticket.\n"
-        + yaml.safe_dump(
-            {"proposed": [{"title": title} for title in answers["first_version"]]},
-            allow_unicode=True, sort_keys=False,
-        )
-    )
-    claude_md = "\n".join([
+    ]).encode("utf-8")
+
+
+def claude_md(name: str) -> bytes:
+    """The stub every Taller project gets: the index is the only preamble."""
+    return "\n".join([
         f"# {name}",
         "",
         "This project is run with Taller. Read `.taller/constitution/00-index.md`",
         "first: it says which part of the constitution a task needs, so load only",
         "that.",
         "",
-    ])
+    ]).encode("utf-8")
+
+
+def taller_files(name: str, answers: Mapping[str, Any], *, profile: str,
+                 brand: str | None) -> dict[str, bytes]:
+    """What every project gets whatever its profile (spec 11.4)."""
     return {
-        ".taller/taller.yml": b"",                  # no deviations yet (spec 5)
-        ".taller/constitution/product.md": product.encode("utf-8"),
-        ".taller/constitution/never.md": never.encode("utf-8"),
-        ".taller/constitution/overrides.md": overrides.encode("utf-8"),
-        ".taller/queue.yml": queue.encode("utf-8"),
-        "CLAUDE.md": claude_md.encode("utf-8"),
+        PROJECT_CONFIG: b"",                         # no deviations yet (spec 5)
+        PRODUCT_MD: product_md(name, answers),
+        NEVER_MD: never_md(answers),
+        OVERRIDES_MD: overrides_md(),
+        QUEUE_YML: queue_yml(answers),
+        BRIEF_YML: brief_yml(answers, profile=profile, brand=brand),
+        "CLAUDE.md": claude_md(name),
     }
