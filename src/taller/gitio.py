@@ -16,16 +16,37 @@ between a contract violation and a failure of the thing being contracted.
 
 Two decisions worth their explanation:
 
-**Why `worktree add --force`.** Git refuses a second checkout of a branch that is
-already checked out. At `taller project adopt` and at the end of `taller project
-new` the project's own checkout *is* on `main`, so a plain `worktree add` fails with
-`'main' is already used by worktree at ...` on exactly the two commands that create
-the worktree. `--force` permits the second checkout; the cost is that the two
-worktrees share one branch ref, which is why every `commit_to_main()` begins with a
-`reset --hard`. Without that reset a commit the owner made in their own checkout
-leaves this worktree's index holding a staged *deletion* of the owner's file, and
-the next Taller commit would carry that deletion to `main`. Verified both ways
-before this was written.
+**Why `main` is never shared between two worktrees.** An earlier version created
+this worktree with `worktree add --force ... main`, because git refuses a second
+checkout of a checked-out branch and the owner's own checkout is on `main` at
+`project adopt` and at the end of `project new`. The two worktrees then shared one
+branch ref, and that is a data-loss bug **in both directions**, verified each way:
+
+- A commit the owner made left this worktree's index holding a staged *deletion*
+  of the owner's file, which the next Taller commit carried to `main`. An automatic
+  `reset --hard` closed that direction.
+- It left the other open. A Taller commit left the owner's index holding a staged
+  deletion of *Taller's* file, and the owner's next ordinary commit - any commit,
+  nothing unusual - carried that to `main`, taking the rules snapshot with it.
+
+When a fix leaves the mirror image of its bug behind, the design is wrong, not the
+fix. So `main` is never checked out here at all. There are two write paths,
+chosen by where the owner's own checkout is:
+
+| Owner's checkout | How Taller writes |
+|---|---|
+| on any other branch, or detached - the normal ticket flow | In this worktree, which sits on a **detached** head. Commit there, then advance `refs/heads/main` by compare-and-swap. Nobody has `main` checked out, so nothing desynchronises. |
+| **on `main`** | **Into the owner's own checkout**, committing **only** the named paths with `git commit --only`. Their other staged and unstaged work is untouched, and their index knows about the change, so nothing appears deleted and nothing gets deleted. |
+
+The original reason for keeping Taller out of the owner's checkout was switching
+branches under a running application with a live database. Committing named files
+on the branch they are already on switches nothing, so it does not apply.
+
+In the second path Taller never rewrites the owner's branch: no rebase, no merge.
+If the remote has moved, the commit stays local and the state is `pending`. And it
+refuses outright - raising rather than returning - if the owner is mid-merge or
+mid-rebase, or has uncommitted changes to a path Taller is about to write, because
+proceeding would destroy work and recording nothing is better than that.
 
 **Why `sync` is a returned value and not an assumed invariant.** Commit and push
 are not atomic and spec 10.3's atomic replace covers files only, so the state of
@@ -198,6 +219,7 @@ def ensure_main_worktree(project: Project | Path | str) -> Path:
         )
 
     if _is_worktree(worktree):
+        _detach_if_attached(worktree)
         return worktree
 
     if not _ok(repo, "rev-parse", "--verify", "--quiet", "HEAD"):
@@ -223,11 +245,22 @@ def ensure_main_worktree(project: Project | Path | str) -> Path:
             f"that directory; remove it and retry."
         )
     worktree.parent.mkdir(parents=True, exist_ok=True)
-    # --force: at adopt and at the end of `project new` the project's own checkout
-    # is on `main`, and git refuses a second checkout of a checked-out branch. See
-    # the module docstring for the consequence and the reset that answers it.
-    _git(repo, "worktree", "add", "--force", str(worktree), MAIN_BRANCH)
+    # --detach, never a checkout of `main`: see the module docstring. A detached
+    # head holds no branch, so git needs no --force and the owner can always
+    # check `main` out themselves.
+    _git(repo, "worktree", "add", "--detach", str(worktree), MAIN_BRANCH)
     return worktree
+
+
+def _detach_if_attached(worktree: Path) -> None:
+    """Free `main` in a worktree an earlier version created attached to it.
+
+    Earlier installs checked `main` out here with --force. Detaching releases the
+    branch without moving anything, so an existing install heals itself on its
+    next write instead of needing a manual step.
+    """
+    if _ok(worktree, "symbolic-ref", "--quiet", "HEAD"):
+        _git(worktree, "checkout", "--quiet", "--detach")
 
 
 def _is_worktree(path: Path) -> bool:
@@ -282,32 +315,157 @@ def commit_to_main(
     _assert_allowed(payload, entry)
 
     with locking.project_lock(entry["name"]):
-        worktree = ensure_main_worktree(entry)
-        # The project's own checkout may share this branch ref and may have moved
-        # it; see the module docstring. Aligning first is what stops a Taller
-        # commit from carrying a deletion of the owner's work.
-        _git(worktree, "reset", "--hard", "--quiet")
+        repo = Path(entry["path"])
+        if _current_branch(repo) == MAIN_BRANCH:
+            return _commit_in_owner_checkout(repo, payload, message)
+        return _commit_in_worktree(entry, payload, message)
 
-        has_remote = _has_remote(worktree)
-        if has_remote:
-            _integrate_remote(worktree, payload)
 
-        for relative, data in payload.items():
-            locking.atomic_write(worktree / relative, data)
-        if payload:
-            _git(worktree, "add", "--", *payload)
-        if _anything_staged(worktree):
-            _git(worktree, "commit", "--quiet", "-m", message)
+# --- path 1: the owner is elsewhere; write in Taller's own detached worktree --
 
-        if not has_remote:
-            return SYNC_LOCAL
-        if _push(worktree):
-            return SYNC_OK
-        # The remote moved between the fetch and the push. Rebase and retry once.
-        _git(worktree, "fetch", "--quiet", REMOTE, check=False)
-        if _rebase_onto_remote(worktree, payload) and _push(worktree):
-            return SYNC_OK
+def _commit_in_worktree(entry: Project, payload: Mapping[str, bytes],
+                        message: str) -> SyncState:
+    """Commit on a detached head, then advance `main` by compare-and-swap.
+
+    Nobody has `main` checked out, so moving the ref desynchronises no one. The
+    worktree is Taller's alone, so resetting it discards nothing of anyone's.
+    """
+    repo = Path(entry["path"])
+    worktree = ensure_main_worktree(entry)
+    _git(worktree, "checkout", "--quiet", "--detach", "--force", MAIN_BRANCH)
+    # Read `main` HERE, at the point the work is based on it, and use exactly this
+    # value as the compare-and-swap's expected old value. Re-reading it just before
+    # the swap would compare against whatever `main` had become by then - so an
+    # owner commit made mid-write would pass the check and be overwritten.
+    start = _rev(repo, f"refs/heads/{MAIN_BRANCH}")
+
+    has_remote = _has_remote(worktree)
+    if has_remote:
+        _integrate_remote(worktree, payload)
+
+    for relative, data in payload.items():
+        locking.atomic_write(worktree / relative, data)
+    if payload:
+        _git(worktree, "add", "--", *payload)
+    if _anything_staged(worktree):
+        _git(worktree, "commit", "--quiet", "-m", message)
+
+    new = _rev(worktree, "HEAD")
+    if new != start and not _ok(
+        repo, "update-ref", f"refs/heads/{MAIN_BRANCH}", new, start
+    ):
+        # `main` moved since `start` - an owner who checked it out and committed
+        # mid-write, say. Recording `pending` and retrying later loses nothing;
+        # overwriting their commit would.
         return SYNC_PENDING
+
+    if not has_remote:
+        return SYNC_LOCAL
+    if _push(worktree, "HEAD"):
+        return SYNC_OK
+    # The remote moved between the fetch and the push. Rebase and retry once.
+    _git(worktree, "fetch", "--quiet", REMOTE, check=False)
+    if _rebase_onto_remote(worktree, payload):
+        rebased = _rev(worktree, "HEAD")
+        if (_ok(repo, "update-ref", f"refs/heads/{MAIN_BRANCH}", rebased, new)
+                and _push(worktree, "HEAD")):
+            return SYNC_OK
+    return SYNC_PENDING
+
+
+# --- path 2: the owner is on main; write into their checkout, only our paths --
+
+def _commit_in_owner_checkout(repo: Path, payload: Mapping[str, bytes],
+                              message: str) -> SyncState:
+    """Commit the named paths only, leaving everything else of the owner's alone.
+
+    `git commit --only` makes a commit containing exactly the listed paths, so the
+    owner's other staged and unstaged work stays exactly as it was. Their index
+    records the change, which is what stops their next commit deleting it.
+
+    Never rewrites their branch: no rebase, no merge. A moved remote leaves the
+    commit local and the state `pending`.
+    """
+    in_progress = _operation_in_progress(repo)
+    if in_progress:
+        raise GitError(
+            f"{repo} is in the middle of a {in_progress}. Taller will not commit "
+            f"into it until that is finished, because a commit now would land "
+            f"inside your {in_progress} rather than beside it."
+        )
+    dirty = [relative for relative in payload if _has_local_changes(repo, relative)]
+    if dirty:
+        raise GitError(
+            f"You have uncommitted changes to {', '.join(sorted(dirty))}, which "
+            f"Taller needs to write. It will not overwrite them. Commit or discard "
+            f"those changes, then retry."
+        )
+
+    for relative, data in payload.items():
+        locking.atomic_write(repo / relative, data)
+    if payload:
+        _git(repo, "add", "--", *payload)
+    if payload and _any_path_staged(repo, payload):
+        _git(repo, "commit", "--quiet", "--only", "-m", message, "--", *payload)
+
+    if not _has_remote(repo):
+        return SYNC_LOCAL
+    if not _ok(repo, "fetch", "--quiet", REMOTE):
+        return SYNC_PENDING
+    if _remote_main_exists(repo) and not _ok(
+        repo, "merge-base", "--is-ancestor", f"{REMOTE}/{MAIN_BRANCH}", "HEAD"
+    ):
+        # The remote has commits `main` lacks. Integrating them would rewrite or
+        # merge the owner's branch under them, which is not Taller's to do.
+        return SYNC_PENDING
+    return SYNC_OK if _push(repo, MAIN_BRANCH) else SYNC_PENDING
+
+
+# --- helpers for the two paths ------------------------------------------------
+
+def _current_branch(repo: Path) -> str | None:
+    """The branch the owner's checkout is on, or None when detached."""
+    result = _git(repo, "symbolic-ref", "--quiet", "--short", "HEAD", check=False)
+    if result.returncode != 0:
+        return None                       # detached
+    return result.stdout.strip() or None
+
+
+def _rev(cwd: Path, ref: str) -> str:
+    return _git(cwd, "rev-parse", "--verify", ref).stdout.strip()
+
+
+def _operation_in_progress(repo: Path) -> str | None:
+    """A merge, rebase or cherry-pick the owner has not finished."""
+    git_dir = Path(_git(repo, "rev-parse", "--git-dir").stdout.strip())
+    if not git_dir.is_absolute():
+        git_dir = repo / git_dir
+    for marker, label in (
+        ("MERGE_HEAD", "merge"),
+        ("rebase-merge", "rebase"),
+        ("rebase-apply", "rebase"),
+        ("CHERRY_PICK_HEAD", "cherry-pick"),
+        ("REVERT_HEAD", "revert"),
+    ):
+        if (git_dir / marker).exists():
+            return label
+    return None
+
+
+def _has_local_changes(repo: Path, relative: str) -> bool:
+    """Staged or unstaged changes to one path, relative to HEAD."""
+    out = _git(repo, "status", "--porcelain", "--", relative, check=False)
+    return bool(out.stdout.strip())
+
+
+def _any_path_staged(repo: Path, payload: Mapping[str, bytes]) -> bool:
+    """Whether any of our paths differs from HEAD in the index.
+
+    Checked because a re-render that produced identical bytes stages nothing, and
+    `commit --only` with nothing to commit fails. An unchanged snapshot is a
+    normal outcome of `taller resolve`.
+    """
+    return not _ok(repo, "diff", "--cached", "--quiet", "--", *payload)
 
 
 def _relative(raw: str | Path) -> str:
@@ -445,5 +603,6 @@ def _anything_staged(worktree: Path) -> bool:
     return not _ok(worktree, "diff", "--cached", "--quiet")
 
 
-def _push(worktree: Path) -> bool:
-    return _ok(worktree, "push", "--quiet", REMOTE, MAIN_BRANCH)
+def _push(cwd: Path, source: str) -> bool:
+    """Push `source` to the remote's `main`. A refspec, so a detached head works."""
+    return _ok(cwd, "push", "--quiet", REMOTE, f"{source}:refs/heads/{MAIN_BRANCH}")

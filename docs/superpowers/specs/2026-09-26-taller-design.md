@@ -1574,40 +1574,60 @@ It is outside the project tree and outside the hub repository, so it never
 interferes with the owner's running application, the ticket worktree, or a live
 database's write-ahead log.
 
-**Creating the worktree needs `--force`, and that has a consequence.** Git refuses a
-second checkout of a branch that is already checked out — and at `project adopt`, and
-at the end of `project new`, the project's own checkout **is** on `main`. So
-`ensure_main_worktree()` passes `--force`, after which the two worktrees share one
-branch ref.
-
-**Therefore every `commit_to_main()` opens with `git reset --hard`.** Without it,
-Taller silently deletes the owner's work. Verified:
+**`main` is never checked out in two places.** An earlier draft created this
+worktree with `worktree add --force main`, so the owner's checkout and Taller's
+shared one branch ref. That loses data in **both** directions, each verified:
 
 ```
-owner commits owners_file.txt in their own checkout, on main
-  → the shared Taller worktree's index reports:  D  owners_file.txt
+owner commits owners_file.txt in their checkout, on main
+  → Taller's worktree index reports:  D  owners_file.txt   (Taller's next commit deletes it)
+Taller commits .taller/resolved.json
+  → the owner's index reports:        D  .taller/resolved.json   (their next commit deletes it)
 ```
 
-That is a **staged deletion of the owner's file**, and the next `commit_to_main()`
-would carry it to `main`. The reset is not hygiene; it is the thing standing between
-this design and data loss.
+Resetting Taller's worktree before each write closes the first direction only; the
+second sits in the owner's checkout, which Taller must not touch. So the design
+removes the sharing instead:
 
-One unavoidable side effect, worth stating so nobody treats it as a bug: while the
-owner's own checkout is on `main`, a `commit_to_main()` leaves their `git status`
-showing Taller's files as deleted. Nothing can be done about it without touching
-their checkout, which this section forbids. It does not arise in the normal ticket
-flow, where the owner is on a branch.
+- **The worktree is detached.** `ensure_main_worktree()` runs `worktree add
+  --detach`, and a worktree left attached by an earlier version is detached on next
+  use. The owner can always `git checkout main`.
+- **`main` moves only by compare-and-swap.** The worktree checks out `main`'s commit
+  and records its sha **at that moment**; after committing, `git update-ref
+  refs/heads/main <new> <recorded>` advances the branch. If the owner committed to
+  `main` meanwhile, the swap fails, the owner's commit stands, and the call returns
+  `pending`. Nothing is overwritten.
+
+`gitio.commit_to_main(project, files, message)` takes one of two paths, chosen by
+the branch the owner's checkout is on:
+
+**Owner on any branch other than `main`** — the normal ticket flow:
+
+1. Take the project lock (§10.3).
+2. Check out `main`'s commit, detached, in the worktree; record its sha.
+3. **If `origin` exists:** fetch and fast-forward the detached `HEAD` (rebasing per
+   the table below if it cannot).
+4. Write the files; commit; compare-and-swap `refs/heads/main`.
+5. **If `origin` exists:** push `HEAD:refs/heads/main`.
+
+**Owner on `main`** — `project adopt`, the end of `project new`, or by choice. A
+detached worktree cannot help here: advancing `main` under a checkout that has it
+would leave that checkout showing Taller's files as deleted, the second direction
+above. So Taller commits **in the owner's checkout**, touching only its own paths:
+
+1. Take the project lock.
+2. Refuse, with a `GitError` naming the cause, if a merge, rebase, cherry-pick or
+   revert is in progress, or if any target path has uncommitted changes. Recording
+   nothing is better than destroying work.
+3. Write the files; `git commit --only -- <paths>`. The owner's staged and unstaged
+   work is neither committed nor disturbed.
+4. **If `origin` exists:** fetch; if `origin/main` is an ancestor of `HEAD`, push,
+   otherwise return `pending`. **Never rebase or merge the owner's branch** — that is
+   rewriting their checkout under them.
 
 **`ensure_main_worktree()` requires a branch literally named `main`** and fails
 clearly otherwise — so `project new` must `git init -b main` rather than rely on a
 machine's `init.defaultBranch`.
-
-`gitio.commit_to_main(project, files, message)`:
-
-1. Take the project lock (§10.3).
-2. **If `origin` exists:** `git -C <wt> fetch && git -C <wt> merge --ff-only origin/main`.
-3. Write the files atomically; commit.
-4. **If `origin` exists:** `git -C <wt> push`.
 
 **No-remote mode is the greenfield default, not an error path.** §11.4 ends
 `project new` with `git init`, one commit, and a remote *only if asked*; §13.2 makes
@@ -1634,8 +1654,10 @@ unaffected.
 
 | Failure | Behaviour |
 |---|---|
-| Fast-forward merge refused (owner committed on `main`, or the remote moved) | **Rebase** the `main`-side paths (§7.2) onto `origin/main` and retry once. All but one are under `.taller/`, so they cannot conflict with application code. `paths.brand_tokens` sits inside the application's own tree, so a brand amend can collide with a branch that also touched it — it is generated, so the conflict is resolved by **discarding both sides and re-running `render_tokens()`**, exactly as for `resolved.json` (§4.6). No generated file is ever merged. |
+| Fast-forward refused in the detached worktree (the remote moved) | **Rebase** the `main`-side paths (§7.2) onto `origin/main` and retry once. All but one are under `.taller/`, so they cannot conflict with application code. `paths.brand_tokens` sits inside the application's own tree, so a brand amend can collide with a branch that also touched it — it is generated, so the conflict is resolved by **discarding both sides and re-running `render_tokens()`**, exactly as for `resolved.json` (§4.6). No generated file is ever merged. |
 | Rebase also fails, or the push is rejected | Commit stays local and `commit_to_main` **returns** `pending`; its caller records that in `status.yml`, since gitio does not parse a file it was handed. The cockpit shows the ticket as unsynced with the reason. Work continues. |
+| Owner on `main` and `origin/main` is not an ancestor of `HEAD` | Commit stays local; returns `pending`. The owner integrates on their own terms. |
+| `main` moved between checkout and swap | `update-ref` refuses; returns `pending`. The owner's commit stands. |
 | A rebase conflict in a path this call is **not** writing | Abort the rebase and degrade to `pending`. Conflicts are auto-resolved **only** where every conflicted path is a generated file this call is about to overwrite; resolving the owner's application code on their behalf is not gitio's decision to make. |
 | `sync: pending` present at the next `commit_to_main` | Retry the push first. `taller doctor` reports any ticket left `pending`, and ignores `local`. |
 

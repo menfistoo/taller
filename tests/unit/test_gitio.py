@@ -56,6 +56,12 @@ def subjects(cwd: Path, ref: str = "main") -> list[str]:
     return git(cwd, "log", "--format=%s", ref).stdout.splitlines()
 
 
+def on_main(cwd: Path, relative: str) -> bytes:
+    """What `main` holds for a path - the invariant that matters, wherever Taller
+    happened to write it from."""
+    return git_bytes(cwd, "cat-file", "blob", f"main:{relative}")
+
+
 def commit_all(cwd: Path, message: str) -> None:
     git(cwd, "add", "-A")
     git(cwd, "commit", "--quiet", "-m", message)
@@ -102,6 +108,15 @@ def project(tmp_home) -> Path:
     support.write(path / "app.py", "print('hello')\n")
     commit_all(path, "initial commit")
     return path
+
+
+@pytest.fixture
+def on_branch(project: Path) -> Path:
+    """The same project with the owner on a ticket branch - the normal flow, where
+    Taller writes through its own detached worktree rather than the owner's
+    checkout."""
+    git(project, "checkout", "--quiet", "-b", "ticket/0001")
+    return project
 
 
 @pytest.fixture
@@ -205,10 +220,9 @@ def test_commit_to_main_writes_every_path_on_the_allowed_list(project: Path):
 
     assert gitio.commit_to_main(project, payload, "everything allowed") == gitio.SYNC_LOCAL
 
-    worktree = paths.main_worktree("demo")
     for relative in ALLOWED:
-        assert (worktree / relative).read_bytes() == f"# {relative}\n".encode()
-    tracked = git(worktree, "ls-tree", "-r", "--name-only", "main").stdout.splitlines()
+        assert on_main(project, relative) == f"# {relative}\n".encode()
+    tracked = git(project, "ls-tree", "-r", "--name-only", "main").stdout.splitlines()
     assert set(ALLOWED) <= set(tracked)
 
 
@@ -271,12 +285,13 @@ def test_a_clean_fast_forward_is_sync_ok(project: Path, remote: Path, git_calls)
 def test_a_diverged_main_is_rebased_onto_the_remote_and_lands(
     project: Path, remote: Path, tmp_path: Path, git_calls,
 ):
-    gitio.ensure_main_worktree(project)
+    """Owner on a branch: Taller owns the integration there, so it may rebase."""
     move_origin(remote, tmp_path / "elsewhere", "b.txt", "moved\n", "somebody else")
-    # The owner commits on `main` in their own checkout, so a fast-forward is
-    # refused from both sides at once — exactly spec 7.3's first failure row.
+    # An owner commit made on `main` earlier; then they move to a ticket branch. A
+    # fast-forward is therefore refused from both sides at once.
     support.write(project / "owner.txt", "owner\n")
     commit_all(project, "owner work")
+    git(project, "checkout", "--quiet", "-b", "ticket/0001")
 
     state = gitio.commit_to_main(project, {STATUS: "stage: build\n"}, "status: build")
 
@@ -292,7 +307,10 @@ def test_a_generated_file_conflict_is_resolved_by_rewriting_it(
 ):
     """paths.brand_tokens is the one allowed path inside the application's tree,
     so it is the one that can collide. It is generated, so spec 4.6 resolves the
-    collision by discarding both sides — never by merging it."""
+    collision by discarding both sides — never by merging it.
+
+    Owner on a branch, the path on which Taller may integrate at all."""
+    git(project, "checkout", "--quiet", "-b", "ticket/0001")
     git(project, "remote", "set-url", "origin", str(tmp_path / "nowhere.git"))
     assert gitio.commit_to_main(project, {TOKENS: ":root { --a: 1; }\n"},
                                 "tokens: first") == gitio.SYNC_PENDING
@@ -321,11 +339,10 @@ def test_a_failed_push_stays_local_as_sync_pending(project: Path, tmp_path: Path
     state = gitio.commit_to_main(project, {STATUS: "stage: plan\n"}, "status: plan")
 
     assert state == gitio.SYNC_PENDING
-    worktree = paths.main_worktree("demo")
-    assert subjects(worktree) == ["status: plan", "initial commit"]
-    assert (worktree / STATUS).read_bytes() == b"stage: plan\n"
+    assert subjects(project) == ["status: plan", "initial commit"]
+    assert on_main(project, STATUS) == b"stage: plan\n"
     # Nothing left half-written: the transition is committed, only unpushed.
-    assert git(worktree, "status", "--porcelain").stdout.strip() == ""
+    assert git(project, "status", "--porcelain").stdout.strip() == ""
 
 
 def test_the_next_call_retries_the_push_and_loses_no_transition(
@@ -378,20 +395,17 @@ def test_writes_are_lf_whatever_the_platform(project: Path):
     gitio.commit_to_main(project, {notes: "alpha\r\nbeta\r\n", STATUS: b"stage: plan\r\n"},
                          "crlf in, lf out")
 
-    worktree = paths.main_worktree("demo")
-    assert (worktree / notes).read_bytes() == b"alpha\nbeta\n"
-    assert (worktree / STATUS).read_bytes() == b"stage: plan\n"
-    # And in the index, which is what spec 4.6's byte comparison reads back.
-    assert git_bytes(worktree, "cat-file", "blob", f"main:{notes}") == b"alpha\nbeta\n"
+    # The index is what spec 4.6's byte comparison reads back.
+    assert on_main(project, notes) == b"alpha\nbeta\n"
+    assert on_main(project, STATUS) == b"stage: plan\n"
 
 
 # --- the consequence of two worktrees sharing one branch ref -------------
 
 def test_a_commit_in_the_projects_own_checkout_is_never_reverted(project: Path):
-    """The `main` worktree shares the branch ref with the project's own checkout.
-    Without the `reset --hard` that opens every commit, this worktree's index would
-    hold a staged deletion of the owner's file and the next Taller commit would
-    carry it to `main`."""
+    """An owner commit on `main` must survive the next Taller write. An earlier
+    design shared the branch ref between two worktrees, where this failed unless
+    every commit opened with `reset --hard`."""
     gitio.ensure_main_worktree(project)
     support.write(project / "owner.txt", "owner\n")
     commit_all(project, "owner work")
@@ -402,3 +416,173 @@ def test_a_commit_in_the_projects_own_checkout_is_never_reverted(project: Path):
     assert "owner.txt" in tracked
     assert "app.py" in tracked
     assert ".taller/resolved.json" in tracked
+
+
+
+# --- the redesign: main is never shared between two worktrees -----------------
+#
+# An earlier design checked `main` out in Taller's worktree with --force, so the
+# owner's checkout and Taller's shared one branch ref. That was a data-loss bug in
+# BOTH directions. These tests pin down each direction, in each place the owner
+# can be.
+
+
+def test_the_owners_commit_on_main_does_not_delete_tallers_file(project: Path):
+    """The mirror-image bug. The owner, sitting on `main`, makes one ordinary
+    commit of their own work. It must not carry away Taller's file.
+
+    Verified broken under the old design: the owner's index held a staged deletion
+    of `.taller/resolved.json`, and their next commit - any commit - deleted it,
+    taking the rules snapshot with it."""
+    assert gitio._current_branch(project) == "main"
+
+    gitio.commit_to_main(project, {".taller/resolved.json": "{}\n"}, "taller: resolve")
+    assert git(project, "status", "--porcelain").stdout.strip() == "", (
+        "Taller's write left the owner's checkout showing a change"
+    )
+
+    support.write(project / "mine.txt", "my work\n")
+    git(project, "add", "mine.txt")
+    git(project, "commit", "--quiet", "-m", "owner: my work")
+
+    tracked = git(project, "ls-tree", "-r", "--name-only", "main").stdout.splitlines()
+    assert ".taller/resolved.json" in tracked, "the owner's commit deleted Taller's file"
+    assert "mine.txt" in tracked
+
+
+def test_tallers_write_on_main_leaves_the_owners_work_exactly_as_it_was(project: Path):
+    """`commit --only`: a commit of exactly Taller's paths. The owner's staged and
+    unstaged work is neither committed nor disturbed."""
+    support.write(project / "staged.txt", "staged\n")
+    git(project, "add", "staged.txt")
+    support.write(project / "app.py", "print('an unstaged edit')\n")
+
+    gitio.commit_to_main(project, {STATUS: "stage: plan\n"}, "status: plan")
+
+    changed = git(project, "show", "--name-only", "--format=", "HEAD").stdout.split()
+    assert changed == [STATUS], f"Taller's commit carried the owner's work: {changed}"
+    status = git(project, "status", "--porcelain").stdout
+    assert "A  staged.txt" in status, "the owner's staged file was disturbed"
+    assert " M app.py" in status, "the owner's unstaged edit was disturbed"
+    # And Taller's own file must not appear at all. Under the shared-ref design it
+    # showed here as a staged deletion - the state the owner's next commit then
+    # carried to main. Checking only that the owner's work survived missed that.
+    assert STATUS not in status, (
+        f"Taller's file appears in the owner's status, which means their next "
+        f"commit will change it:\n{status}"
+    )
+
+
+def test_on_a_branch_taller_uses_a_detached_worktree_and_advances_main(on_branch: Path):
+    """The normal ticket flow. Nothing of the owner's checkout is touched, and
+    `main` gets the commit."""
+    state = gitio.commit_to_main(on_branch, {STATUS: "stage: build\n"}, "status: build")
+
+    assert state == gitio.SYNC_LOCAL
+    assert on_main(on_branch, STATUS) == b"stage: build\n"
+    assert gitio._current_branch(on_branch) == "ticket/0001", "the owner was moved"
+    worktree = paths.main_worktree("demo")
+    head = git(worktree, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+    assert head == "HEAD", "Taller's worktree holds a branch; it must stay detached"
+
+
+def test_the_owner_can_check_out_main_while_tallers_worktree_exists(on_branch: Path):
+    """A worktree holding `main` would make git refuse this outright."""
+    gitio.commit_to_main(on_branch, {STATUS: "stage: build\n"}, "status: build")
+    git(on_branch, "checkout", "--quiet", "main")
+    assert gitio._current_branch(on_branch) == "main"
+    assert git(on_branch, "status", "--porcelain").stdout.strip() == "", (
+        "the owner arrived on main to find Taller's files looking deleted"
+    )
+
+
+def test_a_worktree_from_an_earlier_version_is_detached_on_next_use(on_branch: Path):
+    """Earlier installs checked `main` out here with --force. The next use must
+    release it rather than need a manual step."""
+    worktree = paths.main_worktree("demo")
+    worktree.parent.mkdir(parents=True, exist_ok=True)
+    git(on_branch, "worktree", "add", "--quiet", "--force", str(worktree), "main")
+    assert git(worktree, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == "main"
+
+    gitio.ensure_main_worktree(on_branch)
+
+    assert git(worktree, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == "HEAD"
+
+
+def test_main_moving_mid_write_is_pending_and_the_owners_commit_survives(
+    on_branch: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    """Compare-and-swap. If `main` moves after Taller based its work on it, the
+    swap must fail - otherwise the owner's commit is silently overwritten."""
+    original = gitio._integrate_remote
+    owner_sha = {}
+
+    def owner_commits_meanwhile(worktree, payload):
+        git(on_branch, "checkout", "--quiet", "main")
+        support.write(on_branch / "racing.txt", "owner, mid-write\n")
+        commit_all(on_branch, "owner: racing commit")
+        owner_sha["sha"] = git(on_branch, "rev-parse", "main").stdout.strip()
+        git(on_branch, "checkout", "--quiet", "ticket/0001")
+        return original(worktree, payload)
+
+    # A remote that cannot be reached, so the integration hook runs mid-write; the
+    # compare-and-swap is what is under test.
+    git(on_branch, "remote", "add", "origin", str(on_branch.parent / "nowhere.git"))
+    monkeypatch.setattr(gitio, "_integrate_remote", owner_commits_meanwhile)
+
+    state = gitio.commit_to_main(on_branch, {STATUS: "stage: build\n"}, "status: build")
+
+    assert state == gitio.SYNC_PENDING
+    assert git(on_branch, "rev-parse", "main").stdout.strip() == owner_sha["sha"], (
+        "the owner's racing commit was overwritten"
+    )
+
+
+def test_on_main_a_moved_remote_is_pending_and_the_branch_is_not_rewritten(
+    project: Path, remote: Path, tmp_path: Path, git_calls,
+):
+    """The owner is on `main`, so integrating would rewrite or merge the branch
+    under them. Taller commits locally and reports pending instead."""
+    move_origin(remote, tmp_path / "elsewhere", "b.txt", "moved\n", "somebody else")
+    support.write(project / "owner.txt", "owner\n")
+    commit_all(project, "owner work")
+    before = git(project, "log", "--format=%H", "main").stdout.splitlines()
+
+    state = gitio.commit_to_main(project, {STATUS: "stage: plan\n"}, "status: plan")
+
+    assert state == gitio.SYNC_PENDING
+    assert not [c for c in git_calls if c[0] in {"rebase", "merge"}], (
+        "Taller rebased or merged the owner's branch"
+    )
+    after = git(project, "log", "--format=%H", "main").stdout.splitlines()
+    assert after[1:] == before, "the owner's existing history was rewritten"
+    assert subjects(project)[0] == "status: plan"
+
+
+def test_on_main_uncommitted_changes_to_our_path_are_never_overwritten(project: Path):
+    """Recording nothing is better than destroying work."""
+    gitio.commit_to_main(project, {STATUS: "stage: plan\n"}, "status: plan")
+    support.write(project / STATUS, "stage: hand-edited by the owner\n")
+
+    with pytest.raises(GitError, match="uncommitted changes"):
+        gitio.commit_to_main(project, {STATUS: "stage: build\n"}, "status: build")
+
+    assert (project / STATUS).read_text(encoding="utf-8") == (
+        "stage: hand-edited by the owner\n"
+    ), "the owner's uncommitted edit was overwritten"
+
+
+def test_on_main_a_merge_in_progress_is_refused(project: Path):
+    """A commit now would land inside the owner's merge rather than beside it."""
+    git(project, "checkout", "--quiet", "-b", "side")
+    support.write(project / "app.py", "print('side')\n")
+    commit_all(project, "side")
+    git(project, "checkout", "--quiet", "main")
+    support.write(project / "app.py", "print('main')\n")
+    commit_all(project, "main")
+    subprocess.run(["git", *IDENTITY, "-C", str(project), "merge", "side"],
+                   capture_output=True)                        # conflicts, deliberately
+    assert (project / ".git" / "MERGE_HEAD").exists()
+
+    with pytest.raises(GitError, match="merge"):
+        gitio.commit_to_main(project, {STATUS: "stage: plan\n"}, "status: plan")
