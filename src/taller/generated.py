@@ -34,3 +34,34 @@ def render_all(project: Path | str,
 def refresh(project: Path | str, message: str = "taller: resolve the constitution") -> str:
     """Re-render and commit all three. Returns the sync state (spec 7.3)."""
     return gitio.commit_to_main(project, render_all(project), message)
+
+
+def refresh_affected(*, module: str | None = None, brand: str | None = None,
+                     everything: bool = False,
+                     message: str = "taller: resolve after a hub change") -> list[tuple[str, str]]:
+    """Refresh every adopted project a hub change reaches (spec 4.6).
+
+    An amend to one shared rule writes to every project using it - one lock, one
+    commit and one sync state each - because refreshing only one would leave the
+    rest reporting a stale snapshot until someone noticed. Returns
+    `(project name, sync)` for each, so the caller can say what it touched.
+    """
+    from . import catalogue, registry            # registry imports nothing of ours
+
+    touched: list[tuple[str, str]] = []
+    for entry in registry.list_projects():
+        if not registry.is_adopted(entry) or not Path(entry["path"]).is_dir():
+            continue
+        reached = everything
+        if brand is not None and entry.get("brand") == brand:
+            reached = True
+        if module is not None:
+            try:
+                modules = catalogue.read_hub_profile(entry["profile"]).get("modules", [])
+            except Exception:                    # a broken profile is doctor's to report
+                modules = []
+            reached = reached or module in modules
+        if reached:
+            gitio.ensure_main_worktree(entry["path"])
+            touched.append((entry["name"], refresh(entry["path"], message)))
+    return touched

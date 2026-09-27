@@ -28,7 +28,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     verbs = parser.add_subparsers(dest="command", required=True, metavar="command")
 
-    verbs.add_parser("setup", help="connect GitHub and choose your languages")
+    verbs.add_parser("setup", help="connect, find your projects and brands, choose languages")
 
     project = verbs.add_parser("project", help="create a project")
     project_verbs = project.add_subparsers(dest="action", required=True, metavar="action")
@@ -47,6 +47,9 @@ def build_parser() -> argparse.ArgumentParser:
     adopt.add_argument("--name", help="the project's name (default: its directory's)")
     adopt.add_argument("--no-open", action="store_true",
                        help="do not open the brief and swatch pages in a browser")
+    discover = project_verbs.add_parser("discover", help="what is new, moved or gone")
+    discover.add_argument("roots", nargs="*", help="folders to look in (default: beside "
+                                                   "the repository you are in)")
     show = project_verbs.add_parser("show", help="the brief and the queue")
     show.add_argument("path", nargs="?", help="the project (default: the one you are in)")
 
@@ -75,6 +78,7 @@ def _handler(args: argparse.Namespace) -> Handler:
         ("project", "adopt"): project.adopt,
         ("project", "brief"): project.brief,
         ("project", "show"): project.show,
+        ("project", "discover"): project.discover,
         ("brand", "new"): brand.run,
         ("resolve", None): resolve.run,
         ("doctor", None): doctor.run,

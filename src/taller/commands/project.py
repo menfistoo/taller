@@ -225,6 +225,54 @@ def show(args: Any, prompter: Prompter) -> int:
     return 0
 
 
+# --- taller project discover (spec 4.7) ---------------------------------------
+
+def discover(args: Any, prompter: Prompter) -> int:
+    """Rounds 3 and 4 again: what is new, moved or gone. Writes nothing."""
+    folders = [Path(p) for p in args.roots] or [common.project_path(None).resolve().parent]
+    registered = registry.list_projects()
+    known = {entry["path"] for entry in registered}
+    found = discovery.scan_roots(folders)
+    new = [repo for repo in found if repo["path"] not in known]
+    gone = set(registry.missing_paths())
+    # A registered path that vanished, and an unknown repository of the same name
+    # that appeared: most likely the same project, moved.
+    moved = [(entry["name"], entry["path"], repo["path"]) for entry in registered
+             if entry["path"] in gone for repo in new if repo["name"] == entry["name"]]
+    new = [repo for repo in new if repo["path"] not in {to for _, _, to in moved}]
+    gone -= {old for _, old, _ in moved}
+    listing, note = discovery.list_remote()
+    buckets = discovery.reconcile(new, listing)
+    clusters = [c for c in discovery.cluster_palettes(
+        {repo["name"]: discovery.palette(repo["path"]) for repo in new}) if c["tokens"]]
+
+    lines = [f"Looked in {', '.join(str(f) for f in folders)}"]
+    lines += [f"  New: {repo['name']} ({repo['path']})" for repo in new]
+    lines += [f"  Moved: {name} is now at {to}" for name, _, to in moved]
+    lines += [f"  Gone: {path}" for path in sorted(gone)]
+    lines += [f"  Remote does not resolve: {repo['name']} → {repo['origin']}"
+              for repo in buckets["stale"]]
+    lines += [f"  On GitHub, not cloned here: {repo['name']}" for repo in buckets["remote_only"]
+              if repo["key"] not in {discovery.remote_key(_origin_of(e)) for e in registered}]
+    lines += [f"  Shared palette: {', '.join(c['repos'])}" for c in clusters
+              if len(c["repos"]) > 1]
+    if note:
+        lines.append(f"  {note}")
+    if len(lines) == 1:
+        lines.append("  Nothing new.")
+    elif new or moved:
+        lines.append("`taller setup` registers what is new.")
+    prompter.say("\n".join(lines))
+    return 0
+
+
+def _origin_of(entry: dict) -> str | None:
+    if not Path(entry["path"]).is_dir():
+        return None
+    completed = gitio.git(entry["path"], "config", "--get", "remote.origin.url", check=False)
+    return completed.stdout.strip() or None
+
+
 # --- taller project adopt (spec 11.2, 11.3) -----------------------------------
 
 def adopt(args: Any, prompter: Prompter) -> int:
