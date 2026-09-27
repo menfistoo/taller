@@ -48,6 +48,13 @@ def main() -> int:
         sys.stderr.write("stub: ANTHROPIC_API_KEY reached the CLI\n")
         return 3
 
+    # One model the account cannot reach: fail only when asked for it.
+    unreachable = os.environ.get("STUB_CLAUDE_FAIL_MODEL")
+    if unreachable and "--model" in sys.argv:
+        if sys.argv[sys.argv.index("--model") + 1] == unreachable:
+            sys.stderr.write(f"stub: model {unreachable} is not available\n")
+            return 1
+
     # A dispatch that never answers, as a real CLI waiting on the network can.
     if os.environ.get("STUB_CLAUDE_HANG"):
         import time

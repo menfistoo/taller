@@ -102,6 +102,11 @@ def build_parser() -> argparse.ArgumentParser:
     ticket_verb("close", "close a released ticket, or abandon one").add_argument(
         "--abandon", metavar="REASON", help="stop it here, with a reason")
 
+    models_parser = verbs.add_parser("models", help="which models your account can reach")
+    models_verbs = models_parser.add_subparsers(dest="action", required=True, metavar="action")
+    models_verbs.add_parser("probe", help="ask each model one trivial question").add_argument(
+        "--model", action="append", help="probe only this model (repeatable)")
+
     resolve = verbs.add_parser("resolve", help="regenerate a project's generated files")
     resolve.add_argument("path", nargs="?", help="the project (default: the one you are in)")
 
@@ -112,7 +117,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _handler(args: argparse.Namespace) -> Handler:
-    from .commands import brand, doctor, project, resolve, settings, setup, ticket
+    from .commands import brand, doctor, models, project, resolve, settings, setup, ticket
 
     table: dict[tuple[str, str | None], Handler] = {
         ("setup", None): setup.run,
@@ -135,6 +140,7 @@ def _handler(args: argparse.Namespace) -> Handler:
         ("ticket", "reject"): ticket.reject,
         ("ticket", "resume"): ticket.resume,
         ("ticket", "close"): ticket.close,
+        ("models", "probe"): models.probe,
         ("resolve", None): resolve.run,
         ("doctor", None): doctor.run,
     }

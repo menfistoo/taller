@@ -29,8 +29,6 @@ API_KEY_VARIABLES = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
 
 # Spec 15.4's rows that later phases bring. Listed so the report shows them.
 LATER = (
-    ("every configured model reachable (last `taller models probe`)", "B"),
-    ("billing mode matches the environment; pricing not stale", "B"),
     ("every gate executes; smoke configuration valid", "C"),
     ("latest taller-ci run on main is green", "F"),
 )
@@ -46,7 +44,8 @@ class Check:
 
 
 def run_checks(*, live: bool = False) -> list[Check]:
-    checks = [_cli(), _dispatch(live), *_profiles(), _locks(), _registry()]
+    checks = [_cli(), _dispatch(live), _models(), _billing(), *_profiles(), _locks(),
+              _registry()]
     try:
         projects = registry.list_projects()
     except TallerError:
@@ -113,6 +112,46 @@ def _cached_pass(cache: Path) -> datetime | None:
     except (OSError, ValueError, KeyError, TypeError):
         return None
     return passed_at if datetime.now(timezone.utc) - passed_at < DISPATCH_CACHE_TTL else None
+
+
+def _models() -> Check:
+    """Spec 15.4, phase B: every configured model answered the last probe."""
+    from . import models
+
+    name = "every configured model reachable (last `taller models probe`)"
+    record = models.load_probe()
+    if record is None:
+        return Check(name, SKIP, "never probed: `taller models probe` checks them", phase="B")
+    cfg = config.load_hub_config()
+    down = [m for m in models.configured(cfg) if models.reachable(m, record) is False]
+    unknown = [m for m in models.configured(cfg) if models.reachable(m, record) is None]
+    if down or unknown:
+        detail = "; ".join(filter(None, [
+            f"not reachable: {', '.join(down)}" if down else "",
+            f"not probed: {', '.join(unknown)}" if unknown else ""]))
+        return Check(name, FAIL, detail, phase="B",
+                     fix="`taller models probe`; if a model stays unreachable, point its "
+                         "alias elsewhere with `taller settings set model_aliases.<alias> <model>`.")
+    return Check(name, PASS, f"probed {record.get('at', '')}", phase="B")
+
+
+def _billing() -> Check:
+    """Spec 15.4, phase B: the configured mode matches the environment (5.2)."""
+    from datetime import date
+
+    from . import billing
+
+    name = "billing mode matches the environment; pricing not stale"
+    problem = billing.mismatch()
+    if problem:
+        return Check(name, FAIL, problem, phase="B",
+                     fix="`taller settings set billing.mode <mode>`, or unset the variable.")
+    cfg = config.load_hub_config()
+    detail = f"mode {billing.mode(cfg)}"
+    age = billing.pricing_age_days(cfg, date.today())
+    if billing.mode(cfg) == "api" and age is not None and age > 90:
+        detail += f"; the price table is {age} days old (advisory: costs use it anyway)"
+    return Check(name, PASS, detail, phase="B")
 
 
 def _profiles() -> list[Check]:

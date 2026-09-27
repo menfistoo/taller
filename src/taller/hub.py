@@ -24,6 +24,8 @@ from .errors import ConfigError
 GITIGNORE = (
     "# Machine-local: absolute paths, rewritten on every registration.\n"
     "projects.json\n"
+    "# What this machine's account could reach at the last `taller models probe`.\n"
+    "models-probe.json\n"
 )
 
 

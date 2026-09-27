@@ -214,3 +214,37 @@ def test_a_ticket_left_unpushed_fails(tmp_home: Path, identity, stub_claude):
     check = by_name(doctor.run_checks(), "tickets readable")
     assert check.status == doctor.FAIL and "0001" in check.detail
     assert "remote is reachable" in check.fix
+
+
+# --- phase B: models and billing ---------------------------------------------
+
+def test_models_row_skips_until_probed_then_passes(project: Path):
+    from taller import models
+
+    before = by_name(doctor.run_checks(), "model reachable")
+    assert before.status == doctor.SKIP and "taller models probe" in before.detail
+
+    models.probe()
+
+    after = by_name(doctor.run_checks(), "model reachable")
+    assert after.status == doctor.PASS, after.detail
+
+
+def test_models_row_fails_on_an_unreachable_configured_model(project: Path, monkeypatch):
+    from taller import models
+
+    monkeypatch.setenv("STUB_CLAUDE_FAIL_MODEL", "opus")
+    models.probe()
+
+    check = by_name(doctor.run_checks(), "model reachable")
+    assert check.status == doctor.FAIL and "opus" in check.detail
+
+
+def test_billing_row_reports_a_mismatch(project: Path, monkeypatch):
+    from taller import hub
+
+    hub.update_config({"billing": {"mode": "subscription"}})
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+
+    check = by_name(doctor.run_checks(), "billing mode")
+    assert check.status == doctor.FAIL and "api" in check.detail
