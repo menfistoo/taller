@@ -146,6 +146,15 @@ def _git(cwd: Path | str, *args: str, check: bool = True) -> subprocess.Complete
     return completed
 
 
+def git(cwd: Path | str, *args: str, check: bool = True) -> subprocess.CompletedProcess:
+    """`_git` for other modules: the same environment, timeout and errors.
+
+    `scaffold.create_project` runs `git init` and the first commit through this,
+    so a missing git or a hung prompt fails the same way everywhere.
+    """
+    return _git(cwd, *args, check=check)
+
+
 def _ok(cwd: Path | str, *args: str) -> bool:
     return _git(cwd, *args, check=False).returncode == 0
 

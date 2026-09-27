@@ -1,0 +1,15 @@
+# Staging: the same image, its own data, reachable only from this machine.
+# docker compose -f docker-compose.staging.yml -p %%name%%-staging up -d --build
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env}
+    ports: ["127.0.0.1:8081:8000"]
+    volumes:
+      - staging-data:/data
+
+volumes:
+  staging-data:
+    name: %%name%%-staging-data

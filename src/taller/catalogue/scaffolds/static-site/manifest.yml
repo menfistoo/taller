@@ -1,0 +1,11 @@
+# A static page with no build step (spec 11.4). The token file is generated at
+# the root, so the stylesheet imports it only when the project has a brand.
+files:
+  - {path: index.html, substitute: true}
+  - {path: styles.css, source: styles.brand.css, only_when: {brand: [set]}}
+  - {path: styles.css, only_when: {brand: [none]}}
+  - {path: app.js}
+  - {path: pytest.ini}
+  - {path: tests/test_site.py}
+  - {path: .gitignore, source: gitignore}
+  - {path: README.md, substitute: true}

@@ -1,0 +1,8 @@
+/* Values come from the brand tokens; this file only says where they apply. */
+body {
+  font-family: var(--font-body, inherit);
+}
+
+h1 {
+  color: var(--color-primary, inherit);
+}

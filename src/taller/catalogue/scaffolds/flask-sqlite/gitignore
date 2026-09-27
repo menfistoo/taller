@@ -1,0 +1,21 @@
+# Databases and their write-ahead files: data never enters the repository.
+*.db
+*.db-wal
+*.db-shm
+*-wal
+*-shm
+instance/
+
+# Environments and secrets
+venv/
+.venv/
+.env
+.env.*
+
+# Python build and cache output
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/

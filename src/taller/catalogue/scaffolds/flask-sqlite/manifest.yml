@@ -1,0 +1,30 @@
+# Which files a new flask-sqlite project gets, and which answers remove them
+# (spec 11.4). `%%key%%` markers are substituted only where `substitute: true`;
+# Flask's own `{{ ... }}` template syntax passes through untouched.
+files:
+  - {path: app.py, substitute: true}
+  - {path: wsgi.py}
+  - {path: run_local.py}
+  - {path: routes/__init__.py}
+  - {path: database.py, only_when: {sensitive_data: ["no"]}}
+  - {path: database.py, source: database.with-audit.py, only_when: {sensitive_data: ["yes"]}}
+  - {path: audit.py, omit_when: {sensitive_data: ["no"]}}
+  - {path: auth.py, omit_when: {users: [solo]}}
+  - {path: templates/base.html, substitute: true}
+  - {path: templates/_brand.html, omit_when: {brand: [none]}}
+  - {path: templates/index.html, substitute: true}
+  - {path: static/css/app.css}
+  - {path: requirements.txt}
+  - {path: requirements-dev.txt}
+  - {path: pytest.ini}
+  - {path: tests/conftest.py}
+  - {path: tests/test_app.py}
+  - {path: tests/test_audit.py, omit_when: {sensitive_data: ["no"]}}
+  - {path: tests/test_auth.py, omit_when: {users: [solo]}}
+  - {path: Dockerfile, omit_when: {deploy: [local]}}
+  - {path: docker-compose.yml, substitute: true, omit_when: {deploy: [local]}}
+  - {path: docker-compose.staging.yml, substitute: true, omit_when: {deploy: [local]}}
+  - {path: Caddyfile, omit_when: {deploy: [local]}}
+  - {path: .dockerignore, source: dockerignore, omit_when: {deploy: [local]}}
+  - {path: .gitignore, source: gitignore}
+  - {path: README.md, substitute: true}
