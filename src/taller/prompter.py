@@ -22,8 +22,12 @@ class Cancelled(TallerError):
     """The owner ended the conversation (Ctrl+C, Ctrl+D, or chose cancel)."""
 
 
-class UnscriptedQuestion(TallerError):
-    """A scripted prompter was asked something its answer sheet does not cover."""
+class UnscriptedQuestion(Exception):
+    """A scripted prompter was asked something its answer sheet does not cover.
+
+    Deliberately not a TallerError: the CLI turns those into a one-line refusal,
+    and a broken answer sheet must fail the test with a traceback instead.
+    """
 
 
 class Prompter(ABC):
