@@ -1574,6 +1574,34 @@ It is outside the project tree and outside the hub repository, so it never
 interferes with the owner's running application, the ticket worktree, or a live
 database's write-ahead log.
 
+**Creating the worktree needs `--force`, and that has a consequence.** Git refuses a
+second checkout of a branch that is already checked out — and at `project adopt`, and
+at the end of `project new`, the project's own checkout **is** on `main`. So
+`ensure_main_worktree()` passes `--force`, after which the two worktrees share one
+branch ref.
+
+**Therefore every `commit_to_main()` opens with `git reset --hard`.** Without it,
+Taller silently deletes the owner's work. Verified:
+
+```
+owner commits owners_file.txt in their own checkout, on main
+  → the shared Taller worktree's index reports:  D  owners_file.txt
+```
+
+That is a **staged deletion of the owner's file**, and the next `commit_to_main()`
+would carry it to `main`. The reset is not hygiene; it is the thing standing between
+this design and data loss.
+
+One unavoidable side effect, worth stating so nobody treats it as a bug: while the
+owner's own checkout is on `main`, a `commit_to_main()` leaves their `git status`
+showing Taller's files as deleted. Nothing can be done about it without touching
+their checkout, which this section forbids. It does not arise in the normal ticket
+flow, where the owner is on a branch.
+
+**`ensure_main_worktree()` requires a branch literally named `main`** and fails
+clearly otherwise — so `project new` must `git init -b main` rather than rely on a
+machine's `init.defaultBranch`.
+
 `gitio.commit_to_main(project, files, message)`:
 
 1. Take the project lock (§10.3).
@@ -1583,8 +1611,10 @@ database's write-ahead log.
 
 **No-remote mode is the greenfield default, not an error path.** §11.4 ends
 `project new` with `git init`, one commit, and a remote *only if asked*; §13.2 makes
-local-only the default for the hub too. A `git fetch` with no `origin` exits
-non-zero, so without this branch Phase A's own pilot — the thing criterion 2
+local-only the default for the hub too. `git fetch origin` and `git push` both exit
+128 with no remote configured (a bare `git fetch` is merely a no-op, so the check is
+for a configured remote rather than for a failing fetch). Without this branch Phase
+A's own pilot — the thing criterion 2
 measures — would either crash or sit permanently in `sync: pending`, which `doctor`
 reports as a failure. `sync` therefore has three values:
 
@@ -1605,7 +1635,8 @@ unaffected.
 | Failure | Behaviour |
 |---|---|
 | Fast-forward merge refused (owner committed on `main`, or the remote moved) | **Rebase** the `main`-side paths (§7.2) onto `origin/main` and retry once. All but one are under `.taller/`, so they cannot conflict with application code. `paths.brand_tokens` sits inside the application's own tree, so a brand amend can collide with a branch that also touched it — it is generated, so the conflict is resolved by **discarding both sides and re-running `render_tokens()`**, exactly as for `resolved.json` (§4.6). No generated file is ever merged. |
-| Rebase also fails, or the push is rejected | Commit stays local. `sync: pending` written to `status.yml`. The cockpit shows the ticket as unsynced with the reason. Work continues. |
+| Rebase also fails, or the push is rejected | Commit stays local and `commit_to_main` **returns** `pending`; its caller records that in `status.yml`, since gitio does not parse a file it was handed. The cockpit shows the ticket as unsynced with the reason. Work continues. |
+| A rebase conflict in a path this call is **not** writing | Abort the rebase and degrade to `pending`. Conflicts are auto-resolved **only** where every conflicted path is a generated file this call is about to overwrite; resolving the owner's application code on their behalf is not gitio's decision to make. |
 | `sync: pending` present at the next `commit_to_main` | Retry the push first. `taller doctor` reports any ticket left `pending`, and ignores `local`. |
 
 Commit-and-push is not atomic, and §10.3's atomic replace covers files only —
@@ -2446,8 +2477,8 @@ Taller then adds what every project gets regardless of profile:
 | `static/css/tokens.css` | `render_tokens()` (§4.2.1) — omitted when brand is `none` |
 | `CLAUDE.md` | Stub pointing at `00-index.md` |
 
-Finally: `git init`, one commit, `ensure_main_worktree()` (which needs that commit
-to exist, §7.3), and — **only if asked** — `gh repo create --private`. No remote is
+Finally: **`git init -b main`** (the branch name is required, §7.3), one commit,
+`ensure_main_worktree()` (which needs that commit to exist, §7.3), and — **only if asked** — `gh repo create --private`. No remote is
 created without the owner saying so (§13.2), so the greenfield path normally lands
 at `sync: local`.
 
