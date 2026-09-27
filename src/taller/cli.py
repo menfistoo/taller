@@ -42,6 +42,11 @@ def build_parser() -> argparse.ArgumentParser:
     brief.add_argument("path", nargs="?", help="the project (default: the one you are in)")
     brief.add_argument("--no-open", action="store_true",
                        help="do not open the brief page in a browser")
+    adopt = project_verbs.add_parser("adopt", help="bring an existing repository in, guided")
+    adopt.add_argument("path", nargs="?", help="the repository (default: the one you are in)")
+    adopt.add_argument("--name", help="the project's name (default: its directory's)")
+    adopt.add_argument("--no-open", action="store_true",
+                       help="do not open the brief and swatch pages in a browser")
     show = project_verbs.add_parser("show", help="the brief and the queue")
     show.add_argument("path", nargs="?", help="the project (default: the one you are in)")
 
@@ -67,6 +72,7 @@ def _handler(args: argparse.Namespace) -> Handler:
     table: dict[tuple[str, str | None], Handler] = {
         ("setup", None): setup.run,
         ("project", "new"): project.new,
+        ("project", "adopt"): project.adopt,
         ("project", "brief"): project.brief,
         ("project", "show"): project.show,
         ("brand", "new"): brand.run,

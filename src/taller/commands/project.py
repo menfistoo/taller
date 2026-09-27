@@ -15,6 +15,7 @@ from typing import Any
 
 import yaml
 
+from .. import adopt as adopt_lib
 from .. import brands, config, discovery, generated, gitio, onboarding, registry, scaffold
 from ..errors import ConfigError
 from ..onboarding import Question, ask
@@ -222,3 +223,150 @@ def show(args: Any, prompter: Prompter) -> int:
         lines += ["", f"Queue: {len(proposed)} proposed"] + [f"  - {t}" for t in proposed]
     prompter.say("\n".join(lines))
     return 0
+
+
+# --- taller project adopt (spec 11.2, 11.3) -----------------------------------
+
+def adopt(args: Any, prompter: Prompter) -> int:
+    project = common.project_path(args.path).resolve()
+    gitio.require_clean_main(project, "`taller project adopt`")
+    try:
+        entry = registry.get_project(project)
+    except ConfigError:
+        entry = None
+    if entry and registry.is_adopted(entry):
+        raise ConfigError(f"{entry['name']} is already adopted. `taller project brief` "
+                          f"changes its answers.")
+    if (project / ".taller").exists():
+        raise ConfigError(f"{project} already has a .taller directory that Taller did not "
+                          f"register. Move it aside first, so nothing of it is lost.")
+    name = args.name or (entry["name"] if entry else adopt_lib.slugify(project.name))
+    if not brands.SLUG.match(name or ""):
+        raise ConfigError(f"{name!r} is not a usable project name; pass --name.")
+    open_pages = not args.no_open
+
+    if setup_command.needed():
+        setup_command.run_inline(prompter)
+
+    facts = adopt_lib.derive(project)
+    prompter.say("\n".join([f"\nAdopting {name} from {project}", "  Found:"] +
+                           [f"    - {line}" for line in _found(facts)]))
+
+    presets: dict[str, Any] = {"deploy": facts["deploy"]}
+    if facts["profile"]:
+        presets["profile"] = facts["profile"]
+    if entry:                             # registered by `setup`: its guesses stand
+        presets["profile"] = entry["profile"]
+    extra: tuple = ()
+    if facts["matching_brand"]:
+        presets["brand"] = facts["matching_brand"]
+    elif facts["tokens"]:
+        extra = ((adopt_lib.LIFT, f"a new brand from {facts['stylesheet']} "
+                                  f"({len(facts['tokens'])} tokens)"),)
+        presets["brand"] = adopt_lib.LIFT
+    answers = onboarding.run(name, prompter, presets=presets, extra_brands=extra,
+                             new_brand=lambda p: brand_command.create(p, open_page=open_pages))
+
+    new_brand = None
+    if answers["brand"] == adopt_lib.LIFT:
+        slug = brand_command._slug(prompter, None)
+        intent = ask(prompter, Question(
+            "adopt.brand.intent", "intent", 0,
+            "In one line: what should this brand feel like, and what is each colour for?",
+            "text"))
+        new_brand = (slug, intent)
+        answers["brand"] = slug
+
+    architecture = None
+    if facts["claude_md"]:
+        prompter.say(f"\nReading the old CLAUDE.md (≈{facts['claude_md_tokens']} tokens) to "
+                     f"keep only what is specific to {name}. One dispatch.")
+        architecture, error = adopt_lib.distill(facts["claude_md"], answers["profile"])
+        if error:
+            prompter.say(f"  That did not work ({error}). The old file will be archived "
+                         f"instead: kept, never loaded.")
+
+    while True:
+        notes = _adoption_notes(facts, answers, new_brand, architecture)
+        tokens = facts["tokens"] if new_brand else None
+        page = onboarding.write_brief(name, answers, notes, tokens)
+        prompter.say("\n" + onboarding.brief_text(name, answers, notes))
+        if architecture:
+            prompter.say("\n  architecture.md, as proposed:\n"
+                         + "\n".join(f"    {line}" for line in architecture.splitlines()))
+        prompter.say(f"\nThe brief is at {page}")
+        if open_pages:
+            brand_command.open_in_browser(page)
+        choices = [("approve", "approve and adopt it"), ("edit", "change an answer")]
+        if architecture:
+            choices.append(("archive", "archive the old CLAUDE.md instead of this summary"))
+        choices.append(("cancel", "stop here"))
+        decision = ask(prompter, Question("brief", "brief", 0, "Adopt it from this brief?",
+                                          "choice", choices=tuple(choices)))
+        if decision == "approve":
+            break
+        if decision == "cancel":
+            prompter.say(f"Nothing was changed. Your answers are kept: "
+                         f"`taller project adopt` picks up from here.")
+            return 1
+        if decision == "archive":
+            architecture = None
+            continue
+        raw = prompter.ask("brief.edit", "  Which question, 1 to 12?").strip()
+        if raw.isdigit() and 1 <= int(raw) <= 12:
+            onboarding.edit(name, prompter, answers, int(raw))
+        else:
+            prompter.say("  Please give a number from 1 to 12.")
+
+    sync = adopt_lib.apply(project, name=name, answers=answers, facts=facts,
+                           new_brand=new_brand, architecture=architecture)
+    onboarding.discard_progress(name)
+    prompter.say("\n".join([
+        "",
+        f"Adopted {name} (sync: {sync}).",
+        f"  Always loaded now: ≈{adopt_lib.preamble_tokens(project)} tokens "
+        f"(was ≈{facts['claude_md_tokens']} in CLAUDE.md)",
+        f"  Local constitution: {adopt_lib.local_content_chars(project)} characters",
+        "  `taller doctor` checks it; `taller project brief` changes an answer.",
+    ]))
+    return 0
+
+
+def _found(facts: dict) -> list[str]:
+    lines = [f"looks like {facts['profile'] or 'no catalogue profile'}"]
+    if facts["tokens"]:
+        lines.append(f"{len(facts['tokens'])} design tokens in {facts['stylesheet']}"
+                     + (f", identical to the brand {facts['matching_brand']}"
+                        if facts["matching_brand"] else ""))
+    if facts["claude_md"]:
+        lines.append(f"a CLAUDE.md of ≈{facts['claude_md_tokens']} tokens")
+    if facts["smoke_boot"]:
+        lines.append(f"started with `{facts['smoke_boot']}`")
+    lines.append(f"{facts['commits']} commits; "
+                 + ("tests in tests/" if facts["tests"] else "no tests/ directory"))
+    if facts["review_dirs"]:
+        lines.append("review directories the gates will replace (phase C): "
+                     + ", ".join(facts["review_dirs"]))
+    return lines
+
+
+def _adoption_notes(facts: dict, answers: dict, new_brand: tuple | None,
+                    architecture: str | None) -> tuple[str, ...]:
+    notes = []
+    brand = answers.get("brand")
+    if facts["tokens"] and brand in (facts["matching_brand"], new_brand and new_brand[0]):
+        where = "a new hub brand" if new_brand else f"the hub brand {brand}"
+        notes.append(f"The {len(facts['tokens'])} tokens in {facts['stylesheet']} move to "
+                     f"{where}; its :root block is replaced by an import of the "
+                     f"generated file.")
+    elif facts["tokens"]:
+        notes.append(f"The tokens in {facts['stylesheet']} stay where they are: the chosen "
+                     f"brand is not theirs, so the gates will report them as hardcoded.")
+    if facts["claude_md"]:
+        notes.append("CLAUDE.md becomes a short pointer to the index; "
+                     + (f"what is specific to this project goes to architecture.md "
+                        f"({len(architecture)} characters)" if architecture else
+                        "the old text is archived in .taller/archive/, never loaded")
+                     + ". The original stays in git history.")
+    notes.append("One commit on main, then the generated files are written.")
+    return tuple(notes)

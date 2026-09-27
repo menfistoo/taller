@@ -155,3 +155,27 @@ def make_pdf(path: Path, lines: list[str], *, fonts: tuple[str, ...] = ("Helveti
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(bytes(out))
     return path
+
+
+def make_repo(path: Path, files: Mapping[str, str], *, origin: str | None = None,
+              commit: bool = True, branch: str = "main") -> Path:
+    """A real git repository holding `files`, committed on `branch`.
+
+    Identity is passed per command so the fixture does not depend on the
+    machine's git configuration.
+    """
+    import subprocess
+
+    identity = ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                "-c", "commit.gpgsign=false"]
+    path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "--quiet", "-b", branch, str(path)], check=True)
+    for relative, text in files.items():
+        write(path / relative, text)
+    if origin:
+        subprocess.run(["git", "-C", str(path), "remote", "add", "origin", origin], check=True)
+    if commit and files:
+        subprocess.run(["git", *identity, "-C", str(path), "add", "--all"], check=True)
+        subprocess.run(["git", *identity, "-C", str(path), "commit", "--quiet", "-m",
+                        "initial"], check=True)
+    return path

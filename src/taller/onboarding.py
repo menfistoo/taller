@@ -309,15 +309,22 @@ def brief_rows(answers: Mapping[str, Any]) -> list[tuple[int, str, str]]:
     ]
 
 
-def brief_text(name: str, answers: Mapping[str, Any]) -> str:
+def brief_text(name: str, answers: Mapping[str, Any], notes: tuple[str, ...] = ()) -> str:
     lines = [f"Project brief: {name}", ""]
     for number, label, value in brief_rows(answers):
         lines.append(f"  {NUMERALS[number - 1]} {label}: {value}")
+    if notes:
+        lines += ["", "  What else changes:"] + [f"    - {note}" for note in notes]
     return "\n".join(lines)
 
 
-def render_brief(name: str, answers: Mapping[str, Any]) -> str:
-    """One standalone page. Every answer escaped; nothing loaded from the network."""
+def render_brief(name: str, answers: Mapping[str, Any], notes: tuple[str, ...] = (),
+                 tokens: Mapping[str, str] | None = None) -> str:
+    """One standalone page. Every answer escaped; nothing loaded from the network.
+
+    `notes` list what else the approval will change (adoption's lifts); `tokens`
+    shows a palette that is not in the hub yet.
+    """
     esc = html.escape
     rows = "\n".join(
         f"<tr><th>{NUMERALS[number - 1]} {esc(label)}</th><td>{esc(str(value))}</td></tr>"
@@ -329,8 +336,9 @@ def render_brief(name: str, answers: Mapping[str, Any]) -> str:
     brand = answers.get("brand")
     if brand and brand != "none":
         tokens_path = paths.brands() / brand / "tokens.css"
-        tokens = (brands.tokens_in(tokens_path.read_text(encoding="utf-8"))
-                  if tokens_path.is_file() else {})
+        if tokens is None:
+            tokens = (brands.tokens_in(tokens_path.read_text(encoding="utf-8"))
+                      if tokens_path.is_file() else {})
         chips = "".join(
             f'<figure><div class="chip" style="background:{esc(value)}"></div>'
             f"<figcaption><code>{esc(token)}</code><br>{esc(value)}</figcaption></figure>"
@@ -363,13 +371,16 @@ def render_brief(name: str, answers: Mapping[str, Any]) -> str:
         f"<ol>{work}</ol>",
         "<h2>Brand</h2>",
         swatch,
+        *(["<h2>What else changes</h2>", "<ul>",
+           *(f"<li>{esc(note)}</li>" for note in notes), "</ul>"] if notes else []),
         "</body></html>",
         "",
     ])
 
 
-def write_brief(name: str, answers: Mapping[str, Any]) -> Path:
+def write_brief(name: str, answers: Mapping[str, Any], notes: tuple[str, ...] = (),
+                tokens: Mapping[str, str] | None = None) -> Path:
     """Beside the answers file, outside every project (spec 11.1)."""
     page = paths.onboarding_brief(name)
-    locking.atomic_write_text(page, render_brief(name, answers))
+    locking.atomic_write_text(page, render_brief(name, answers, notes, tokens))
     return page
