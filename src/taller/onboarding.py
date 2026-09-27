@@ -82,9 +82,10 @@ QUESTIONS: tuple[Question, ...] = (
                       ("docker", "a server, Docker Compose behind Caddy")),
              default="local"),
     Question("q12", "first_version", 4,
-             "What is the smallest version that is actually useful to you?", "list",
-             why="One piece of work per line; an empty line ends the list. Three to "
-                 "five is right."),
+             "What is the smallest version that would already be useful to you?", "list",
+             why="List its first pieces of work, one per line - for example "
+                 "\"A page listing my tools\", then \"A form to record a loan\". "
+                 "Three to five is about right. Press Enter on an empty line when done."),
 )
 BY_ID = {question.id: question for question in QUESTIONS}
 
@@ -164,9 +165,8 @@ def _prompt(question: Question, options: tuple[Choice, ...], default: Any) -> st
     lines = ["  " + (f"{question.number} " if question.number else "") + question.text]
     if question.why:
         lines.append(f"     ({question.why})")
-    if options:
-        lines.append("     " + "  ".join(f"{n}) {label}"
-                                         for n, (_, label) in enumerate(options, 1)))
+    # One choice per line: side by side they wrap badly in a narrow terminal.
+    lines += [f"     {n}) {label}" for n, (_, label) in enumerate(options, 1)]
     if question.kind == "yes_no":
         lines.append("     [Y/n]" if default is True else "     [y/N]" if default is False
                      else "     [y/n]")
