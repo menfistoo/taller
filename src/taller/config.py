@@ -184,6 +184,16 @@ def resolve_model(role: str, cfg: HubConfig) -> str:
         ) from exc
 
 
+def read_project_config(project_path: Path) -> dict[str, Any]:
+    """A project's `.taller/taller.yml` — config overrides only (spec 5.1).
+
+    `{}` when there is none, which is the common case: a project states only what
+    it changes. Chain 1 merges this last (spec 4.4), so a key absent here keeps
+    whatever the profile or the hub said.
+    """
+    return _read_yaml(paths.project_config(Path(project_path)))
+
+
 def resolve_effort(role: str, cfg: HubConfig) -> str:
     """The role's key if present, else `default`. Never a KeyError (spec 4.4.1)."""
     effort = cfg["effort"]
