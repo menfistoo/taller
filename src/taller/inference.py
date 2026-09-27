@@ -138,6 +138,9 @@ class Dispatch:
     # Environment variables removed for this one dispatch. `taller doctor` uses it
     # to prove subscription auth works with no API key in sight (spec 15.4).
     unset_env: tuple[str, ...] = ()
+    # Seconds before the dispatch is abandoned. Real work gets half an hour; a
+    # health check that waits that long just looks frozen.
+    timeout: float = DISPATCH_TIMEOUT
 
 
 @dataclass
@@ -198,11 +201,9 @@ def infer(dispatch: Dispatch, executable: str = "claude") -> Result:
         return Result(ok=False, error=str(exc))
     try:
         try:
-            completed = subprocess.run(
+            completed = _run_bounded(
                 argv,
                 input=dispatch.prompt,
-                capture_output=True,
-                text=True,
                 # UTF-8 on both directions, explicitly. Without it Python uses the
                 # locale encoding - cp1252 on Windows - and two things break
                 # silently: a prompt containing any character outside cp1252 (an
@@ -213,7 +214,7 @@ def infer(dispatch: Dispatch, executable: str = "claude") -> Result:
                 encoding="utf-8",
                 errors="replace",
                 cwd=str(cwd),
-                timeout=DISPATCH_TIMEOUT,
+                timeout=dispatch.timeout,
                 env=({k: v for k, v in os.environ.items() if k not in dispatch.unset_env}
                      if dispatch.unset_env else None),
             )
@@ -221,7 +222,7 @@ def infer(dispatch: Dispatch, executable: str = "claude") -> Result:
             return Result(
                 ok=False,
                 error=f"The dispatch produced no result within "
-                      f"{DISPATCH_TIMEOUT}s and was abandoned. A wedged CLI would "
+                      f"{dispatch.timeout:g}s and was abandoned. A wedged CLI would "
                       f"otherwise hold its concurrency slot indefinitely.",
             )
     finally:
@@ -275,6 +276,46 @@ def infer(dispatch: Dispatch, executable: str = "claude") -> Result:
         usage=_usage(payload),
         cost_usd=payload.get("total_cost_usd"),
     )
+
+
+def _run_bounded(argv: list[str], *, input: str, encoding: str, errors: str, cwd: str,
+                 timeout: float, env: dict[str, str] | None) -> subprocess.CompletedProcess:
+    """`subprocess.run`, except that a timeout ends the whole process tree.
+
+    `claude` starts children of its own - the MCP servers of every plugin the
+    owner has installed. `subprocess.run` kills only the direct child on timeout
+    and then waits for its output pipes, which those orphans can hold open, so a
+    wedged dispatch could outlive its own timeout. Found when `taller doctor`
+    sat waiting on a dispatch that never answered.
+    """
+    popen_extra: dict[str, Any] = (
+        {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
+        else {"start_new_session": True})
+    process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, text=True, encoding=encoding,
+                               errors=errors, cwd=cwd, env=env, **popen_extra)
+    try:
+        stdout, stderr = process.communicate(input, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_tree(process)
+        try:
+            process.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            pass                                # the pipes are abandoned, not awaited
+        raise
+    return subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
+
+
+def _kill_tree(process: subprocess.Popen) -> None:
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/T", "/F", "/PID", str(process.pid)],
+                       capture_output=True)
+    else:
+        import signal
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(process.pid, signal.SIGKILL)
+    with contextlib.suppress(OSError):
+        process.kill()
 
 
 def _build(dispatch: Dispatch, executable: str) -> tuple[list[str], Path]:

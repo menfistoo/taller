@@ -165,3 +165,19 @@ def test_the_command_exits_one_on_a_failure(project: Path):
     subprocess.run(["git", "-C", str(project), "config", "--unset", "merge.ours.driver"],
                    check=True)
     assert cli.main(["doctor"], prompter) == 1
+
+
+def test_a_dispatch_that_never_answers_fails_in_bounded_time(project: Path, monkeypatch):
+    """Found in first real use: doctor sat for minutes on a dispatch that never
+    answered, because the timeout was the half hour real work gets."""
+    import time
+
+    monkeypatch.setattr(doctor, "DISPATCH_CHECK_TIMEOUT", 3.0)
+    monkeypatch.setenv("STUB_CLAUDE_HANG", "60")
+    started = time.monotonic()
+
+    check = by_name(doctor.run_checks(live=True), "subscription")
+
+    assert check.status == doctor.FAIL and "abandoned" in check.detail
+    assert time.monotonic() - started < 30, "the hung process tree was not ended"
+    assert "claude update" in check.fix

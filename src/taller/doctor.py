@@ -23,6 +23,8 @@ from .errors import TallerError
 
 PASS, FAIL, SKIP = "pass", "fail", "skip"
 DISPATCH_CACHE_TTL = timedelta(hours=24)
+# A trivial dispatch answers in seconds. Past this, report it rather than hang.
+DISPATCH_CHECK_TIMEOUT = 120.0
 API_KEY_VARIABLES = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
 
 # Spec 15.4's rows that later phases bring. Listed so the report shows them.
@@ -93,10 +95,13 @@ def _dispatch(live: bool) -> Check:
     result = inference.infer(inference.Dispatch(
         role="explorer", prompt="Reply with the single word OK.",
         config=config.load_hub_config(), unset_env=API_KEY_VARIABLES,
+        timeout=DISPATCH_CHECK_TIMEOUT,
     ))
     if not result.ok:
         return Check(name, FAIL, result.error or "the dispatch failed",
-                     fix="Run `claude` once and sign in with your subscription.")
+                     fix="Run `claude -p \"say OK\" --model haiku` yourself: if it also "
+                         "hangs or fails, update Claude Code (`claude update`) and sign "
+                         "in again with your subscription.")
     locking.atomic_write_text(cache, json.dumps(
         {"passed_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}) + "\n")
     return Check(name, PASS, "dispatched just now")

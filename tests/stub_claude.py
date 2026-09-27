@@ -48,6 +48,11 @@ def main() -> int:
         sys.stderr.write("stub: ANTHROPIC_API_KEY reached the CLI\n")
         return 3
 
+    # A dispatch that never answers, as a real CLI waiting on the network can.
+    if os.environ.get("STUB_CLAUDE_HANG"):
+        import time
+        time.sleep(float(os.environ["STUB_CLAUDE_HANG"]))
+
     if os.environ.get("STUB_CLAUDE_FAIL_EXIT"):
         sys.stderr.write("stub failure\n")
         return int(os.environ["STUB_CLAUDE_FAIL_EXIT"])
