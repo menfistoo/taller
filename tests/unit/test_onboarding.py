@@ -112,13 +112,13 @@ def test_a_scripted_prompter_refuses_what_it_was_not_given_and_what_it_did_not_u
 
 def test_the_profile_picker_lists_the_hub_first_then_the_catalogue(tmp_home: Path):
     empty_hub = onboarding.profile_choices()
-    assert [label for _, label in empty_hub] == [
-        "flask-sqlite (from the catalogue)", "python-packaged (from the catalogue)",
-        "static-site (from the catalogue)",
-    ]
+    assert [value for value, _ in empty_hub] == ["flask-sqlite", "python-packaged",
+                                                 "static-site"]
+    # Plain words first, the technical name after, for someone who knows it.
+    assert empty_hub[0][1] == "A web app with its own database, used in a browser  [flask-sqlite]"
 
     catalogue.install_profile("static-site")
-    assert onboarding.profile_choices()[0] == ("static-site", "static-site")
+    assert onboarding.profile_choices()[0][0] == "static-site"
 
 
 def test_the_brand_picker_always_offers_none_and_new(tmp_home: Path):

@@ -1,6 +1,7 @@
 # A static page with an optional helper script, no server of its own.
 name: static-site
-description: Static HTML, CSS and JS with no build step, plus an optional Python helper
+# Stack: Static HTML, CSS and JS with no build step, plus an optional Python helper
+description: "A simple website - pages only, no database or sign-in"
 modules:
   - stack/static-site
   - security/minimal

@@ -31,7 +31,8 @@ Answers = dict[str, Any]
 Choice = tuple[str, str]                     # (value, label)
 
 NEW_BRAND = "__new__"
-ROUND_TITLES = {1: "what it is", 2: "who and where", 3: "data", 4: "shape"}
+ROUND_TITLES = {1: "what it is for", 2: "who uses it, and from where",
+                3: "what it keeps", 4: "how it is built"}
 NUMERALS = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫"
 
 
@@ -45,6 +46,7 @@ class Question:
     why: str = ""
     choices: tuple[Choice, ...] = field(default_factory=tuple)
     default: Any = None       # a choice value, a bool, or None for "must answer"
+    example: str = ""         # an answer someone might give, shown under the question
 
     @property
     def number(self) -> str:
@@ -53,40 +55,57 @@ class Question:
         return NUMERALS[int(digits) - 1] if self.id[:1] == "q" and digits.isdigit() else ""
 
 
+# Plain words first, an example answer under each, and the reason only where it
+# changes what someone would answer. Written after the first real use, where the
+# owner could not tell what most of the earlier, shorter questions wanted.
 QUESTIONS: tuple[Question, ...] = (
-    Question("q1", "what_it_does", 1, "In one sentence, what does this do?", "text"),
-    Question("q2", "what_it_is_not", 1, "What does it deliberately NOT do?", "text",
-             why="Keeps it from quietly becoming a bigger tool. Nothing in the code "
-                 "can answer this."),
-    Question("q3", "must_never_break", 1, "What must never break?", "text"),
-    Question("q4", "users", 2, "Who uses it?", "choice",
-             why="Changing this later is a rewrite, so it is asked before any code exists.",
-             choices=(("solo", "you alone"), ("team", "a team with roles"),
-                      ("public", "the public"))),
-    Question("q5", "reach", 2, "Reached from where?", "choice",
-             choices=(("this machine", "this machine"),
-                      ("a private network", "a private network"),
-                      ("a VPN", "a VPN"), ("the internet", "the internet")),
+    Question("q1", "what_it_does", 1, "What does it do? One sentence is enough.", "text",
+             example="Keeps track of which neighbour has borrowed which tool."),
+    Question("q2", "what_it_is_not", 1,
+             "What should it never turn into? Something you would say no to, even if "
+             "someone asked for it.", "text",
+             why="Projects tend to grow into something else a little at a time. Writing "
+                 "the limit down now lets Taller say no for you later.",
+             example="It will never take payments."),
+    Question("q3", "must_never_break", 1,
+             "What would be a disaster if it stopped working?", "text",
+             why="This gets the most careful checking on every change.",
+             example="Knowing who has which tool right now."),
+    Question("q4", "users", 2, "Who will use it?", "choice",
+             why="Hard to change later, because it decides whether people need to sign in.",
+             choices=(("solo", "only me"),
+                      ("team", "a group of people, some allowed to do more than others"),
+                      ("public", "anyone, open to the public"))),
+    Question("q5", "reach", 2, "Where will people open it from?", "choice",
+             choices=(("this machine", "only this computer"),
+                      ("a private network", "inside one building or office network"),
+                      ("a VPN", "from outside, through a private connection (VPN)"),
+                      ("the internet", "from anywhere, over the internet")),
              default="this machine"),
-    Question("q6", "phone", 2, "Used on a phone?", "yes_no", default=False),
-    Question("q7", "stores", 3, "What does it store?", "text"),
+    Question("q6", "phone", 2, "Will people use it on a phone?", "yes_no", default=False,
+             why="If yes, every screen is checked on a small display too."),
+    Question("q7", "stores", 3, "What information does it keep?", "text",
+             example="The tools, the neighbours, and who borrowed what, and when."),
     Question("q8", "sensitive_data", 3,
-             "Does any of it involve money, personal data, or credentials?", "yes_no",
-             why="A yes makes the security review mandatory on those paths and adds "
-                 "an audit log."),
-    Question("q9", "profile", 4, "Profile", "choice",
-             why="The stack. Profiles from the catalogue are copied into your hub "
-                 "when first used."),
-    Question("q10", "brand", 4, "Brand", "choice"),
-    Question("q11", "deploy", 4, "Deploys where?", "choice",
-             choices=(("local", "this machine only"),
-                      ("docker", "a server, Docker Compose behind Caddy")),
+             "Does it keep money, payments, personal details (names, emails, phone "
+             "numbers) or passwords?", "yes_no",
+             why="If yes, every change touching them gets an extra security review, and "
+                 "the project keeps a log of who changed what."),
+    Question("q9", "profile", 4, "What kind of project is it?", "choice",
+             why="This picks the building blocks. If unsure, the web app fits most "
+                 "things."),
+    Question("q10", "brand", 4, "Which look - colours and fonts - should it use?", "choice",
+             why="Choose none for a quick test; a brand can be made later."),
+    Question("q11", "deploy", 4, "Where will it run?", "choice",
+             choices=(("local", "only on this computer"),
+                      ("docker", "on a server, so it can be reached online")),
              default="local"),
     Question("q12", "first_version", 4,
              "What is the smallest version that would already be useful to you?", "list",
-             why="List its first pieces of work, one per line - for example "
-                 "\"A page listing my tools\", then \"A form to record a loan\". "
-                 "Three to five is about right. Press Enter on an empty line when done."),
+             why="List its first pieces of work, one per line. Three to five is about "
+                 "right. Press Enter on an empty line when done.",
+             example="A page listing my tools / A form to record a loan / "
+                     "A page showing who has what"),
 )
 BY_ID = {question.id: question for question in QUESTIONS}
 
@@ -97,8 +116,11 @@ def profile_choices() -> list[Choice]:
     """The hub's profiles first, then what the catalogue offers."""
     hub = catalogue.installed_profiles()
     offered = [name for name in catalogue.list_profiles() if name not in hub]
-    return ([(name, name) for name in hub]
-            + [(name, f"{name} (from the catalogue)") for name in offered])
+    def label(name: str, source: dict) -> str:
+        return f"{source.get('description') or name}  [{name}]"
+
+    return ([(name, label(name, catalogue.read_hub_profile(name))) for name in hub]
+            + [(name, label(name, catalogue.read_profile(name))) for name in offered])
 
 
 def brand_choices() -> list[Choice]:
@@ -163,10 +185,15 @@ def _pick(raw: str, options: tuple[Choice, ...]) -> str | None:
 
 
 def _prompt(question: Question, options: tuple[Choice, ...], default: Any) -> str:
-    lines = ["  " + (f"{question.number} " if question.number else "") + question.text]
+    lines = [textwrap.fill(question.text, width=68, subsequent_indent="     ",
+                           initial_indent="  " + (f"{question.number} " if question.number
+                                                  else ""))]
     if question.why:
         lines.append(textwrap.fill(f"({question.why})", width=64,
                                    initial_indent="     ", subsequent_indent="      "))
+    if question.example:
+        lines.append(textwrap.fill(f"For example: {question.example}", width=64,
+                                   initial_indent="     ", subsequent_indent="       "))
     # One choice per line: side by side they wrap badly in a narrow terminal.
     lines += [f"     {n}) {label}" for n, (_, label) in enumerate(options, 1)]
     if question.kind == "yes_no":

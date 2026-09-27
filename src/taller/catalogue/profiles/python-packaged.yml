@@ -1,6 +1,7 @@
 # A packaged program with no user interface, run on a machine without Python.
 name: python-packaged
-description: Python program frozen into a single executable with PyInstaller, no UI
+# Stack: Python program frozen into a single executable with PyInstaller, no UI
+description: A program that runs on a computer, with no screens of its own
 modules:
   - stack/python-packaged
   - security/minimal

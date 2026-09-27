@@ -47,11 +47,13 @@ def connect(prompter: Prompter, *, write: bool = True) -> dict[str, Any]:
 
     detected = config.detect_billing_mode()
     prompter.say(
-        f"Claude is reached through the `claude` command, signed in as it already "
-        f"is. Detected: {BILLING_LABELS[detected]}. Taller stores no key of its own."
+        f"Taller does its thinking through Claude Code, signed in the way you already "
+        f"use it. It looks like you use {BILLING_LABELS[detected]}. Taller keeps no "
+        f"password or key of its own."
     )
     changes: dict[str, Any] = {}
-    right = ask(prompter, Question("setup.billing", "billing", 0, "Is that right?",
+    right = ask(prompter, Question("setup.billing", "billing", 0,
+                                   "Is that how you pay for Claude?",
                                    "yes_no", default=True))
     if not right:
         mode = ask(prompter, Question(
@@ -62,7 +64,8 @@ def connect(prompter: Prompter, *, write: bool = True) -> dict[str, Any]:
     current = (hub.read_config().get("deploy") or {}).get("host") or ""
     host = prompter.ask(
         "setup.host",
-        "  The server your projects deploy to, if there is one (Enter for none)"
+        "  Do you have a server where your projects run online? Type its name or "
+        "address,\n     or just press Enter if you don't."
         + (f"\n     [{current}]" if current else ""),
     ).strip() or current
     if host and host != current:
@@ -77,16 +80,21 @@ def connect(prompter: Prompter, *, write: bool = True) -> dict[str, Any]:
 def languages(prompter: Prompter, *, write: bool = True) -> dict[str, str]:
     """Asked, never assumed. No defaults on a hub that has none."""
     current = hub.read_config().get("language") or {}
+    prompter.say("  Three language questions. Answer with a short code: en for English, "
+                 "es for Spanish,\n  de for German, and so on.")
     chosen = {
         "code": _code(prompter, "setup.language.code",
-                      "Language for code, comments and identifiers (for example en)",
+                      "What language should the program code itself be written in - "
+                      "the names\n     and notes inside it that only developers see?",
                       current.get("code")),
         "ui": _code(prompter, "setup.language.ui",
-                    "Language your projects' screens are written in (for example es "
-                    "or en), or none for projects without a user interface",
+                    "What language do the people using your apps read on screen - "
+                    "buttons,\n     menus, messages? (Type none if your projects have "
+                    "no screens.)",
                     current.get("ui"), allow_none=True),
         "commits": _code(prompter, "setup.language.commits",
-                         "Language for commit messages (for example en)",
+                         "What language should the short note saved with each change be "
+                         "written in?\n     (Git calls these commit messages.)",
                          current.get("commits")),
     }
     if write:

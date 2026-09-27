@@ -1,7 +1,8 @@
 # A server-rendered web application with a database. Inert until copied into a
 # hub (spec 4.0): nothing here is resolved or enforced from the catalogue.
 name: flask-sqlite
-description: Flask + SQLite WAL + Jinja2 + Bootstrap 5 + gunicorn + Docker Compose
+# Stack: Flask + SQLite WAL + Jinja2 + Bootstrap 5 + gunicorn + Docker Compose
+description: A web app with its own database, used in a browser
 modules:
   - stack/flask-sqlite
   - security/web-app
