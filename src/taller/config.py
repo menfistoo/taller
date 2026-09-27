@@ -139,8 +139,13 @@ def load_hub_config(*, detect_billing: bool = True) -> HubConfig:
     return cfg
 
 
-def hub_sha() -> str:
-    """The hub's HEAD, recorded on every gate verdict (spec 4.4.1, 7.4).
+def hub_sha(relevant: list[str] | None = None) -> str:
+    """The hub commit a resolution is based on (spec 4.4.1, 4.6, 7.4).
+
+    With `relevant` - hub-relative paths a project resolves from - it is the
+    last commit that touched any of them, not the hub's HEAD. Otherwise editing
+    one brand would move every project's recorded commit and mark all of them
+    stale, although only the projects using that brand had a rule change.
 
     Empty string when the hub is not yet a git repository, which is the state a
     first-ever install is in.
@@ -149,10 +154,12 @@ def hub_sha() -> str:
 
     if not (paths.hub() / ".git").exists():
         return ""
+    command = ["git", "-C", str(paths.hub())]
+    command += (["log", "-1", "--format=%H", "--", *relevant] if relevant
+                else ["rev-parse", "HEAD"])
     try:
         out = subprocess.run(
-            ["git", "-C", str(paths.hub()), "rev-parse", "HEAD"],
-            capture_output=True, text=True, encoding="utf-8",
+            command, capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=30,
         )
     except OSError:

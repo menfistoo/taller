@@ -12,7 +12,7 @@ import webbrowser
 from pathlib import Path
 from typing import Any
 
-from .. import brands, hub, locking, paths
+from .. import brands, generated, hub, locking, paths
 from ..errors import ConfigError
 from ..onboarding import Question, ask
 from ..prompter import Prompter
@@ -50,13 +50,24 @@ def create(prompter: Prompter, *, slug: str | None = None,
     """Run the wizard. Returns the new brand's slug, or None if cancelled."""
     slug = _slug(prompter, slug)
     tokens, assets = _start(prompter)
+    saved = _review_and_save(prompter, slug, tokens, assets=assets, open_page=open_page)
+    if saved:
+        hub.commit(f"brand: add {slug}")
+        prompter.say(f"Saved {slug} to your hub.")
+        return slug
+    return None
 
+
+def _review_and_save(prompter: Prompter, slug: str, tokens: dict[str, str], *,
+                     assets: list[Path], open_page: bool, intent: str | None = None,
+                     replace: bool = False) -> bool:
+    """Tokens, intent, swatch, approve. Writes only on approval."""
     while True:
         tokens = _review(prompter, tokens)
         intent = ask(prompter, Question(
             "brand.intent", "intent", 0,
             "In one line: what should this brand feel like, and what is each colour for?",
-            "text"))
+            "text"), default=intent)
         page = paths.swatch(slug)
         locking.atomic_write_text(page, brands.render_swatch(slug, tokens, f"> {intent}"))
         prompter.say(f"The swatch page is at {page}")
@@ -69,12 +80,39 @@ def create(prompter: Prompter, *, slug: str | None = None,
                      ("cancel", "cancel, writing nothing"))))
         if decision == "cancel":
             prompter.say("Nothing was written.")
-            return None
+            return False
         if decision == "save":
-            brands.write(slug, tokens, intent, assets=assets)
-            hub.commit(f"brand: add {slug}")
-            prompter.say(f"Saved {slug} to your hub.")
-            return slug
+            brands.write(slug, tokens, intent, assets=assets, replace=replace)
+            return True
+
+
+def edit(args: Any, prompter: Prompter) -> int:
+    """`taller brand edit`: change a brand, then refresh every project using it (4.6)."""
+    slug = getattr(args, "slug", None)
+    if slug is None:
+        existing = brands.list_brands()
+        if not existing:
+            raise ConfigError("The hub has no brands yet. `taller brand new` creates one.")
+        slug = ask(prompter, Question("brand.pick", "brand", 0, "Which brand?", "choice",
+                                      choices=tuple((s, s) for s in existing)))
+    folder = paths.brands() / brands.validate_slug(slug)
+    if not (folder / "tokens.css").is_file():
+        raise ConfigError(f"The hub has no brand {slug!r}.")
+    tokens = brands.tokens_in((folder / "tokens.css").read_text(encoding="utf-8"))
+    prose = (folder / "brand.md").read_text(encoding="utf-8") if (folder / "brand.md").is_file() else ""
+    intent = next((line[2:] for line in prose.splitlines() if line.startswith("> ")), None)
+
+    if not _review_and_save(prompter, slug, tokens, assets=[], intent=intent, replace=True,
+                            open_page=not getattr(args, "no_open", False)):
+        return 1
+    if not hub.commit(f"brand: amend {slug}"):
+        prompter.say("Nothing changed.")
+        return 0
+    touched = generated.refresh_affected(brand=slug, message=f"taller: resolve after brand {slug}")
+    prompter.say(f"Saved {slug}. " + (
+        "Refreshed: " + ", ".join(f"{name} ({sync})" for name, sync in touched)
+        if touched else "No adopted project uses it yet."))
+    return 0
 
 
 def _slug(prompter: Prompter, given: str | None) -> str:

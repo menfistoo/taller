@@ -97,6 +97,13 @@ def resolve(project_path: Path | str) -> RuleSet:
     ruleset["slices"] = _resolve_slices(profile, project, ruleset["brand"])
     ruleset["overrides"] = _resolve_overrides(project)
     ruleset["mode"] = "local"
+    # The last hub commit that could have changed THIS resolution, so an edit to
+    # one brand or module stales only the projects that use it (4.6).
+    relevant = ["taller.yml", f"profiles/{profile_name}.yml",
+                *(f"modules/{module}.md" for module in profile.get("modules", []))]
+    if ruleset["brand"]:
+        relevant.append(f"brands/{ruleset['brand']['slug']}")
+    ruleset["hub_sha"] = config.hub_sha(relevant)
     return ruleset
 
 

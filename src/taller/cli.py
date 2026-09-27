@@ -60,6 +60,22 @@ def build_parser() -> argparse.ArgumentParser:
     brand_new.add_argument("--no-open", action="store_true",
                            help="do not open the swatch page in a browser")
 
+    brand_edit = brand_verbs.add_parser("edit", help="change a brand; its projects follow")
+    brand_edit.add_argument("slug", nargs="?", help="the brand's short name")
+    brand_edit.add_argument("--no-open", action="store_true",
+                            help="do not open the swatch page in a browser")
+
+    settings = verbs.add_parser("settings", help="every setting, and where it comes from")
+    settings_verbs = settings.add_subparsers(dest="action", metavar="action")
+    for verb, text in (("show", "list every effective setting"),
+                       ("edit", "open the settings file in your editor")):
+        sub = settings_verbs.add_parser(verb, help=text)
+        sub.add_argument("--project", help="a project's own layer instead of the hub")
+    setter = settings_verbs.add_parser("set", help="change one setting")
+    setter.add_argument("key", help="dotted, as `taller settings` shows it")
+    setter.add_argument("value", help="YAML: 400, true, [a, b]")
+    setter.add_argument("--project", help="a project's own layer instead of the hub")
+
     resolve = verbs.add_parser("resolve", help="regenerate a project's generated files")
     resolve.add_argument("path", nargs="?", help="the project (default: the one you are in)")
 
@@ -70,7 +86,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _handler(args: argparse.Namespace) -> Handler:
-    from .commands import brand, doctor, project, resolve, setup
+    from .commands import brand, doctor, project, resolve, settings, setup
 
     table: dict[tuple[str, str | None], Handler] = {
         ("setup", None): setup.run,
@@ -80,6 +96,11 @@ def _handler(args: argparse.Namespace) -> Handler:
         ("project", "show"): project.show,
         ("project", "discover"): project.discover,
         ("brand", "new"): brand.run,
+        ("brand", "edit"): brand.edit,
+        ("settings", None): settings.run,
+        ("settings", "show"): settings.run,
+        ("settings", "set"): settings.run,
+        ("settings", "edit"): settings.run,
         ("resolve", None): resolve.run,
         ("doctor", None): doctor.run,
     }

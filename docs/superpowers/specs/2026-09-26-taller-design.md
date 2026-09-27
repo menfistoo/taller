@@ -1177,6 +1177,13 @@ block:
 The comparison is against an **in-memory** render; nothing is written, so the
 check cannot launder the file it is testing.
 
+**"Hub `HEAD`" means the last hub commit this project resolves from** — the
+commit that last touched `taller.yml`, the project's profile, that profile's
+modules, or the project's brand — not the hub's literal `HEAD`. With the literal
+`HEAD`, editing one brand would stale every project in the hub, and the refresh
+scope in the table above (only the projects using the changed module or brand)
+would leave the rest failing `doctor`. Found building `brand edit`.
+
 In CI there is no hub, so neither comparison is possible. CI instead rejects any
 diff touching `resolved.json` on a ticket branch — a branch must never carry its
 own snapshot (§7.2) — reporting `constitution.resolved-snapshot-modified`
