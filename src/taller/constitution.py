@@ -107,7 +107,9 @@ def _merge_config(profile: dict[str, Any], project: Path) -> RuleSet:
     `config.deep_merge` enforces: a project able to narrow its own security
     surface would make spec 8.2's mandatory gate optional.
     """
-    merged = config.load_hub_config()
+    # Not detected here: a snapshot holding the environment's billing mode would
+    # compare as modified the day someone sets an API key for an afternoon.
+    merged = config.load_hub_config(detect_billing=False)
     profile_config = {
         key: value for key, value in profile.items()
         if key not in PROFILE_NON_CONFIG_KEYS
@@ -237,8 +239,13 @@ def render_snapshot(ruleset: RuleSet) -> bytes:
     `mode` is written as `"local"` whatever the given ruleset says, so that a
     snapshot re-rendered from a loaded one is byte-identical to the original; it
     is `load_snapshot` that labels a run `"ci"`.
+
+    The project's absolute path is left out: it names this machine, not a rule,
+    and a snapshot carrying it would compare as modified on every other checkout.
     """
-    payload = {**ruleset, "mode": "local"}
+    project = {key: value for key, value in (ruleset.get("project") or {}).items()
+               if key != "path"}
+    payload = {**ruleset, "project": project, "mode": "local"}
     text = json.dumps(payload, sort_keys=True, indent=2, ensure_ascii=False,
                       default=_json_scalar)
     return (text + "\n").encode("utf-8")
@@ -270,6 +277,10 @@ def load_snapshot(path: Path | str) -> RuleSet:
         if override.get("until"):
             override["until"] = date.fromisoformat(str(override["until"]))
 
+    # The snapshot does not carry the path (it names a machine, not a rule), so
+    # the project is wherever this checkout of it is.
+    root = snapshot.resolve().parent.parent
+    data["project"] = {**(data.get("project") or {}), "path": str(root)}
     data["mode"] = "ci"
     return data
 

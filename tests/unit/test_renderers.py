@@ -210,3 +210,38 @@ def test_the_index_still_fits_its_budget_with_every_summary(tmp_home):
     estimate = constitution.estimate_tokens(text)
     assert estimate <= constitution.INDEX_TOKEN_BUDGET, estimate
     print(f"\nindex estimate: {estimate} of {constitution.INDEX_TOKEN_BUDGET} tokens")
+
+
+# --- the snapshot holds rules, not the machine it was made on ----------------
+#
+# Found building `taller doctor`: the snapshot carried the billing mode detected
+# from the environment and the project's absolute path. Setting an API key for
+# an afternoon, or opening the project on a second machine, then made a clean
+# repository compare as "modified" - a tamper verdict for something nobody did.
+
+def test_the_snapshot_does_not_change_with_the_environment(
+    tmp_home: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    project = support.make_project()
+    before = constitution.render_snapshot(constitution.resolve(project))
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-for-an-afternoon")
+    after = constitution.render_snapshot(constitution.resolve(project))
+
+    assert after == before
+
+
+def test_a_configured_billing_mode_is_kept(tmp_home: Path):
+    project = support.make_project(hub_config={"billing": {"mode": "api"}})
+
+    assert constitution.resolve(project)["billing"]["mode"] == "api"
+
+
+def test_the_snapshot_does_not_carry_the_machine_path(tmp_home: Path):
+    project = support.make_project()
+
+    snapshot = constitution.render_snapshot(constitution.resolve(project)).decode("utf-8")
+
+    assert str(project.resolve()) not in snapshot
+    assert json.dumps(str(project.resolve()))[1:-1] not in snapshot, "escaped form"
+    assert json.loads(snapshot)["project"]["name"] == "demo"

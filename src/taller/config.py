@@ -125,10 +125,15 @@ def _read_yaml(path: Path) -> dict[str, Any]:
     return data
 
 
-def load_hub_config() -> HubConfig:
-    """The hub layer alone. Succeeds on a completely empty hub (spec 4.4.1)."""
+def load_hub_config(*, detect_billing: bool = True) -> HubConfig:
+    """The hub layer alone. Succeeds on a completely empty hub (spec 4.4.1).
+
+    `detect_billing=False` leaves an unconfigured `billing.mode` as None. Resolution
+    uses it: the snapshot is compared byte for byte (4.6), so it must hold what
+    was configured, never what this shell's environment happens to say.
+    """
     cfg = deep_merge(SHIPPED_DEFAULTS, _read_yaml(paths.hub_config()))
-    if cfg["billing"]["mode"] is None:
+    if detect_billing and cfg["billing"]["mode"] is None:
         cfg["billing"]["mode"] = detect_billing_mode()
     cfg["hub_sha"] = hub_sha()
     return cfg
