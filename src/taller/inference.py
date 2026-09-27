@@ -235,7 +235,17 @@ def infer(dispatch: Dispatch, executable: str = "claude") -> Result:
                   "and no result was recorded.",
         )
     if completed.returncode != 0:
-        detail = (completed.stderr or completed.stdout or "").strip()[:500]
+        detail = (completed.stderr or completed.stdout or "").strip()
+        # A failed turn still answers in JSON, and its `result` is the one line
+        # that says what happened ("Not logged in"). Cut at 500 characters, the
+        # raw JSON showed only usage counters - found in first real use.
+        try:
+            payload = json.loads(completed.stdout)
+            if isinstance(payload, dict) and payload.get("result"):
+                detail = str(payload["result"])
+        except (json.JSONDecodeError, TypeError):
+            pass
+        detail = detail[:500]
         return Result(ok=False, error=f"`{executable}` failed with exit "
                                       f"{completed.returncode}: {detail}")
 

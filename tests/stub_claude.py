@@ -64,7 +64,8 @@ def main() -> int:
     payload = os.environ.get("STUB_CLAUDE_RESPONSE")
     if payload:
         _out(payload)
-        return 0
+        # The real CLI exits non-zero on a failed turn and still prints its JSON.
+        return int(os.environ.get("STUB_CLAUDE_EXIT", "0"))
 
     _out(json.dumps({
         "type": "result",

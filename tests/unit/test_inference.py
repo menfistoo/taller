@@ -420,3 +420,18 @@ def test_a_ruleset_dispatch_resolves_its_model(tmp_home, stub_claude):
     result = inference.infer(_bootstrap_dispatch(role="gate_security", ruleset=ruleset))
     assert result.ok
     assert "--model opus" in stub_claude.flags()
+
+
+def test_a_failed_turn_reports_the_cli_s_own_message(tmp_home, stub_claude, monkeypatch):
+    """First real use: the raw JSON cut at 500 characters showed only usage
+    counters, never the line that said the CLI was not logged in."""
+    monkeypatch.setenv("STUB_CLAUDE_RESPONSE", json.dumps({
+        "type": "result", "is_error": True, "result": "Not logged in · Please run /login",
+        "usage": {"input_tokens": 0, "output_tokens": 0, "padding": "x" * 900},
+    }))
+    monkeypatch.setenv("STUB_CLAUDE_EXIT", "1")
+
+    result = inference.infer(_bootstrap_dispatch())
+
+    assert not result.ok
+    assert "Not logged in" in result.error
