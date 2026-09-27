@@ -195,12 +195,11 @@ def test_a_nested_slot_cannot_exceed_the_cap(tmp_home):
 def test_the_body_exception_is_not_swallowed_by_the_slot(tmp_home, stub_claude, monkeypatch):
     """An earlier draft yielded inside a try/except in the acquisition loop, so a
     body failure surfaced as `generator didn't stop after throw()`."""
-    import subprocess as sp
-
     def boom(*args, **kwargs):
         raise OSError("BODY BOOM")
 
-    monkeypatch.setattr(sp, "run", boom)
+    # The dispatch body: where the CLI is spawned and waited on.
+    monkeypatch.setattr(inference, "_run_bounded", boom)
     with pytest.raises(OSError, match="BODY BOOM"):
         inference.infer(_bootstrap_dispatch())
 
@@ -334,12 +333,11 @@ def test_a_prompt_with_non_ascii_does_not_crash(tmp_home, stub_claude):
 
 def test_a_slot_is_released_after_the_body_raises(tmp_home, stub_claude, monkeypatch):
     """Locks in the release guarantee, not just the exception's survival."""
-    import subprocess as sp
-
     def boom(*args, **kwargs):
         raise OSError("BODY BOOM")
 
-    monkeypatch.setattr(sp, "run", boom)
+    # The dispatch body: where the CLI is spawned and waited on.
+    monkeypatch.setattr(inference, "_run_bounded", boom)
     pool = paths.dispatch_slots() / "worker"
     with pytest.raises(OSError):
         inference.infer(_bootstrap_dispatch())
