@@ -191,3 +191,22 @@ def test_render_tokens_is_a_verbatim_copy_behind_a_generated_header(tmp_home: Pa
 
     project = support.make_project(name="plain", brand=None)
     assert constitution.render_tokens(constitution.resolve(project)) is None
+
+
+def test_a_multi_module_slice_contributes_every_summary(tmp_home):
+    """Spec 3.1: "concatenated in profile order". `conventions` is python then js
+    for flask-sqlite, and taking only the first would silently drop the JavaScript
+    conventions from the one file the chief reads on every session."""
+    rs = constitution.resolve(support.make_project())
+    text = constitution.render_index(rs).decode("utf-8")
+    assert "Python" in text or "python" in text
+    assert "JavaScript" in text or "browser JavaScript" in text
+
+
+def test_the_index_still_fits_its_budget_with_every_summary(tmp_home):
+    """The reason it is safe to honour spec 3.1 here: there is room."""
+    rs = constitution.resolve(support.make_project())
+    text = constitution.render_index(rs).decode("utf-8")
+    estimate = constitution.estimate_tokens(text)
+    assert estimate <= constitution.INDEX_TOKEN_BUDGET, estimate
+    print(f"\nindex estimate: {estimate} of {constitution.INDEX_TOKEN_BUDGET} tokens")

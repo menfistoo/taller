@@ -22,3 +22,6 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Explicit, so `import support` does not rely on pytest inserting the conftest's
+# directory into sys.path as a side effect.
+pythonpath = ["tests"]

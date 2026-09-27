@@ -364,16 +364,24 @@ def estimate_tokens(text: str) -> int:
 
 
 def _summary_of(text: str) -> str | None:
-    """A slice's own first `> ` line, verbatim (spec 3.1).
+    """Every `> ` summary the slice's sources carry, in profile order (spec 3.1).
 
-    Every hub module is required to open with one. A project file that does not -
-    `overrides.md` opens with front matter - contributes its first `> ` line
-    wherever it appears, and nothing at all if it has none.
+    Not just the first. A slice can be several modules - `conventions` is
+    `conventions/python` then `conventions/js` for flask-sqlite - and taking only
+    the first would have silently dropped the JavaScript conventions from the one
+    file the chief reads on every session. Spec 3.1 says "concatenated in profile
+    order", and the widest index measures well under its budget, so there is room
+    to honour that.
+
+    A source with no summary contributes nothing: `overrides.md` opens with front
+    matter, and a project's own `product.md` may not carry one.
     """
-    for line in text.splitlines():
-        if line.startswith("> "):
-            return line[2:].strip()
-    return None
+    summaries = [
+        line[2:].strip()
+        for line in text.splitlines()
+        if line.startswith("> ") and line[2:].strip()
+    ]
+    return " ".join(summaries) or None
 
 
 def _json_scalar(value: Any) -> str:
