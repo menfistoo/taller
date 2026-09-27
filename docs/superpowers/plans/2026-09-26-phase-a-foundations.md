@@ -2242,13 +2242,276 @@ Chunks 1–3 give a package that can talk to `claude` safely, with configuration
 
 ---
 
-## Chunks 4–8: to be written after the review checkpoint
+## Chunk 4: The catalogue, and the code that installs it
 
-Remaining scope, in dependency order. Each becomes a chunk of the same shape once chunks 1–3 are approved:
+The catalogue is where the tool's genericity stops being a claim and becomes files. Everything in it is named for a stack, never for a line of business, and nothing in it is active until copied into a hub (§4.0).
+
+**A note on how this chunk is specified.** Tasks 9 and 10 produce **data** — prose modules and YAML profiles — whose correctness is defined entirely by machine-checkable invariants. So the plan specifies the *invariants and their tests*, and the content is authored directly against them. Transcribing nine prose files through a plan would add a copying step without adding a check. Task 11 is logic and is specified in full.
+
+### Task 9: The nine module files
+
+**Files:** `src/taller/catalogue/modules/` — `stack/{flask-sqlite,static-site,python-packaged}.md`, `security/{web-app,minimal}.md`, `conventions/{python,js}.md`, `ux/bootstrap.md`, `never.md`
+**Test:** `tests/unit/test_catalogue_content.py`
+
+**The invariants**, each a test:
+
+| # | Invariant | Why |
+|---|---|---|
+| 1 | Exactly nine modules ship | The three profiles between them name all nine |
+| 2 | **Every file's first line is a `> ` sentence of ≤ 100 chars** | `render_index` collects these verbatim to build the 40-line index (§3.1). A module without one leaves a hole in it. |
+| 3 | No file mentions a domain, brand or person | Goal G9. The catalogue is inside the package, so §15.6's vocabulary rule covers it. |
+| 4 | Every file is UTF-8 with LF endings | Generated artefacts are compared byte-for-byte (§4.6) |
+| 5 | Each file's parent directory names one of the nine slices | §4.3's closed vocabulary |
+
+- [ ] **Step 1:** Write `tests/unit/test_catalogue_content.py` asserting invariants 1–5. Use `pytest.mark.parametrize` over the discovered files so each module reports separately.
+- [ ] **Step 2:** Run it. Expected: FAIL — invariant 1 asserts `0 == 9`, and the parametrised tests collect zero cases, which is itself the signal.
+- [ ] **Step 3:** Author the nine modules against the invariants. Content guidance: each is agent-facing prose that answers "what must someone know to work in this stack" — runtime, layout, the two or three rules whose violation causes real damage. Say *why*, not just what. `never.md` additionally carries YAML front matter with an empty `non_suppressible: []` (§4.5).
+- [ ] **Step 4:** Run the tests. Expected: `1 + 4×9 = 37 passed`.
+- [ ] **Step 5:** Commit — `feat(catalogue): nine generic stack modules, each with an index summary`
+
+### Task 10: The three profiles
+
+**Files:** `src/taller/catalogue/profiles/{flask-sqlite,static-site,python-packaged}.yml`
+**Test:** append to `tests/unit/test_catalogue_content.py`
+
+**The invariants:**
+
+| # | Invariant | Why |
+|---|---|---|
+| 6 | Exactly those three profile names | §4.1 |
+| 7 | **`brand: null` and no `language` key** | Both are asked, never assumed (§4.0). A shipped default here is precisely how a tool ends up knowing whose it is. |
+| 8 | Every module a profile names exists in the catalogue | A profile copy is atomic with its modules (§4.0); a dangling name would make the first `project new` fail on a fresh hub |
+| 9 | `name` matches the filename; `description` non-empty; `paths` carries `security_sensitive`, `ui`, `layers`, `tests_dir`, `brand_tokens`; `smoke.kind` ∈ {`http`,`import`,`none`} | These are the keys `resolve()` and the smoke gate read |
+
+`paths.brand_tokens` differs per profile and must not be hardcoded anywhere: `static/css/tokens.css` for `flask-sqlite`, `tokens.css` for `static-site` (its assets sit at the root), `null` for `python-packaged` (no brand, no generated token file).
+
+- [ ] **Step 1:** Write the tests for invariants 6–9.
+- [ ] **Step 2:** Run. Expected: FAIL on invariant 6.
+- [ ] **Step 3:** Author the three profiles.
+- [ ] **Step 4:** Run. Expected: `47 passed`.
+- [ ] **Step 5:** Commit — `feat(catalogue): three stack profiles, none naming a brand or a language`
+
+### Task 11: `catalogue.py` — installing into the hub, atomically
+
+**Files:** Create `src/taller/catalogue.py`, `tests/unit/test_catalogue.py`
+
+**The rule everything else rests on** (§4.0): **copying a profile copies every module it names.** Chain 2 resolves slice text from `~/.taller/modules/`, so a profile whose modules stayed behind resolves dangling references — and that is the single step the entire empty-hub contract depends on. A module already in the hub is **never overwritten**: the catalogue is a starting point, not an upstream you track.
+
+- [ ] **Step 1: Write the failing tests** — `tests/unit/test_catalogue.py`
+
+```python
+from pathlib import Path
+
+import pytest
+
+from taller import catalogue, paths
+from taller.errors import ConfigError
+
+
+def test_list_profiles_reads_the_catalogue_not_the_hub(tmp_home: Path):
+    """An empty hub still offers the catalogue's profiles — which is all a first
+    `project new` has to choose from (spec 4.7)."""
+    assert not paths.profiles().exists()
+    assert set(catalogue.list_profiles()) == {
+        "flask-sqlite", "static-site", "python-packaged"
+    }
+
+
+def test_copying_a_profile_brings_its_modules(tmp_home: Path):
+    catalogue.install_profile("flask-sqlite")
+    assert (paths.profiles() / "flask-sqlite.yml").is_file()
+    for module in ("stack/flask-sqlite", "security/web-app", "conventions/python",
+                   "conventions/js", "ux/bootstrap", "never"):
+        assert (paths.modules() / f"{module}.md").is_file(), module
+
+
+def test_an_existing_module_is_never_overwritten(tmp_home: Path):
+    """The catalogue is a starting point, not an upstream. An edited module is
+    the owner's."""
+    catalogue.install_profile("flask-sqlite")
+    edited = paths.modules() / "conventions" / "python.md"
+    edited.write_text("> Mine now.\n\nMy own conventions.\n", encoding="utf-8")
+    catalogue.install_profile("flask-sqlite")
+    assert edited.read_text(encoding="utf-8").startswith("> Mine now.")
+
+
+def test_an_existing_profile_is_never_overwritten(tmp_home: Path):
+    catalogue.install_profile("static-site")
+    target = paths.profiles() / "static-site.yml"
+    target.write_text("name: static-site\nmine: true\n", encoding="utf-8")
+    catalogue.install_profile("static-site")
+    assert "mine: true" in target.read_text(encoding="utf-8")
+
+
+def test_installing_an_unknown_profile_is_a_clear_error(tmp_home: Path):
+    with pytest.raises(ConfigError, match="no-such-profile"):
+        catalogue.install_profile("no-such-profile")
+
+
+def test_installed_files_are_lf(tmp_home: Path):
+    """Generated and installed files are compared byte-for-byte later (spec 4.6)."""
+    catalogue.install_profile("python-packaged")
+    for path in (list(paths.modules().rglob("*.md"))
+                 + list(paths.profiles().glob("*.yml"))):
+        assert b"\r\n" not in path.read_bytes(), path
+
+
+def test_install_reports_what_it_did(tmp_home: Path):
+    report = catalogue.install_profile("python-packaged")
+    assert report.profile == "python-packaged"
+    assert len(report.modules_copied) == 4
+    assert report.modules_kept == []
+
+    again = catalogue.install_profile("python-packaged")
+    assert again.modules_copied == []
+    assert len(again.modules_kept) == 4
+
+
+def test_missing_modules_reports_a_broken_hub_profile(tmp_home: Path):
+    """`doctor` fails on these (spec 4.0)."""
+    catalogue.install_profile("python-packaged")
+    (paths.modules() / "never.md").unlink()
+    assert catalogue.missing_modules("python-packaged") == ["never"]
+```
+
+- [ ] **Step 2: Run to verify it fails** — `python -m pytest tests/unit/test_catalogue.py -q`. Expected: no module named `taller.catalogue`.
+
+- [ ] **Step 3: Implement `src/taller/catalogue.py`**
+
+```python
+"""Reading the shipped catalogue, and copying entries into a hub.
+
+The catalogue is inert (spec 4.0): nothing in it is resolved, loaded or enforced
+until it lands in `~/.taller/`. This module is the only way it gets there.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import yaml
+
+from . import locking, paths
+from .errors import ConfigError
+
+
+@dataclass
+class InstallReport:
+    """What an install actually changed, so a caller can tell the owner."""
+    profile: str
+    modules_copied: list[str] = field(default_factory=list)
+    modules_kept: list[str] = field(default_factory=list)
+    profile_copied: bool = False
+
+
+def list_profiles() -> list[str]:
+    """Every profile the catalogue offers, whatever the hub holds.
+
+    A picker on an empty hub has nothing else to show (spec 4.7), so this reads the
+    catalogue rather than the hub.
+    """
+    return sorted(p.stem for p in paths.catalogue().joinpath("profiles").glob("*.yml"))
+
+
+def read_profile(name: str) -> dict:
+    """A catalogue profile, as data. Raises if it does not exist."""
+    path = paths.catalogue() / "profiles" / f"{name}.yml"
+    if not path.is_file():
+        raise ConfigError(
+            f"The catalogue has no profile named {name!r}. It offers: "
+            f"{', '.join(list_profiles())}."
+        )
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ConfigError(f"{path} does not contain a mapping.")
+    return data
+
+
+def install_profile(name: str) -> InstallReport:
+    """Copy a profile and every module it names into the hub.
+
+    Atomic in the sense that matters: the profile is written only after all of its
+    modules are in place, so a hub never holds a profile whose modules are missing
+    — which is what chain 2 would resolve as dangling references.
+
+    Never overwrites. A module already in the hub is the owner's, possibly edited.
+    """
+    data = read_profile(name)
+    report = InstallReport(profile=name)
+
+    with locking.hub_lock():
+        for module in data.get("modules", []):
+            source = paths.catalogue() / "modules" / f"{module}.md"
+            if not source.is_file():
+                raise ConfigError(
+                    f"Profile {name!r} names module {module!r}, which the catalogue "
+                    f"does not contain."
+                )
+            target = paths.modules() / f"{module}.md"
+            if target.exists():
+                report.modules_kept.append(module)
+                continue
+            locking.atomic_write_text(target, source.read_text(encoding="utf-8"))
+            report.modules_copied.append(module)
+
+        profile_target = paths.profiles() / f"{name}.yml"
+        if not profile_target.exists():
+            source = paths.catalogue() / "profiles" / f"{name}.yml"
+            locking.atomic_write_text(profile_target, source.read_text(encoding="utf-8"))
+            report.profile_copied = True
+
+    return report
+
+
+def installed_profiles() -> list[str]:
+    """Profiles already in the hub. Empty on a fresh install."""
+    if not paths.profiles().is_dir():
+        return []
+    return sorted(p.stem for p in paths.profiles().glob("*.yml"))
+
+
+def hub_profile_path(name: str) -> Path:
+    return paths.profiles() / f"{name}.yml"
+
+
+def read_hub_profile(name: str) -> dict:
+    path = hub_profile_path(name)
+    if not path.is_file():
+        raise ConfigError(
+            f"{name!r} is not installed in this hub. Installed: "
+            f"{', '.join(installed_profiles()) or 'none'}."
+        )
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ConfigError(f"{path} does not contain a mapping.")
+    return data
+
+
+def missing_modules(name: str) -> list[str]:
+    """Modules a hub profile names but the hub lacks. `doctor` fails on these."""
+    data = read_hub_profile(name)
+    return [
+        module for module in data.get("modules", [])
+        if not (paths.modules() / f"{module}.md").is_file()
+    ]
+```
+
+- [ ] **Step 4: Run the tests** — Expected: `8 passed`
+- [ ] **Step 5: Run the whole suite and commit**
+
+```bash
+python -m pytest -q
+git add src/taller/catalogue.py tests/unit/test_catalogue.py
+git commit -m "feat(catalogue): install a profile atomically with its modules, never overwriting"
+```
+
+---
+
+## Chunks 5–8: written after Chunk 4 is green
 
 | Chunk | Contents | Spec |
 |---|---|---|
-| **4** | The catalogue — three profiles, the module files with their required `> ` summary lines, three scaffolds with `manifest.yml` | §4.0, §4.1, §11.4 |
 | **5** | `overrides.py` + the non-suppressible predicate; `constitution.py` — both chains, `resolve()`, `render_snapshot`, `render_index`, `render_tokens` | §4.3, §4.4, §4.5, §4.6, §3.1, §4.2.1 |
 | **6** | `gitio.py` — `ensure_main_worktree()`, `commit_to_main()` with no-remote mode and the three `sync` states | §7.3 |
 | **7** | `brands.py` (`from_pdf` first, it is the preferred source), `scaffold.py`, `discovery.py` | §4.2, §4.7, §11.4 |
