@@ -199,12 +199,12 @@ ALLOWED = [
     ".taller/resolved.json",
     ".taller/constitution/00-index.md",
     ".gitattributes",
+    ".taller/queue.yml",                        # emptied by `ticket new --from-queue`
 ]
 
 REFUSED = [
     "app.py",                                   # application code
     "README.md",
-    ".taller/queue.yml",                        # main-side, but not on the list
     ".taller/taller.yml",
     ".taller/work/0001-demo/plan.md",           # a branch file (spec 7.2)
     ".taller/work/0001-demo/gates/security.md",
