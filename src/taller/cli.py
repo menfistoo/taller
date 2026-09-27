@@ -76,6 +76,32 @@ def build_parser() -> argparse.ArgumentParser:
     setter.add_argument("value", help="YAML: 400, true, [a, b]")
     setter.add_argument("--project", help="a project's own layer instead of the hub")
 
+    ticket = verbs.add_parser("ticket", help="create and move tickets")
+    ticket_verbs = ticket.add_subparsers(dest="action", required=True, metavar="action")
+
+    def ticket_verb(verb: str, text: str, *, with_id: bool = True) -> argparse.ArgumentParser:
+        sub = ticket_verbs.add_parser(verb, help=text)
+        if with_id:
+            sub.add_argument("id", type=int, help="the ticket's number")
+        sub.add_argument("--path", help="the project (default: the one you are in)")
+        return sub
+
+    ticket_new = ticket_verb("new", "start a ticket, in your own words", with_id=False)
+    ticket_new.add_argument("words", nargs="*", help="what should be done (asked if left out)")
+    ticket_new.add_argument("--from-queue", action="store_true",
+                            help="turn the project's first-version queue into tickets")
+    ticket_verb("list", "open tickets", with_id=False).add_argument(
+        "--all", action="store_true", help="closed ones too")
+    ticket_verb("show", "one ticket, and what comes next")
+    ticket_verb("transition", "move to the next stage").add_argument(
+        "--lane", choices=("fast", "full"), help="chosen at triage")
+    ticket_verb("approve", "approve at a checkpoint and move on")
+    ticket_verb("reject", "reject at a checkpoint").add_argument(
+        "--reason", help="why (asked if left out)")
+    ticket_verb("resume", "pick a ticket up again after a stop or a crash")
+    ticket_verb("close", "close a released ticket, or abandon one").add_argument(
+        "--abandon", metavar="REASON", help="stop it here, with a reason")
+
     resolve = verbs.add_parser("resolve", help="regenerate a project's generated files")
     resolve.add_argument("path", nargs="?", help="the project (default: the one you are in)")
 
@@ -86,7 +112,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _handler(args: argparse.Namespace) -> Handler:
-    from .commands import brand, doctor, project, resolve, settings, setup
+    from .commands import brand, doctor, project, resolve, settings, setup, ticket
 
     table: dict[tuple[str, str | None], Handler] = {
         ("setup", None): setup.run,
@@ -101,6 +127,14 @@ def _handler(args: argparse.Namespace) -> Handler:
         ("settings", "show"): settings.run,
         ("settings", "set"): settings.run,
         ("settings", "edit"): settings.run,
+        ("ticket", "new"): ticket.new,
+        ("ticket", "list"): ticket.list_,
+        ("ticket", "show"): ticket.show,
+        ("ticket", "transition"): ticket.transition,
+        ("ticket", "approve"): ticket.approve,
+        ("ticket", "reject"): ticket.reject,
+        ("ticket", "resume"): ticket.resume,
+        ("ticket", "close"): ticket.close,
         ("resolve", None): resolve.run,
         ("doctor", None): doctor.run,
     }
