@@ -214,3 +214,271 @@ def create(project: Path | str, *, title: str, words: str, kind: str) -> Ticket:
         return write(project, ticket, f"ticket {ticket['id']:04d}: {title}",
                      note="created at ① intake",
                      extra={f"{folder}/ticket.md": ticket_md.encode("utf-8")})
+
+
+# --- the stage machine (spec 8) ------------------------------------------------
+
+NUMERALS = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫"
+
+
+def _label(stage: str) -> str:
+    return f"{NUMERALS[stage_number(stage) - 1]} {stage}"
+
+
+def next_stage(ticket: Mapping[str, Any]) -> str | None:
+    """The stage after this one in the ticket's lane; None once closed.
+
+    Before ② decides, `intake` → `triage` is the same in both lanes.
+    """
+    order = LANE_STAGES[ticket.get("lane") or "full"]
+    index = order.index(ticket["stage"])
+    return order[index + 1] if index + 1 < len(order) else None
+
+
+def _name(ticket: Mapping[str, Any]) -> str:
+    return ticket_dir(ticket).split("/")[-1]
+
+
+def _worktree(project: Path, ticket: Mapping[str, Any]) -> Path:
+    from . import paths
+    return paths.ticket_worktree(registry.get_project(project)["name"], _name(ticket))
+
+
+def _branch_exists(project: Path, branch: str) -> bool:
+    return gitio.git(project, "rev-parse", "--verify", "--quiet",
+                     f"refs/heads/{branch}", check=False).returncode == 0
+
+
+def _open_worktree(project: Path, ticket: Ticket) -> None:
+    """④ build: the branch from `main`, and a worktree attached to it (8.1, 8.3)."""
+    branch = f"ticket/{_name(ticket)}"
+    if not _branch_exists(project, branch):
+        gitio.git(project, "branch", branch, gitio.MAIN_BRANCH)
+    tree = _worktree(project, ticket)
+    tree.parent.mkdir(parents=True, exist_ok=True)
+    gitio.git(project, "worktree", "prune")
+    gitio.git(project, "worktree", "add", "--quiet", str(tree), branch)
+    ticket["branch"] = branch
+
+
+def _merged(project: Path, branch: str) -> bool:
+    return gitio.git(project, "merge-base", "--is-ancestor", branch, gitio.MAIN_BRANCH,
+                     check=False).returncode == 0
+
+
+def _clean_up(project: Path, ticket: Ticket, *, delete_unmerged: bool) -> list[str]:
+    """Remove the worktree; delete the branch when merged (or when told to).
+
+    Returns what it did, for `notes.md`.
+    """
+    done: list[str] = []
+    tree = _worktree(project, ticket)
+    if tree.exists():
+        gitio.git(project, "worktree", "remove", "--force", str(tree), check=False)
+        done.append("worktree removed")
+    gitio.git(project, "worktree", "prune", check=False)
+    branch = ticket.get("branch")
+    if branch and _branch_exists(project, branch):
+        if delete_unmerged or _merged(project, branch):
+            result = gitio.git(project, "branch", "-D", branch, check=False)
+            done.append(f"branch {branch} deleted" if result.returncode == 0
+                        else f"branch {branch} kept: {result.stderr.strip()}")
+        else:
+            done.append(f"branch {branch} kept: not merged")
+    return done
+
+
+def _refuse_if_blocked(ticket: Mapping[str, Any]) -> None:
+    if ticket.get("blocked"):
+        raise ConfigError(
+            f"Ticket {ticket['id']} is blocked: {ticket['blocked']['reason']}. "
+            f"`taller ticket resume {ticket['id']}` once that is dealt with.")
+
+
+def advance(project: Path | str, ticket_id: int, *, lane: str | None = None) -> Ticket:
+    """Move to the next stage of the ticket's lane, doing what entering it needs."""
+    project = Path(project)
+    with locking.project_lock(registry.get_project(project)["name"]):
+        ticket = load(project, ticket_id)
+        _refuse_if_blocked(ticket)
+        stage = ticket["stage"]
+        if stage == "close":
+            raise ConfigError(f"Ticket {ticket_id} is closed.")
+
+        detail = ""
+        if lane is not None or stage == "triage":
+            detail = _set_lane(ticket, lane)
+        checkpoint = CHECKPOINT_AT.get(stage)
+        if checkpoint and ticket["checkpoints"][checkpoint] != "approved":
+            raise ConfigError(
+                f"Ticket {ticket_id} is at the {checkpoint} checkpoint ({_label(stage)}). "
+                f"`taller ticket approve {ticket_id}` approves it and moves on; "
+                f"`taller ticket reject {ticket_id}` sends it back.")
+
+        target = next_stage(ticket)
+        extra = ""
+        if target == "build":
+            _open_worktree(project, ticket)
+            extra = f"; branch {ticket['branch']}"
+        elif target == "merge":
+            if not _merged(project, ticket["branch"]):
+                raise ConfigError(
+                    f"{ticket['branch']} is not merged into {gitio.MAIN_BRANCH} yet. "
+                    f"Merge it (its pull request, or `git merge {ticket['branch']}` on "
+                    f"{gitio.MAIN_BRANCH}), then move the ticket on.")
+        elif target == "close":
+            ticket["outcome"] = "done"
+            done = _clean_up(project, ticket, delete_unmerged=False)
+            extra = f"; {', '.join(done)}" if done else ""
+        ticket["stage"] = target
+        return write(project, ticket, f"ticket {ticket_id:04d}: {stage} -> {target}",
+                     note=f"{_label(stage)} → {_label(target)}{detail}{extra}")
+
+
+def _set_lane(ticket: Ticket, lane: str | None) -> str:
+    """② chooses the lane, once (8.2). Returns the note fragment."""
+    if ticket["stage"] != "triage":
+        raise ConfigError("The lane is chosen at ② triage, and only there.")
+    if lane is None:
+        if ticket.get("lane"):
+            return ""
+        raise ConfigError(
+            f"Ticket {ticket['id']} needs a lane before it leaves triage: "
+            f"`taller ticket transition {ticket['id']} --lane fast` for a small, safe "
+            f"change in one file, `--lane full` for anything else.")
+    if lane not in LANE_STAGES:
+        raise ConfigError(f"{lane!r} is not a lane; use fast or full.")
+    if ticket.get("lane") and ticket["lane"] != lane:
+        raise ConfigError(f"Ticket {ticket['id']}'s lane is already {ticket['lane']}; "
+                          f"a lane is set once and never demoted.")
+    ticket["lane"] = lane
+    if lane == "fast":
+        ticket["checkpoints"]["design"] = "skipped"
+        ticket["checkpoints"]["staging"] = "skipped"
+    return f" (lane {lane})"
+
+
+def approve(project: Path | str, ticket_id: int) -> Ticket:
+    """Record the owner's approval at this stage's checkpoint, then move on."""
+    project = Path(project)
+    with locking.project_lock(registry.get_project(project)["name"]):
+        ticket = load(project, ticket_id)
+        _refuse_if_blocked(ticket)
+        checkpoint = CHECKPOINT_AT.get(ticket["stage"])
+        if checkpoint is None:
+            raise ConfigError(
+                f"Ticket {ticket_id} is at {_label(ticket['stage'])}, which is not a "
+                f"checkpoint. Checkpoints are ③ design, ⑦ review, ⑨ staging, ⑪ release.")
+        ticket["checkpoints"][checkpoint] = "approved"
+        write(project, ticket, f"ticket {ticket_id:04d}: {checkpoint} approved",
+              note=f"{checkpoint} approved by the owner")
+        return advance(project, ticket_id)
+
+
+def reject(project: Path | str, ticket_id: int, reason: str) -> Ticket:
+    """The owner says no at a checkpoint (14).
+
+    At ⑦ review, exactly as the spec says: the evidence and the reason go to `main`
+    first, then the worktree and branch go, and the ticket returns to ② with a
+    fresh chief conversation (7.6). At ③, ⑨ and ⑪ the ticket stays where it is,
+    blocked with the reason, until the owner resumes it.
+    """
+    project = Path(project)
+    reason = str(reason).strip()
+    if not reason:
+        raise ConfigError("A rejection needs a reason; it is what the next attempt reads.")
+    with locking.project_lock(registry.get_project(project)["name"]):
+        ticket = load(project, ticket_id)
+        stage = ticket["stage"]
+        checkpoint = CHECKPOINT_AT.get(stage)
+        if checkpoint is None:
+            raise ConfigError(f"Ticket {ticket_id} is at {_label(stage)}, which is not a "
+                              f"checkpoint, so there is nothing to reject.")
+        if stage != "review":
+            ticket["checkpoints"][checkpoint] = "rejected"
+            ticket["blocked"] = {"reason": f"rejected at {_label(stage)}: {reason}",
+                                 "at_stage": stage_number(stage), "since": _now()}
+            return write(project, ticket, f"ticket {ticket_id:04d}: {checkpoint} rejected",
+                         note=f"{checkpoint} rejected: {reason}")
+
+        stamp = datetime.now().strftime("%Y%m%dT%H%M%S")
+        kept = f"{ticket_dir(ticket)}/rejected/{stamp}"
+        evidence: dict[str, bytes] = {f"{kept}/reason.md": f"{reason}\n".encode("utf-8")}
+        gates = _worktree(project, ticket) / ticket_dir(ticket) / "gates"
+        if gates.is_dir():
+            for file in sorted(gates.rglob("*")):
+                if file.is_file():
+                    relative = file.relative_to(gates).as_posix()
+                    evidence[f"{kept}/gates/{relative}"] = file.read_bytes()
+        gitio.commit_to_main(project, evidence, f"ticket {ticket_id:04d}: keep rejected work")
+
+        done = _clean_up(project, ticket, delete_unmerged=True)
+        ticket.update({"stage": "triage", "branch": None, "chief_session": None,
+                       "gates": [], "verdicts": {}, "fix_rounds": 0})
+        ticket["checkpoints"]["review"] = "pending"
+        if ticket.get("lane") == "full":
+            ticket["checkpoints"]["design"] = "pending"
+        return write(project, ticket, f"ticket {ticket_id:04d}: rejected at review",
+                     note=f"rejected at ⑦ review: {reason}. Kept under {kept}; "
+                          f"{', '.join(done) or 'nothing to clean up'}. Back to ② triage.")
+
+
+def block(project: Path | str, ticket_id: int, reason: str) -> Ticket:
+    """Stop at the current stage with a reason; the stage is kept (8.4)."""
+    project = Path(project)
+    with locking.project_lock(registry.get_project(project)["name"]):
+        ticket = load(project, ticket_id)
+        ticket["blocked"] = {"reason": str(reason), "at_stage": stage_number(ticket["stage"]),
+                             "since": _now()}
+        return write(project, ticket, f"ticket {ticket_id:04d}: blocked",
+                     note=f"blocked at {_label(ticket['stage'])}: {reason}")
+
+
+def resume(project: Path | str, ticket_id: int) -> tuple[Ticket, list[str]]:
+    """Pick a ticket up from disk after anything - a block, a killed session (G5).
+
+    Clears `blocked` and repairs what a dead process can leave behind: a ticket
+    past ④ whose worktree is gone gets it back from its branch. A missing branch
+    is reported, never invented - the work on it would be.
+    """
+    project = Path(project)
+    with locking.project_lock(registry.get_project(project)["name"]):
+        ticket = load(project, ticket_id)
+        repairs: list[str] = []
+        if ticket.get("blocked"):
+            repairs.append(f"unblocked (was: {ticket['blocked']['reason']})")
+            ticket["blocked"] = None
+        working = stage_number("build") <= stage_number(ticket["stage"]) < stage_number("merge")
+        if working and ticket.get("branch"):
+            if not _branch_exists(project, ticket["branch"]):
+                repairs.append(f"branch {ticket['branch']} is missing - its work cannot "
+                               f"be recovered from the ticket; reject or close it")
+            elif not _worktree(project, ticket).is_dir():
+                _open_worktree(project, ticket)
+                repairs.append(f"worktree recreated on {ticket['branch']}")
+        if repairs:
+            write(project, ticket, f"ticket {ticket_id:04d}: resumed",
+                  note="resumed: " + "; ".join(repairs))
+        return ticket, repairs
+
+
+def close(project: Path | str, ticket_id: int, *, abandon_reason: str | None = None) -> Ticket:
+    """⑫: from ⑪ with the release approved, or abandoned from anywhere."""
+    project = Path(project)
+    with locking.project_lock(registry.get_project(project)["name"]):
+        ticket = load(project, ticket_id)
+        if ticket["stage"] == "close":
+            raise ConfigError(f"Ticket {ticket_id} is already closed.")
+        if abandon_reason is None:
+            if ticket["stage"] != "release" or ticket["checkpoints"]["release"] != "approved":
+                raise ConfigError(
+                    f"Ticket {ticket_id} closes after its release is approved "
+                    f"(`taller ticket approve {ticket_id}` at ⑪ release). To stop it "
+                    f"early, close it with a reason for abandoning it.")
+            return advance(project, ticket_id)
+        done = _clean_up(project, ticket, delete_unmerged=False)
+        stage = ticket["stage"]
+        ticket.update({"stage": "close", "outcome": "abandoned", "blocked": None})
+        return write(project, ticket, f"ticket {ticket_id:04d}: abandoned",
+                     note=f"abandoned at {_label(stage)}: {abandon_reason}"
+                          + (f"; {', '.join(done)}" if done else ""))

@@ -74,6 +74,11 @@ def doctor_dispatch_cache() -> Path:
     return run_dir() / "doctor-dispatch.json"
 
 
+def ticket_worktree(project_name: str, ticket_dir_name: str) -> Path:
+    """A ticket's own worktree, on its branch, from ④ build (spec 8.1)."""
+    return run_dir() / "worktrees" / f"{project_name}-{ticket_dir_name}"
+
+
 def main_worktree(project_name: str) -> Path:
     return run_dir() / "worktrees" / f"{project_name}-main"
 
