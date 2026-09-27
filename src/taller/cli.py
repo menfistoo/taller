@@ -70,9 +70,10 @@ def _handler(args: argparse.Namespace) -> Handler:
 def main(argv: list[str] | None = None, prompter: Prompter | None = None) -> int:
     args = build_parser().parse_args(argv)
     if prompter is None:
-        # A redirected stdout on Windows is cp1252, which cannot print ①.
-        if hasattr(sys.stdout, "reconfigure"):
-            sys.stdout.reconfigure(errors="replace")
+        # A console prints Unicode whatever the code page; a redirected stdout on
+        # Windows is cp1252, which cannot hold ①. Write UTF-8 there instead.
+        if hasattr(sys.stdout, "reconfigure") and not sys.stdout.isatty():
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
         prompter = TerminalPrompter()
     try:
         return _handler(args)(args, prompter)

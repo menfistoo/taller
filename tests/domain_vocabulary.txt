@@ -1,0 +1,25 @@
+# Words that would show Taller knows whose it is (spec 15.6, criterion 5).
+# No tracked file may contain one, whole word, any case - except this list,
+# tests/fixtures/, and docs/ (the design documents cite a real estate as
+# evidence). Add a word here the moment it would be wrong to find it shipped.
+#
+# The owner and the owner's accounts
+catia
+schubert
+menfistoo
+# The owner's business and its projects
+purobeach
+puro beach
+beach club
+hotel
+voucher
+vouchers
+front-office
+front office
+# Business nouns from the owner's domain, in the owner's UI language
+caja
+turno
+huésped
+reserva
+habitación
+recepción

@@ -49,7 +49,7 @@ class Question:
     def number(self) -> str:
         """① … ⑫ for the twelve; nothing for a question outside the list."""
         digits = self.id[1:]
-        return NUMERALS[int(digits) - 1] if self.id[:1] == "q" and digits.isdigit() else "·"
+        return NUMERALS[int(digits) - 1] if self.id[:1] == "q" and digits.isdigit() else ""
 
 
 QUESTIONS: tuple[Question, ...] = (
@@ -157,7 +157,7 @@ def _pick(raw: str, options: tuple[Choice, ...]) -> str | None:
 
 
 def _prompt(question: Question, options: tuple[Choice, ...], default: Any) -> str:
-    lines = [f"  {question.number} {question.text}"]
+    lines = ["  " + (f"{question.number} " if question.number else "") + question.text]
     if question.why:
         lines.append(f"     ({question.why})")
     if options:
