@@ -2580,11 +2580,56 @@ All three are `RuleSet → bytes`, all pure, all compared byte-for-byte later �
 
 ---
 
-## Chunks 6–8: written after Chunk 5 is green
+## Chunk 6: `gitio.py` — the only writer of the `main`-side files
+
+**Files:** `src/taller/gitio.py`, `tests/unit/test_gitio.py`
+
+**Spec:** §7.3, §4.6, §7.2. Small, but it is the most frequent write in the system — roughly a dozen times per ticket — and the one place where a failure must degrade rather than lose a transition.
+
+### Why a separate `main` worktree at all
+
+A project's own checkout may be sitting on a ticket branch with a running application against a live database. Switching it to `main` to write a status file would risk a half-migrated schema against a live write-ahead log. So Taller keeps a long-lived worktree of `main` at `~/.taller-run/worktrees/<project>-main/`, outside both the project tree and the hub repository, and writes there.
+
+### Invariants
+
+| # | Invariant | Why |
+|---|---|---|
+| 1 | `ensure_main_worktree()` is **idempotent** and returns the worktree path | It runs on every `commit_to_main`, not only at adopt |
+| 2 | It **requires at least one commit** and says so clearly | A worktree cannot be created in a repository with no commits, which is exactly the state `project new` is in before its first commit (§7.3) |
+| 3 | It is created **outside** the project tree and outside the hub | A nested worktree lets a hub amendment sweep a project checkout into the hub |
+| 4 | `commit_to_main(project, files, message)` writes only paths on §7.2's allowed list, and **raises** on anything else | It holds the owner's admin bypass; nothing else may ride it |
+| 5 | **No-remote mode**: with no `origin`, fetch and push are skipped and `sync` is `local` | The greenfield pilot has no remote, and `git fetch` with no origin exits non-zero. Without this, Phase A's own proof either crashes or sits permanently in `pending`, which `doctor` reports as failure. |
+| 6 | With a remote and a clean fast-forward: `sync` is `ok` | |
+| 7 | With a remote whose `main` has moved: the ticket-file commits are **rebased** and retried once | These paths cannot conflict with application code |
+| 8 | When the push fails: the commit stays local, `sync` is `pending`, and **the transition is not lost** | Local state is the truth; the remote is a mirror |
+| 9 | Every write is an atomic replace under the project lock | §10.3 |
+| 10 | Writes are **LF**, whatever the platform | The tamper check compares bytes (§4.6) |
+
+### The paths it may write
+
+From §7.2, and nothing else:
+
+```
+.taller/work/**/ticket.md          .taller/resolved.json
+.taller/work/**/status.yml         .taller/constitution/00-index.md
+.taller/work/**/notes.md           <paths.brand_tokens>
+.taller/work/**/rejected/**        .gitattributes
+```
+
+A path outside that set is a programming error, not a runtime condition, so it raises rather than returning a failed result — the same distinction §3.6 draws.
+
+### Test approach
+
+Build real git repositories in `tmp_path`: one with no remote, one with a bare repository as `origin`, and one where `origin/main` has moved ahead. Drive them with `subprocess` — mocking git here would test the mock. Set `-c user.name` / `-c user.email` on every commit so the tests do not depend on the machine's git identity, and `-c commit.gpgsign=false` so a signing configuration cannot make them hang.
+
+- [ ] Write the tests for invariants 1–10 · run them failing · implement · expect **~14 passed** · commit `feat(gitio): the sole writer of the main-side files, with no-remote mode`
+
+---
+
+## Chunks 7–8: written after Chunk 6 is green
 
 | Chunk | Contents | Spec |
 |---|---|---|
-| **6** | `gitio.py` — `ensure_main_worktree()`, `commit_to_main()` with no-remote mode and the three `sync` states | §7.3 |
 | **7** | `brands.py` (`from_pdf` first, it is the preferred source), `scaffold.py`, `discovery.py` | §4.2, §4.7, §11.4 |
 | **8** | `cli.py`, the command modules, `doctor.py`, and the greenfield acceptance test of §15.5 | §3.5, §15.4, §15.5 |
 
