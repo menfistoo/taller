@@ -2922,6 +2922,90 @@ Created toolshed at C:\...\toolshed   (branch main, 2 commits, not pushed: no re
 
 ### Deferred to chunk 9
 
-`project adopt` (derive facts, lift tokens, the six-to-eight question path), `project brief` (answers as amendments), `project discover` and `setup` rounds 2–4 and 6, `project show`, `settings show|set|edit`, `brand edit`, a guided `create new…` profile, and the adoption acceptance test.
+Adoption, `brief`, `discover`, the full `setup`, `show`, `settings`, `brand edit`; see chunk 9. A guided `create new…` profile stays out of phase A: copying and editing a hub profile covers it.
 
 **Noted for phase F:** the scaffold's `docker-compose.staging.yml` is standalone; §13.1 runs it as an overlay on the main compose file with `./data-staging/`. Settled with the rest of staging.
+
+---
+
+## Chunk 9: Adoption, the re-runnable brief, discovery, settings
+
+Chunk 8 proved the greenfield path. This chunk brings an **existing** repository in, and the rest of Phase A's command surface. Exit condition: the adoption criteria of §16 that are phase A — **6** (always-loaded preamble ≤ 800 tokens), **7** (authored local content < 2,000 characters), **8** (`setup` registers every discovered project in one pass and reports every unresolvable remote), **9** (brands confirmed from discovered clusters) — measured by an acceptance test against a fixture estate.
+
+### Decisions this chunk makes
+
+| Decision | Why |
+|---|---|
+| **The twelve answers are kept, in `.taller/brief.yml`**, written by `new` and `adopt` | §11.1.1 reopens "the same twelve questions with the current answers filled in"; parsing them back out of `product.md` would be guesswork. Not a slice: never loaded into context, not counted by criterion 7 |
+| **`adopt` and `brief` write on `main`, in a clean checkout, and refuse otherwise** | They change authored files and — at adoption — the application's stylesheet. One reviewable commit on `main`, never mixed into someone's branch |
+| **A hub change fans out** (`generated.refresh_affected`) | §4.6: an amend refreshes every project whose profile includes the changed module or brand. `setup` (language), `settings set` and `brand edit` all use it and report which projects they touched |
+| *Pending the owner:* how the old `CLAUDE.md` becomes local content | See Task 24 |
+| *Pending the owner:* what "register" means in `setup` | See Task 26 |
+
+### Task 24: `adopt.py` and `taller project adopt`
+
+**Files:** `src/taller/adopt.py`, `src/taller/commands/project.py`, `tests/unit/test_adopt.py`
+
+**Derive facts, interview intent (§11.2).** `derive(path) -> Facts` — pure, writes nothing: profile guess, existing `:root` tokens *and the stylesheet that defines them*, a matching hub brand if the palette is identical to one, route files, test layout, a `smoke.boot` candidate (`run_local.py`, `wsgi.py`, `docker-compose.yml`), `deploy` (compose present → `docker`), commit count, the existing `CLAUDE.md` and its size, and superseded review directories (`code-review/`, `security-review/`, `design-review/` — reported; removal is phase C).
+
+The interview is the same twelve, with ⑨ ⑩ ⑪ **shown as inferred, for correction**, which leaves the six to eight questions §11.2 promises.
+
+**On approval, one commit on `main`:**
+
+1. `.taller/constitution/{product,never,overrides}.md`, `.taller/taller.yml`, `.taller/queue.yml`, `.taller/brief.yml`.
+2. **The token lift (§4.2.1)** when a palette was found: tokens into the hub brand (new, or the identical existing one), the `:root` block removed from the stylesheet that defined it, an `@import` of the generated file in its place. The brief shows the stylesheet diff before anything is written.
+3. `.gitattributes` gains Taller's block if absent (existing lines kept); `merge.ours.driver` set.
+4. `CLAUDE.md` becomes the stub that points at `00-index.md` — **what happens to its old content is decision A below**.
+
+Then register, `ensure_main_worktree()`, `generated.refresh()`.
+
+> **Decision A — the old `CLAUDE.md`.** Adopted projects carry up to ~7,000 tokens of it (Appendix A); criterion 6 wants the always-loaded preamble ≤ 800 and criterion 7 wants local content < 2,000 characters. §11.3 says adoption *deletes what the hub already says*. Deciding which paragraphs duplicate a hub rule is judgement, not string matching.
+> - **A1 (recommended):** one dispatch (`architect` role, read-only) reads the old file beside the resolved hub slices and proposes an `architecture.md` holding only what is specific to this project, under 2,000 characters. Shown in the brief, editable, approved like everything else. The original stays in git history. Costs one dispatch per adoption.
+> - **A2:** no inference. The old file moves to `.taller/archive/CLAUDE.md` — kept, never loaded — and `architecture.md` starts empty for the owner to write. Free, but the project loses what its old file knew until someone rewrites it.
+
+| # | Invariant |
+|---|---|
+| 1 | `derive` writes nothing (mtimes), and works on a repository with no `CLAUDE.md`, no tokens and no history (§11.3) |
+| 2 | A dirty checkout, or one not on `main`, is refused before any question |
+| 3 | The lifted stylesheet renders the same values: its `@import` names the generated file, and the generated file holds exactly the lifted tokens |
+| 4 | An identical palette already in the hub is proposed as that brand, never duplicated |
+| 5 | After adoption: `doctor` green; preamble (`CLAUDE.md` + `00-index.md`) ≤ 800 tokens |
+| 6 | Cancel at the brief writes nothing anywhere |
+
+### Task 25: `taller project brief` and `taller project show`
+
+**Files:** `src/taller/commands/project.py`, `tests/unit/test_project_brief.py`
+
+`brief` reopens the twelve with `.taller/brief.yml` filled in (Enter keeps an answer), shows the brief, and on approval writes the changed slices and `brief.yml` as **one amendment commit on `main`** — `amend: brief (② ⑧)` naming what changed — then `generated.refresh()`. §11.1.1: changes carry history and can be reverted. ⑨ changing the profile is refused here with the reason (a stack change is not an answer edit). `show` prints the brief and the queue; it writes nothing.
+
+### Task 26: `taller setup`, complete, and `taller project discover`
+
+**Files:** `src/taller/commands/setup.py`, `src/taller/commands/project.py`, `src/taller/registry.py`, `tests/unit/test_setup_discovery.py`
+
+Rounds 2–4 and 6 of §4.7 over `discovery.py`: project roots (default: the parent of the current repository) → scan + `gh` listing → the four buckets → palette clusters and brand guides → **one review screen** (register which projects with which profile; create which brands from which cluster or guide PDF — named, not typed from scratch; copy which catalogue profiles) → approve / edit / cancel. `discover` re-runs rounds 3–4 and reports what is new, moved or gone. Nothing is written before approval; `remote_only` is listed, never cloned; a `stale` origin is reported by name.
+
+> **Decision B — what "register" means.** Criterion 8 asks for every discovered project registered in one pass; a full adoption asks six to eight questions per project.
+> - **B1 (recommended):** `setup` registers each project as *discovered* — profile and brand recorded, nothing written into the repository. `doctor` reports a discovered project as **skipped: not adopted yet — `taller project adopt`**, never failed. Adopt one project at a time, when you choose.
+> - **B2:** `setup` runs the adoption interview for every project it registers, one after another, in the same pass.
+
+### Task 27: fan-out, `settings`, `brand edit`
+
+**Files:** `src/taller/generated.py`, `src/taller/settings.py`, `src/taller/commands/settings.py`, `src/taller/commands/brand.py`, tests
+
+- `generated.refresh_affected(module=None, brand=None, everything=False) -> list[(project, sync)]`: every adopted project the change reaches, each under its own lock, each reported.
+- `settings show`: every effective key, its value, and the layer it came from (default / hub / profile / project), §5.2. `settings set <key> <value> [--project PATH]`: hub by default, the project file with `--project`; append-only keys refuse removal; hub commit + fan-out. `settings edit` opens the file in `$EDITOR`, then validates and fans out.
+- `brand edit <slug>`: the review loop of `brand new` over the existing tokens; `replace=True`; hub commit; fan-out to every project using the brand.
+- `setup`'s language round fans out when a language changed.
+
+### Task 28: The adoption proof
+
+**Files:** `tests/acceptance/test_adoption.py`, `tests/fixtures/estate/…`
+
+A fixture estate: two Flask projects sharing one palette (defined in `static/css/site.css`, Bootstrap's minified CSS beside it), one static site with a different palette and a brand-guide PDF, one repository with no tokens and no history, one with an `origin` that does not resolve, and a `code-review/` directory in one. Then:
+
+1. `taller setup` in one pass → every project registered, the stale origin named (criterion 8); the shared palette confirmed as one brand, the PDF offered as the other's source (criterion 9).
+2. `taller project adopt` on one Flask project → `doctor` green; preamble ≤ 800 tokens (criterion 6); authored local content < 2,000 characters (criterion 7); the stylesheet lifted.
+3. `taller project brief` changes ② → one amendment commit; snapshot refreshed; `doctor` still green.
+4. `brand edit` of the shared brand → both Flask projects refreshed, `doctor` green on both.
+
+- [ ] Each task: tests · run failing · implement · commit. Chunk 9 closes Phase A.
