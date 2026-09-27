@@ -108,11 +108,7 @@ def _from_queue(project: Path, prompter: Prompter) -> int:
     way must not duplicate what it already made.
     """
     with locking.project_lock(registry.get_project(project)["name"]):
-        raw = tickets.read_main(project, QUEUE)
-        queue = yaml.safe_load(raw.decode("utf-8")) if raw else None
-        proposed = [str(entry.get("title", "")).strip()
-                    for entry in ((queue or {}).get("proposed") or [])
-                    if isinstance(entry, dict) and str(entry.get("title", "")).strip()]
+        proposed = _queued_titles(project)
         if not proposed:
             prompter.say("The queue is empty: nothing to turn into tickets.")
             return 0
@@ -131,6 +127,24 @@ def _from_queue(project: Path, prompter: Prompter) -> int:
         lines.append(f"  ({skipped} already existed and were skipped.)")
     prompter.say("\n".join(lines))
     return 0
+
+
+def _queued_titles(project: Path) -> list[str]:
+    """The titles `queue.yml` proposes. A file the owner broke is a message, not a trace."""
+    raw = tickets.read_main(project, QUEUE)
+    if not raw:
+        return []
+    try:
+        queue = yaml.safe_load(raw.decode("utf-8"))
+    except (yaml.YAMLError, UnicodeDecodeError) as exc:
+        raise ConfigError(f"{QUEUE} is not valid YAML: {exc}") from exc
+    if queue is None:
+        return []
+    if not isinstance(queue, dict) or not isinstance(queue.get("proposed") or [], list):
+        raise ConfigError(f"{QUEUE} must hold `proposed:` followed by a list of "
+                          f"`- title: ...` entries.")
+    return [str(entry.get("title", "")).strip() for entry in queue.get("proposed") or []
+            if isinstance(entry, dict) and str(entry.get("title", "")).strip()]
 
 
 # --- list and show -----------------------------------------------------------
@@ -165,7 +179,7 @@ def show(args: Any, prompter: Prompter) -> int:
         lines.append(f"  Branch: {ticket['branch']}")
     if ticket.get("issue"):
         lines.append(f"  GitHub issue #{ticket['issue']}")
-    if ticket.get("sync") == "pending":
+    if tickets.effective_sync(project, ticket) == "pending":
         lines.append("  Not pushed to GitHub yet; the next move retries.")
     lines.append(f"  {next_hint(ticket)}")
     raw = tickets.read_main(project, f"{tickets.ticket_dir(ticket)}/notes.md") or b""

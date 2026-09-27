@@ -209,13 +209,15 @@ def _tickets(label: str, repo: Path) -> Check:
 
     name = f"{label}: tickets readable; none left unpushed"
     found, problems = tickets.list_tickets(repo)
-    unpushed = [f"{t['id']:04d}" for t in found if t.get("sync") == "pending"]
+    unpushed = [f"{t['id']:04d}" for t in found
+                if tickets.effective_sync(repo, t) == "pending"]
     if problems:
         return Check(name, FAIL, "; ".join(problems), phase="D",
                      fix="Repair the file on main, or `git revert` the commit that broke it.")
     if unpushed:
         return Check(name, FAIL, f"not pushed: {', '.join(unpushed)}", phase="D",
-                     fix="The push is retried by the next ticket command; check the remote is reachable.")
+                     fix="Check the remote is reachable; the next ticket command pushes "
+                         "everything waiting, and this check then passes.")
     return Check(name, PASS, f"{len(found)} tickets", phase="D")
 
 

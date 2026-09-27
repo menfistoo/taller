@@ -213,4 +213,4 @@ def test_a_ticket_left_unpushed_fails(tmp_home: Path, identity, stub_claude):
 
     check = by_name(doctor.run_checks(), "tickets readable")
     assert check.status == doctor.FAIL and "0001" in check.detail
-    assert "retried" in check.fix
+    assert "remote is reachable" in check.fix

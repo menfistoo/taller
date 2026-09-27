@@ -91,7 +91,18 @@ def _dirs_on_main(project: Path | str) -> list[str]:
     return sorted(name for name in completed.stdout.split() if _DIR.match(name))
 
 
-def _parse(raw: bytes | None, where: str) -> Ticket:
+CHECKPOINT_STATES = ("pending", "approved", "rejected", "skipped")
+
+
+def _parse(raw: bytes | None, where: str, folder: str) -> Ticket:
+    """A `status.yml`, checked against the schema and against its own folder.
+
+    Hand edits are expected - the file is on `main` for anyone to open - so every
+    field the code reads is checked here, and a bad one is a `ConfigError` naming
+    the file rather than a traceback three calls later. The id and slug must
+    match the folder: every write rebuilds the path from them, so a renamed slug
+    would otherwise start a second folder for the same ticket.
+    """
     if raw is None:
         raise ConfigError(f"{where} is missing on {gitio.MAIN_BRANCH}.")
     try:
@@ -100,11 +111,36 @@ def _parse(raw: bytes | None, where: str) -> Ticket:
         raise ConfigError(f"{where} is not valid YAML: {exc}") from exc
     if not isinstance(data, dict):
         raise ConfigError(f"{where} must hold a mapping.")
-    for key in ("id", "slug", "stage"):
-        if key not in data:
-            raise ConfigError(f"{where} has no `{key}`.")
-    if data["stage"] not in STAGES:
-        raise ConfigError(f"{where}: `stage: {data['stage']}` is not one of the twelve.")
+
+    problems: list[str] = []
+    ident, slug = data.get("id"), data.get("slug")
+    if not isinstance(ident, int) or isinstance(ident, bool):
+        problems.append("`id` must be a number")
+    if not isinstance(slug, str) or not slug:
+        problems.append("`slug` must be text")
+    if not problems and f"{ident:04d}-{slug}" != folder:
+        problems.append(f"`id` and `slug` say {ident:04d}-{slug}, but the folder is {folder}")
+    if not isinstance(data.get("title"), str) or not data["title"].strip():
+        problems.append("`title` is missing")
+    if data.get("stage") not in STAGES:
+        problems.append(f"`stage: {data.get('stage')}` is not one of the twelve")
+    if data.get("kind") not in KINDS:
+        problems.append(f"`kind: {data.get('kind')}` is not one of {', '.join(KINDS)}")
+    if data.get("lane") not in (None, *LANE_STAGES):
+        problems.append(f"`lane: {data.get('lane')}` is not fast or full")
+    checkpoints = data.get("checkpoints")
+    if not isinstance(checkpoints, dict) or set(checkpoints) != set(CHECKPOINT_AT) or \
+            any(state not in CHECKPOINT_STATES for state in checkpoints.values()):
+        problems.append("`checkpoints` must give design, review, staging and release "
+                        f"each one of {', '.join(CHECKPOINT_STATES)}")
+    blocked = data.get("blocked")
+    if blocked is not None and (not isinstance(blocked, dict)
+                                or not {"reason", "at_stage", "since"} <= set(blocked)):
+        problems.append("`blocked` must be empty or give reason, at_stage and since")
+    if data.get("sync") not in (None, *gitio.SYNC_STATES):
+        problems.append(f"`sync: {data.get('sync')}` is not ok, local or pending")
+    if problems:
+        raise ConfigError(f"{where}: " + "; ".join(problems) + ".")
     return data
 
 
@@ -119,7 +155,7 @@ def list_tickets(project: Path | str) -> tuple[list[Ticket], list[str]]:
     for name in _dirs_on_main(project):
         where = f"{WORK}/{name}/status.yml"
         try:
-            found.append(_parse(read_main(project, where), where))
+            found.append(_parse(read_main(project, where), where, name))
         except ConfigError as exc:
             problems.append(str(exc))
     found.sort(key=lambda ticket: int(ticket["id"]))
@@ -131,8 +167,23 @@ def load(project: Path | str, ticket_id: int) -> Ticket:
     for name in _dirs_on_main(project):
         if name.startswith(prefix):
             where = f"{WORK}/{name}/status.yml"
-            return _parse(read_main(project, where), where)
+            return _parse(read_main(project, where), where, name)
     raise ConfigError(f"There is no ticket {ticket_id}. `taller ticket list` shows them.")
+
+
+def effective_sync(project: Path | str, ticket: Mapping[str, Any]) -> str | None:
+    """`sync`, corrected for a later push that carried this ticket's commits.
+
+    `pending` is only rewritten when the same ticket is written again, but any
+    ticket's push carries every commit before it. Once `main` is contained in
+    what the remote has (the tracking ref a push updates), the mark is stale.
+    """
+    if ticket.get("sync") != gitio.SYNC_PENDING:
+        return ticket.get("sync")
+    remote_main = f"refs/remotes/{gitio.REMOTE}/{gitio.MAIN_BRANCH}"
+    pushed = gitio.git(project, "merge-base", "--is-ancestor", gitio.MAIN_BRANCH,
+                       remote_main, check=False).returncode == 0
+    return gitio.SYNC_OK if pushed else gitio.SYNC_PENDING
 
 
 def _next_id(project: Path | str) -> int:
@@ -188,9 +239,12 @@ def write(project: Path | str, ticket: Ticket, message: str, *,
         files[f"{folder}/status.yml"] = render_status(ticket)
         state = gitio.commit_to_main(project, files, message)
         if state == gitio.SYNC_PENDING:
+            # Everything again, not only the status: `pending` also means the
+            # first commit may never have reached `main` (a lost compare-and-swap,
+            # 7.3), and the files are whole files, so resending them is harmless.
             ticket["sync"] = gitio.SYNC_PENDING
-            gitio.commit_to_main(project, {f"{folder}/status.yml": render_status(ticket)},
-                                 f"{message} (not pushed yet)")
+            files[f"{folder}/status.yml"] = render_status(ticket)
+            gitio.commit_to_main(project, files, f"{message} (not pushed yet)")
     return ticket
 
 
@@ -292,7 +346,16 @@ def _open_worktree(project: Path, ticket: Ticket) -> None:
     tree = _worktree(project, ticket)
     tree.parent.mkdir(parents=True, exist_ok=True)
     gitio.git(project, "worktree", "prune")
-    gitio.git(project, "worktree", "add", "--quiet", str(tree), branch)
+    if gitio._is_worktree(tree):
+        # Left by an attempt whose write failed after this point: reuse it, or
+        # the ticket could never leave triage again.
+        holds = gitio.git(tree, "symbolic-ref", "--quiet", "--short", "HEAD",
+                          check=False).stdout.strip()
+        if holds != branch:
+            raise ConfigError(f"{tree} is a worktree on {holds or 'a detached HEAD'}, not "
+                              f"{branch}. Remove it (`git worktree remove {tree}`) and retry.")
+    else:
+        gitio.git(project, "worktree", "add", "--quiet", str(tree), branch)
     ticket["branch"] = branch
 
 
@@ -301,21 +364,37 @@ def _merged(project: Path, branch: str) -> bool:
                      check=False).returncode == 0
 
 
-def _clean_up(project: Path, ticket: Ticket, *, delete_unmerged: bool) -> list[str]:
+def _clean_up(project: Path, ticket: Ticket, *, delete_unmerged: bool,
+              strict: bool = False) -> list[str]:
     """Remove the worktree; delete the branch when merged (or when told to).
 
-    Returns what it did, for `notes.md`.
+    Returns what it did, for `notes.md` - what actually happened, not what was
+    attempted. `strict` raises instead: a rejection must not move the ticket on
+    while its rejected branch survives, or the next attempt would build on it
+    (7.6). On Windows a program with its folder open is enough to make removal
+    fail.
     """
     done: list[str] = []
     tree = _worktree(project, ticket)
     if tree.exists():
-        gitio.git(project, "worktree", "remove", "--force", str(tree), check=False)
-        done.append("worktree removed")
+        result = gitio.git(project, "worktree", "remove", "--force", str(tree), check=False)
+        if result.returncode != 0:
+            reason = (result.stderr or result.stdout or "").strip()
+            if strict:
+                raise ConfigError(f"Could not remove the worktree at {tree}: {reason}. "
+                                  f"Close anything using that folder and run the command "
+                                  f"again; nothing has been changed.")
+            done.append(f"worktree not removed ({reason})")
+        else:
+            done.append("worktree removed")
     gitio.git(project, "worktree", "prune", check=False)
     branch = ticket.get("branch")
     if branch and _branch_exists(project, branch):
         if delete_unmerged or _merged(project, branch):
             result = gitio.git(project, "branch", "-D", branch, check=False)
+            if result.returncode != 0 and strict:
+                raise ConfigError(f"Could not delete {branch}: {result.stderr.strip()}. "
+                                  f"Nothing has been changed; run the command again.")
             done.append(f"branch {branch} deleted" if result.returncode == 0
                         else f"branch {branch} kept: {result.stderr.strip()}")
         else:
@@ -439,15 +518,11 @@ def reject(project: Path | str, ticket_id: int, reason: str) -> Ticket:
         stamp = datetime.now().strftime("%Y%m%dT%H%M%S")
         kept = f"{ticket_dir(ticket)}/rejected/{stamp}"
         evidence: dict[str, bytes] = {f"{kept}/reason.md": f"{reason}\n".encode("utf-8")}
-        gates = _worktree(project, ticket) / ticket_dir(ticket) / "gates"
-        if gates.is_dir():
-            for file in sorted(gates.rglob("*")):
-                if file.is_file():
-                    relative = file.relative_to(gates).as_posix()
-                    evidence[f"{kept}/gates/{relative}"] = file.read_bytes()
+        evidence.update({f"{kept}/gates/{relative}": data
+                         for relative, data in _gate_files(project, ticket).items()})
         gitio.commit_to_main(project, evidence, f"ticket {ticket_id:04d}: keep rejected work")
 
-        done = _clean_up(project, ticket, delete_unmerged=True)
+        done = _clean_up(project, ticket, delete_unmerged=True, strict=True)
         ticket.update({"stage": "triage", "branch": None, "chief_session": None,
                        "gates": [], "verdicts": {}, "fix_rounds": 0})
         ticket["checkpoints"]["review"] = "pending"
@@ -456,6 +531,28 @@ def reject(project: Path | str, ticket_id: int, reason: str) -> Ticket:
         return write(project, ticket, f"ticket {ticket_id:04d}: rejected at review",
                      note=f"rejected at ⑦ review: {reason}. Kept under {kept}; "
                           f"{', '.join(done) or 'nothing to clean up'}. Back to ② triage.")
+
+
+def _gate_files(project: Path, ticket: Mapping[str, Any]) -> dict[str, bytes]:
+    """The ticket's verdicts, from the worktree - or from the branch when a killed
+    session took the worktree with it, so §14's evidence survives either way."""
+    gates = _worktree(project, ticket) / ticket_dir(ticket) / "gates"
+    if gates.is_dir():
+        return {file.relative_to(gates).as_posix(): file.read_bytes()
+                for file in sorted(gates.rglob("*")) if file.is_file()}
+    branch = ticket.get("branch")
+    if not branch or not _branch_exists(project, branch):
+        return {}
+    prefix = f"{ticket_dir(ticket)}/gates/"
+    listed = gitio.git(project, "ls-tree", "-r", "--name-only", branch, "--", prefix,
+                       check=False).stdout.split()
+    found: dict[str, bytes] = {}
+    for path in listed:
+        blob = subprocess.run(["git", "-C", str(project), "cat-file", "blob",
+                               f"{branch}:{path}"], capture_output=True)
+        if blob.returncode == 0:
+            found[path[len(prefix):]] = blob.stdout
+    return found
 
 
 def block(project: Path | str, ticket_id: int, reason: str) -> Ticket:
