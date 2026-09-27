@@ -53,7 +53,7 @@ def test_a_fresh_project_passes_every_phase_a_check(project: Path):
     assert failed == []
     skipped_a = [c.name for c in checks if c.status == doctor.SKIP and c.phase == "A"]
     assert skipped_a == [], "a phase A check was skipped"
-    assert {c.phase for c in checks if c.status == doctor.SKIP} == {"B", "C", "D", "F"}
+    assert {c.phase for c in checks if c.status == doctor.SKIP} == {"B", "C", "F"}
 
 
 def test_the_dispatch_runs_without_an_api_key_and_is_cached(project: Path, stub_claude,
@@ -181,3 +181,36 @@ def test_a_dispatch_that_never_answers_fails_in_bounded_time(project: Path, monk
     assert check.status == doctor.FAIL and "abandoned" in check.detail
     assert time.monotonic() - started < 30, "the hung process tree was not ended"
     assert "claude update" in check.fix
+
+
+# --- phase D: tickets --------------------------------------------------------
+
+def test_tickets_that_read_and_are_pushed_pass(project: Path):
+    from taller import tickets
+
+    tickets.create(project, title="First", words="w", kind="idea")
+
+    check = by_name(doctor.run_checks(), "tickets readable")
+    assert check.status == doctor.PASS and check.phase == "D"
+
+
+def test_a_broken_status_yml_fails_the_ticket_check_and_names_it(project: Path):
+    from taller import gitio, tickets
+
+    ticket = tickets.create(project, title="First", words="w", kind="idea")
+    gitio.commit_to_main(project, {f"{tickets.ticket_dir(ticket)}/status.yml": b": : :\n"},
+                         "break it")
+
+    check = by_name(doctor.run_checks(), "tickets readable")
+    assert check.status == doctor.FAIL and "0001-first" in check.detail
+
+
+def test_a_ticket_left_unpushed_fails(tmp_home: Path, identity, stub_claude):
+    from taller import tickets
+
+    project = support.new_project(origin=str(tmp_home / "no-such-remote.git"))
+    tickets.create(project, title="Stuck", words="w", kind="idea")
+
+    check = by_name(doctor.run_checks(), "tickets readable")
+    assert check.status == doctor.FAIL and "0001" in check.detail
+    assert "retried" in check.fix

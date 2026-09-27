@@ -29,7 +29,6 @@ API_KEY_VARIABLES = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
 
 # Spec 15.4's rows that later phases bring. Listed so the report shows them.
 LATER = (
-    ("ticket status files parse; nothing left sync: pending", "D"),
     ("every configured model reachable (last `taller models probe`)", "B"),
     ("billing mode matches the environment; pricing not stale", "B"),
     ("every gate executes; smoke configuration valid", "C"),
@@ -171,6 +170,7 @@ def _project(entry: dict[str, Any]) -> list[Check]:
     checks.append(Check(f"{label}: main worktree present",
                         PASS if gitio._is_worktree(worktree) else FAIL, str(worktree),
                         fix="`taller resolve` recreates it."))
+    checks.append(_tickets(label, repo))
 
     try:
         ruleset = constitution.resolve(repo)
@@ -198,6 +198,25 @@ def _project(entry: dict[str, Any]) -> list[Check]:
     checks.append(_merge_driver(label, repo))
     checks.append(_branches(label, repo, expected))
     return checks
+
+
+def _tickets(label: str, repo: Path) -> Check:
+    """Spec 15.4, phase D: every status.yml parses; nothing left `sync: pending`.
+
+    `local` - no remote at all - is fine. Read from `main`, where tickets live.
+    """
+    from . import tickets
+
+    name = f"{label}: tickets readable; none left unpushed"
+    found, problems = tickets.list_tickets(repo)
+    unpushed = [f"{t['id']:04d}" for t in found if t.get("sync") == "pending"]
+    if problems:
+        return Check(name, FAIL, "; ".join(problems), phase="D",
+                     fix="Repair the file on main, or `git revert` the commit that broke it.")
+    if unpushed:
+        return Check(name, FAIL, f"not pushed: {', '.join(unpushed)}", phase="D",
+                     fix="The push is retried by the next ticket command; check the remote is reachable.")
+    return Check(name, PASS, f"{len(found)} tickets", phase="D")
 
 
 def _on_main(repo: Path, relative: str) -> bytes | None:
