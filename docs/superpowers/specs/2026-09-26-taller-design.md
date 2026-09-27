@@ -996,8 +996,8 @@ depending on which gate happened to find it.
 ---
 overrides:
   - rule:   size.file-too-long
-    scope:  "blueprints/beachclub.py"     # glob, or "*" for project-wide
-    reason: "6,235-line blueprint is being split ticket by ticket; see 0031."
+    scope:  "routes/legacy_report.py"     # glob, or "*" for project-wide
+    reason: "Being split ticket by ticket; see 0031."
     until:  2026-12-31                    # optional
 ---
 

@@ -2508,11 +2508,82 @@ git commit -m "feat(catalogue): install a profile atomically with its modules, n
 
 ---
 
-## Chunks 5–8: written after Chunk 4 is green
+## Chunk 5: Resolution — `overrides.py` and `constitution.py`
+
+The chunk the rest of Phase A waits on. `resolve()` is the contract every later component reads, and the three renderers produce the files the tamper check compares byte-for-byte.
+
+Specified as Tasks 9–10 were: the **contracts, invariants and the decisions that are not obvious**, with the implementation written against them. The tests are the gate.
+
+### Task 12: `overrides.py` (§4.5)
+
+**Files:** `src/taller/overrides.py`, `tests/unit/test_overrides.py`
+
+| # | Invariant | Why it matters |
+|---|---|---|
+| 1 | A suppressed finding is **downgraded to `NIT` and annotated with its reason** — never removed | An override is a decision to ship a known deviation, not to stop knowing about it. It stays visible in the verdict, on the cockpit and in `taller scan`. |
+| 2 | Every rule in the **`security` domain** is non-suppressible, by domain | A security rule added later is protected without anyone remembering to list it |
+| 3 | Every id in the resolved **`non_suppressible`** list is non-suppressible | Append-only config (§4.4), so a project can add but never remove |
+| 4 | An attempt to suppress either is reported at **`BLOCKER`** and suppresses nothing | |
+| 5 | Missing reason and past-`until` get **distinct rule ids** | §15.1 asserts by id; two conditions sharing one id cannot be told apart |
+| 6 | A file with no front matter parses to `[]` | A project with no overrides is the normal case, not an error |
+| 7 | `scope` defaults to `*`; a `scope` that does not match the finding's file does not suppress | |
+
+Rule ids this module reports: `constitution.override-without-reason` (HIGH), `constitution.override-expired` (HIGH), `constitution.override-not-permitted` (BLOCKER), `constitution.unknown-rule-id` (MEDIUM).
+
+**Known limitation to record, not fix:** `fnmatch` does not implement recursive globbing — `**` behaves as `*`, and `*` matches a path separator. For scope matching that is acceptable and slightly permissive in the safe direction, but worth knowing before someone "corrects" it.
+
+- [ ] Write the tests for invariants 1–7 · run them failing · implement · expect **17 passed** · commit `feat(overrides): downgrade what an override covers, refuse what it may not`
+
+### Task 13: `constitution.resolve()` (§4.3, §4.4, §4.4.1)
+
+**Files:** `src/taller/constitution.py`, `tests/unit/test_constitution.py`, plus `config.read_project_config`
+
+Two chains, deliberately separate:
+
+- **Chain 1 — configuration:** hub `taller.yml` → profile → project `taller.yml`, by deep merge. **Nothing in `constitution/` sets configuration**, and a test writes a `thresholds:` block into a slice file to prove it has no effect.
+- **Chain 2 — slice text:** hub modules in profile order → project `constitution/` → project `never.md` **appended**. Prose is only ever appended, so a project cannot delete a hub prohibition; the only way a rule stops applying is an override with a reason.
+
+| # | Invariant |
+|---|---|
+| 1 | The nine slice names of §4.3 and no others; a slice a project does not provide is **absent**, not empty |
+| 2 | `product`, `architecture` and `overrides` are **project-only** — a hub module of that name is ignored, not merged |
+| 3 | `conventions` concatenates several modules **in profile order** (`python` before `js` for `flask-sqlite`) |
+| 4 | A project `never.md` is appended and the hub's prohibitions survive |
+| 5 | Chain 1 merges hub → profile → project, and `paths.security_sensitive` cannot be narrowed |
+| 6 | `RuleSet["models"]` holds **aliases**, so `config.resolve_model` serves both it and `HubConfig` |
+| 7 | `brand: none` yields `brand: None`; a real brand contributes parsed `--tokens` and its `brand.md` prose |
+| 8 | `mode` is `"local"`; `hub_sha` present |
+| 9 | **`resolve()` writes nothing** — asserted by comparing every file's mtime before and after. This purity is what makes §4.6's byte-for-byte check possible. |
+| 10 | An unregistered project, and a profile naming a module the hub lacks, both raise a clear `ConfigError` |
+
+- [ ] Write the tests · run failing · implement · expect **17 passed** · commit `feat(constitution): resolve two chains into a RuleSet, writing nothing`
+
+### Task 14: The three renderers and `load_snapshot` (§4.6, §3.1, §4.2.1)
+
+**Files:** extend `src/taller/constitution.py`; `tests/unit/test_renderers.py`; extract the project-building helper into `tests/support.py` rather than duplicating it.
+
+All three are `RuleSet → bytes`, all pure, all compared byte-for-byte later — so all must be **byte-stable across two calls**, or the tamper check reports a clean repository as modified.
+
+| # | Invariant |
+|---|---|
+| 1 | `render_snapshot` is byte-stable across two calls; LF; valid UTF-8 JSON; sorted keys |
+| 2 | The snapshot **carries the slice text**, because CI cannot see the hub (§4.6) |
+| 3 | A loaded snapshot has `mode == "ci"` |
+| 4 | `render_index` is byte-stable, within its **600-token budget**, and **raises rather than silently exceeding it** |
+| 5 | The index collects each slice's own first `> ` line verbatim, and carries the routing table with `stack`, `never`, `overrides` in the always row |
+| 6 | The index's prose is ≤ 40 lines |
+| 7 | `render_tokens` is a verbatim copy of the brand's file behind a generated-file header, and returns `None` when there is no brand |
+
+**On the token budget.** There is no local tokenizer and a real count costs an API call, so `estimate_tokens` uses `ceil(len(text) / 3.5)` — deliberately pessimistic, so passing the check means the true count is almost certainly lower. The docstring says it is an approximation rather than implying precision.
+
+- [ ] Write the tests · run failing · implement · expect **10 passed** · commit `feat(constitution): byte-stable snapshot, index and token renderers`
+
+---
+
+## Chunks 6–8: written after Chunk 5 is green
 
 | Chunk | Contents | Spec |
 |---|---|---|
-| **5** | `overrides.py` + the non-suppressible predicate; `constitution.py` — both chains, `resolve()`, `render_snapshot`, `render_index`, `render_tokens` | §4.3, §4.4, §4.5, §4.6, §3.1, §4.2.1 |
 | **6** | `gitio.py` — `ensure_main_worktree()`, `commit_to_main()` with no-remote mode and the three `sync` states | §7.3 |
 | **7** | `brands.py` (`from_pdf` first, it is the preferred source), `scaffold.py`, `discovery.py` | §4.2, §4.7, §11.4 |
 | **8** | `cli.py`, the command modules, `doctor.py`, and the greenfield acceptance test of §15.5 | §3.5, §15.4, §15.5 |
