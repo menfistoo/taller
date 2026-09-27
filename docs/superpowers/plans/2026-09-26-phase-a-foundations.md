@@ -2760,10 +2760,168 @@ brand_assets(path) -> {"logos": [...], "favicons": [...], "guides": [...]}
 
 ---
 
-## Chunk 8: written after Chunk 7 is green
+## Chunk 8: The command line, onboarding, `doctor`, and the greenfield proof
 
-| Contents | Spec |
+The part the owner actually touches. Split from adoption on purpose: this chunk ends when **`taller project new` on an empty `HOME` passes `taller doctor`** (§15.5, criteria 1, 2 and 5). Adoption, `brief`, `discover`, the full `setup` and `settings` are chunk 9, which builds on the same wizard.
+
+### Decisions this chunk makes
+
+| Decision | Why |
 |---|---|
-| `cli.py`, the command modules (`setup`, `project new/adopt/brief/show/discover`, `brand new`, `settings`, `doctor`), `doctor.py`, and the greenfield acceptance test | §3.5, §4.7, §11, §15.4, §15.5 |
+| **`argparse`, no CLI framework** | One more dependency buys nothing a thin front end needs (§3.5) |
+| **Taller's own prompts are in English** | The tool ships knowing nothing about its owner (§15.6). The *project's* UI language is an answer, asked, never the tool's |
+| **A `Prompter` interface between questions and the terminal** | The wizard is data plus a loop; the terminal is one implementation and a scripted answer sheet is another. The acceptance test drives the real command, not a copy of it |
+| **Questions are keyed by id, not by order** | A scripted test survives a question being reworded or inserted; an unexpected question fails loudly rather than consuming the wrong answer |
+| **The question list is data in `onboarding.py`**, shared by `new` now and `adopt`/`brief` in chunk 9 | §11.1: one question list, two entry points |
+| **No inference during `project new`** | Every answer is the owner's own words; ⑫ lands in `queue.yml` verbatim (§11.4). Nothing spends the subscription window before the owner has approved anything |
+| **The hub becomes a git repository on first write** and each hub change is one commit | §4.0 calls it versioned; `hub_sha` is recorded on every verdict (§4.4.1). Local only (§13.2) |
 
-The acceptance test is the phase's real exit condition: `project new` against an empty `HOME`, once per catalogue profile, then `doctor` green with nothing skipped that Phase A provides.
+### Task 18: `onboarding.py` — the questions, the answer sheet, the brief
+
+**Files:** `src/taller/onboarding.py`, `src/taller/prompter.py`, `tests/unit/test_onboarding.py`
+
+```python
+Question = {id, round, text, why, kind, choices, default}   # kind: text | choice | yes_no | list
+QUESTIONS: tuple[Question, ...]           # ① … ⑫ of §11.1, ids q1 … q12
+run(name, prompter, *, hub_choices) -> Answers      # one at a time; resumable
+render_brief(name, answers, brand_tokens) -> str     # standalone HTML, escaped, no network
+```
+
+The wizard as the owner sees it, one question at a time:
+
+```
+Round 1 of 4 — what it is
+  ① In one sentence, what does this do?
+  > Tracks which neighbour has borrowed which shared tool.
+  ② What does it deliberately NOT do?
+     (Keeps it from quietly becoming a bigger tool. Nothing in the code can answer this.)
+  > A marketplace: nothing is bought, sold or rented.
+  ③ What must never break?
+  > Knowing who has which tool right now.
+
+Round 2 of 4 — who and where
+  ④ Who uses it?  1) you alone  2) a team with roles  3) the public
+     (Changing this later is a rewrite, so it is asked before any code exists.)
+  > 2
+  ⑤ Reached from where?  1) this machine  2) a private network  3) a VPN  4) the internet  [1]
+  ⑥ Used on a phone? [y/N]
+Round 3 of 4 — data
+  ⑦ What does it store?
+  ⑧ Does any of it involve money, personal data, or credentials? [y/n]
+Round 4 of 4 — shape
+  ⑨ Profile:  1) flask-sqlite (from the catalogue)  2) static-site …  3) python-packaged …
+  ⑩ Brand:    1) none  2) new brand…            (plus every brand in the hub)
+  ⑪ Deploys where?  1) this machine only  2) a server, Docker Compose behind Caddy  [1]
+  ⑫ What is the smallest version that is actually useful to you?
+     One piece of work per line; an empty line ends the list. Three to five is right.
+```
+
+| # | Invariant | Why |
+|---|---|---|
+| 1 | Twelve questions, ids `q1`–`q12`, in §11.1's four rounds; ④ and ⑧ have **no default** | Both are expensive to change later, so neither is answered by pressing Enter |
+| 2 | Every answer is written to `~/.taller-run/onboarding/<name>.yml` **as given**; a restarted `project new <name>` offers to resume and skips answered questions; the file is deleted on completion | §11.3 — a dead session does not restart the interview |
+| 3 | Invalid input re-asks with the reason; it never crashes and never accepts | |
+| 4 | Pickers list the hub first, then the catalogue marked `(from the catalogue)`; the brand picker always offers `none` and `new brand…` | §4.7 — pickers, not typed slugs, and an empty hub still has choices |
+| 5 | `ScriptedPrompter` raises on a question id it has no answer for, and on answers left unused | A test that silently skips a question proves nothing |
+| 6 | The brief is one standalone HTML file: what it is, what it is not, users, what must never break, stack, **the brand swatch**, deploy target, the first pieces of work. Every answer HTML-escaped; no network | §11.1 — reviewed as a page, not as scrollback |
+| 7 | **Nothing is written into the project or the hub before the brief is approved** — only the resume file | §11.1 |
+
+- [ ] Tests · run failing · implement · commit `feat(onboarding): the twelve questions, resumable, and the brief`
+
+### Task 19: `hub.py` and `taller setup` rounds 1 and 5
+
+**Files:** `src/taller/hub.py`, `src/taller/commands/setup.py`, `tests/unit/test_hub.py`, `tests/unit/test_setup.py`
+
+`project new` on a hub with `language: null` runs these two rounds inline first (§11.1); `taller setup` runs them standalone. Rounds 2–4 and 6 (discovery, registration) are chunk 9, because registering an existing repository is adoption.
+
+| # | Invariant | Why |
+|---|---|---|
+| 1 | Round 1 runs `gh auth status` and **reports** — the account, and the exact `gh auth refresh -s <scope>` if `repo` or `workflow` is missing. `gh` absent or signed out is reported, never fatal | A greenfield project needs no GitHub at all (§13.2) |
+| 2 | Round 5 asks code, UI and commit-message language with **no defaults**; `ui` accepts `none` | §4.0, §11.1 |
+| 3 | `billing.mode` is shown as detected, for confirmation; nothing is asked about keys and no key value is read | §5.2 |
+| 4 | `hub.ensure_repo()` initialises `~/.taller` as a local git repository (`-b main`, no remote); `hub.commit(message)` commits every hub change; a hub with nothing changed makes no commit | §4.0, §13.2 |
+| 5 | Language is written to the hub `taller.yml` under the hub lock, preserving every other key | |
+
+- [ ] Tests · run failing · implement · commit `feat(setup): connect and language rounds; the hub is a git repository`
+
+### Task 20: `taller brand new`
+
+**Files:** `src/taller/commands/brand.py`, `tests/unit/test_brand_command.py`
+
+Starting points in §4.2's order — **brand guide PDF first**, then stylesheet, logo, scratch. An extractor's proposal is shown as named tokens the owner can rename, change or drop; scratch asks primary, accent, success/warning/danger, surface, text, body and heading font, spacing unit. Then one line of intent for `brand.md`, then the swatch page opens, then approve / edit / cancel. `write()` only after approval. Reachable standalone and from ⑩'s `new brand…`.
+
+| # | Invariant |
+|---|---|
+| 1 | A PDF with no text layer says so and offers the other starting points, rather than an empty brand |
+| 2 | Cancel writes nothing; approve writes the brand and commits the hub |
+| 3 | A value that `render_tokens_css` would refuse is re-asked, not crashed on |
+
+- [ ] Tests · run failing · implement · commit `feat(brand): guided brand new, guide first, swatch before write`
+
+### Task 21: `taller project new`
+
+**Files:** `src/taller/commands/project.py`, `src/taller/cli.py`, `tests/unit/test_project_new.py`
+
+`taller project new <name> [--path DIR] [--no-open]`: setup rounds 1+5 if the hub needs them → the twelve questions → the brief (opened in the browser unless `--no-open`; printed as text too) → **approve / edit one answer / cancel** → `scaffold.create_project()` → a closing report:
+
+```
+Created toolshed at C:\...\toolshed   (branch main, 2 commits, not pushed: no remote)
+  Profile flask-sqlite · brand harbour · UI language es
+  Queue: 3 proposed pieces of work — `taller project show` lists them
+  Next: cd toolshed && python -m pytest -q
+```
+
+`--path` defaults to the parent of the current directory's repository if inside one, else the current directory (§4.7 round 2's guess). `gh repo create --private` is offered **only** as a final yes/no, default **no** (§11.4, §13.2).
+
+| # | Invariant |
+|---|---|
+| 1 | `cli.py` holds argument parsing only; every verb is a function taking a `Prompter`, callable without argv |
+| 2 | Edit returns to one question by number and back to the brief; cancel keeps the resume file and says how to resume |
+| 3 | A `ConfigError`/`GitError` prints its message and exits 2 — no traceback for an expected failure; anything else is a bug and keeps its traceback |
+| 4 | No remote is created unless the final question is answered yes |
+
+- [ ] Tests · run failing · implement · commit `feat(project): guided project new, brief before anything is written`
+
+### Task 22: `doctor.py` and `taller doctor`
+
+**Files:** `src/taller/doctor.py`, `src/taller/commands/doctor.py`, `tests/unit/test_doctor.py`
+
+`Check = {name, status: pass|fail|skip, detail, phase}`. Every §15.4 row appears; rows of unbuilt phases are `skip` with the phase that brings them. Exit 1 on any `fail`.
+
+| §15.4 check (Phase A) | Implementation |
+|---|---|
+| CLI present, ≥ `cli_min_version`, every mapped flag accepted | `cli_probe.probe()` |
+| Trivial dispatch succeeds with no API key set | `infer()` in bootstrap mode, API-key variables removed from its environment. **Cached for 24 h** in `~/.taller-run/doctor-dispatch.json`; `--live` forces it |
+| Every hub profile names only modules the hub has | `catalogue.missing_modules` |
+| `language` set for every registered project | chain 1 per project |
+| `resolve()` succeeds; no unreasoned, expired or non-permitted override | `overrides.apply([], ruleset)` findings |
+| `resolved.json`, `00-index.md`, brand tokens byte-identical to in-memory renders, **read from `main`** | `git cat-file`; skip tokens with reason when brand is `none` |
+| `00-index.md` within 600 tokens | `estimate_tokens` |
+| `merge.ours.driver` configured | `git config` |
+| No lock left by a dead process | reports, never deletes |
+| No ticket branch carries its own generated files | `git log main..<branch> --name-only` |
+| Registry valid; every path exists; every `main` worktree present | registry + `gitio` |
+
+| # | Invariant |
+|---|---|
+| 1 | **Doctor writes nothing** — mtimes of hub, project and run dir unchanged, except the dispatch cache |
+| 2 | Each failure names the fix (`taller resolve`, `git config merge.ours.driver true`, …) |
+| 3 | A tampered `resolved.json` on `main` fails the byte check; an untracked edit in the working tree does not — the check reads `main` |
+
+- [ ] Tests · run failing · implement · commit `feat(doctor): every phase A check, skipped-with-reason for the rest`
+
+### Task 23: The proof — §15.5, and criteria 1 and 5
+
+**Files:** `tests/acceptance/test_greenfield.py`, `tests/acceptance/test_empty_hub.py`, `tests/domain_vocabulary.txt`
+
+1. **Greenfield, once per profile:** empty `HOME`, stub `claude` on `PATH`, `ScriptedPrompter` answering setup rounds 1+5, the twelve questions and approval → `cli.main(["project", "new", …])` exits 0 → `cli.main(["doctor"])` exits 0 with **no phase-A check skipped** (the token check may skip only when the brand is `none`) → `queue.yml` holds ⑫ → the manifest omissions of §15.5 step 6 held → the generated project's own tests pass.
+2. **A fresh hub is empty:** no brand, profile, module or project, `language` null — before and after `taller doctor`.
+3. **Vocabulary:** no **tracked** file contains a word from `tests/domain_vocabulary.txt` (whole words, case-insensitive), excluding the list itself, `tests/fixtures/`, and `docs/` — the design documents cite a real estate as evidence (Appendix A) and are not shipped.
+
+- [ ] Write · run · commit `test(acceptance): greenfield on an empty hub, per profile, doctor green`
+
+### Deferred to chunk 9
+
+`project adopt` (derive facts, lift tokens, the six-to-eight question path), `project brief` (answers as amendments), `project discover` and `setup` rounds 2–4 and 6, `project show`, `settings show|set|edit`, `brand edit`, a guided `create new…` profile, and the adoption acceptance test.
+
+**Noted for phase F:** the scaffold's `docker-compose.staging.yml` is standalone; §13.1 runs it as an overlay on the main compose file with `./data-staging/`. Settled with the rest of staging.
