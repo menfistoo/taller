@@ -362,3 +362,63 @@ def test_a_cwd_that_does_not_exist_is_refused(tmp_home, stub_claude, tmp_path):
     directory, and the dispatch then ran against nothing and reported success."""
     with pytest.raises(inference.InferenceError, match="not a directory"):
         inference.infer(_bootstrap_dispatch(cwd=tmp_path / "does-not-exist"))
+
+
+def test_a_role_is_briefed_with_only_its_own_slices(tmp_home):
+    """Spec 3.6.0. An earlier version concatenated every slice, so a UX gate was
+    briefed with the security and product slices too.
+
+    Asserted against `_brief` directly rather than against argv, because the
+    briefing is a single multi-line argument and the Windows `.cmd` stub shim
+    cannot carry a newline: cmd.exe re-parses `%*`, and a newline terminates a
+    command line. The real binary is spawned without a shell and receives it
+    intact, so this is a limit of the harness, not of the product. The separate
+    test below covers the argv plumbing.
+    """
+    ruleset = {
+        "slices": {
+            "ux": {"text": "UX-SLICE"},
+            "brand": {"text": "BRAND-SLICE"},
+            "conventions": {"text": "CONV-SLICE"},
+            "security": {"text": "SECURITY-SLICE"},
+            "product": {"text": "PRODUCT-SLICE"},
+        },
+    }
+    dispatch = _bootstrap_dispatch(role="gate_ux", ruleset=ruleset)
+    brief = inference._brief(dispatch)
+
+    assert "UX-SLICE" in brief
+    assert "BRAND-SLICE" in brief
+    assert "CONV-SLICE" in brief
+    assert "SECURITY-SLICE" not in brief, "gate_ux was briefed with the security slice"
+    assert "PRODUCT-SLICE" not in brief, "gate_ux was briefed with the product slice"
+
+
+def test_a_missing_slice_is_skipped_not_an_error(tmp_home):
+    """A project need not provide every slice."""
+    dispatch = _bootstrap_dispatch(role="gate_ux", ruleset={"slices": {"ux": {"text": "ONLY-UX"}}})
+    assert inference._brief(dispatch) == "ONLY-UX"
+
+
+def test_the_briefing_reaches_append_system_prompt(tmp_home, stub_claude):
+    """The argv plumbing, with a single-line briefing the shim can carry."""
+    inference.infer(_bootstrap_dispatch(role="gate_ux", system="ONE-LINE-BRIEF"))
+    flags = stub_claude.flags()
+    assert "--append-system-prompt" in flags
+    assert "ONE-LINE-BRIEF" in flags
+
+
+def test_a_ruleset_dispatch_resolves_its_model(tmp_home, stub_claude):
+    """RuleSet["models"] holds aliases, exactly like HubConfig, so one resolver
+    serves both. An earlier spec comment said otherwise and this raised."""
+    ruleset = {
+        "slices": {},
+        "models": config.SHIPPED_DEFAULTS["models"],
+        "model_aliases": config.SHIPPED_DEFAULTS["model_aliases"],
+        "effort": config.SHIPPED_DEFAULTS["effort"],
+        "concurrency": config.SHIPPED_DEFAULTS["concurrency"],
+        "paths": {"tests_dir": "tests"},
+    }
+    result = inference.infer(_bootstrap_dispatch(role="gate_security", ruleset=ruleset))
+    assert result.ok
+    assert "--model opus" in stub_claude.flags()

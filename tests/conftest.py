@@ -37,6 +37,12 @@ def stub_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     bindir.mkdir()
     source = Path(__file__).parent / "stub_claude.py"
 
+    # Known limit of this shim: on Windows a .cmd is run through cmd.exe, which
+    # re-parses `%*`. A newline cannot survive a cmd.exe command line, so an argv
+    # value containing one (the multi-line role briefing) arrives truncated. The
+    # real binary is spawned without a shell and receives it intact. Assert
+    # multi-line content against the pure function that builds it, and use argv
+    # assertions only for single-line values.
     if sys.platform == "win32":
         # A .cmd shim, because Windows will not execute a bare .py from PATH.
         shim = bindir / "claude.cmd"

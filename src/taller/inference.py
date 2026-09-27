@@ -344,12 +344,19 @@ def _build(dispatch: Dispatch, executable: str) -> tuple[list[str], Path]:
 
 
 def _brief(dispatch: Dispatch) -> str:
-    """The role's slices, concatenated. Effort travels as --effort, not as prose."""
+    """Only THIS role's slices (spec 3.6.0). Effort travels as --effort, not prose.
+
+    An earlier version concatenated every slice in the RuleSet, so a UX gate was
+    briefed with the security and product slices too — wasteful, confusing, and it
+    quietly gave up the context saving the whole design is built on.
+    """
     slices = (dispatch.ruleset or {}).get("slices") or {}
-    parts = [
-        resolved["text"] if isinstance(resolved, dict) else str(resolved)
-        for resolved in slices.values()
-    ]
+    parts = []
+    for name in role_slices(dispatch.role):
+        resolved = slices.get(name)
+        if not resolved:
+            continue                    # a slice this project does not provide
+        parts.append(resolved["text"] if isinstance(resolved, dict) else str(resolved))
     return "\n\n".join(p for p in parts if p)
 
 
@@ -460,3 +467,30 @@ def _acquire_slot(pool_dir: Path, limit: int, timeout: float = 300.0):
                 f"{timeout:g}s ({limit} slot(s))."
             )
         time.sleep(0.05)
+
+
+# Spec 3.6.0's role -> slices map. Defined here because `_brief` is the only
+# consumer. A gate briefed with three slices instead of nine is the difference
+# between the design's token claim and a slogan.
+ROLE_SLICES: dict[str, tuple[str, ...]] = {
+    "chief": ("stack", "never", "overrides"),
+    "scribe": ("product",),
+    "explorer": ("architecture",),
+    "architect": ("product", "architecture", "conventions", "never", "overrides"),
+    "implementer": ("stack", "architecture", "conventions", "brand", "ux",
+                    "never", "overrides"),
+    "fixer": ("stack", "architecture", "conventions", "brand", "ux",
+              "never", "overrides"),
+    "gate_security": ("security", "never", "overrides"),
+    "gate_quality": ("conventions", "architecture", "never", "overrides"),
+    "gate_ux": ("ux", "brand", "conventions", "never", "overrides"),
+    "summariser": ("product",),
+}
+
+
+def role_slices(role: str) -> tuple[str, ...]:
+    """The slice names that brief a role. Raises rather than briefing with nothing."""
+    try:
+        return ROLE_SLICES[role]
+    except KeyError as exc:
+        raise InferenceError(f"No slice set defined for role {role!r}.") from exc

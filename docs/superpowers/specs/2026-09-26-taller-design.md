@@ -437,6 +437,33 @@ inside a subagent turn where `structured_output` does not reach.
 machine, so a ticket's conversation is reachable from its worktree. Taller does not
 pre-generate uuids with `--session-id`, because a captured id cannot collide.
 
+### 3.6.0 Which slices brief which role
+
+`Dispatch.system` defaults to "the role's slices from `ruleset`" (§3.6), and nothing
+defined which those were — so a UX gate would have been briefed with the security
+and product slices as well, which is both wasteful and confusing. §3.1's routing
+table answers a different question (what the *chief* loads for a kind of work).
+
+| Role | Slices |
+|---|---|
+| `chief` | `stack`, `never`, `overrides`, plus whatever §3.1's routing table adds for the work in hand |
+| `scribe` | `product` — enough to phrase the ticket in the project's own terms |
+| `explorer` | `architecture` — it needs the layers to know where to look |
+| `architect` | `product`, `architecture`, `conventions`, `never`, `overrides` |
+| `implementer` · `fixer` | `stack`, `architecture`, `conventions`, `brand`, `ux`, `never`, `overrides` |
+| `gate_security` | `security`, `never`, `overrides` |
+| `gate_quality` | `conventions`, `architecture`, `never`, `overrides` |
+| `gate_ux` | `ux`, `brand`, `conventions`, `never`, `overrides` |
+| `summariser` | `product` |
+
+`never` and `overrides` reach every role that can change or judge code, for the same
+reason §3.1 always loads them: a prohibition or a suppression a dispatch cannot see
+has no effect. A slice a project does not provide is simply absent — a missing key,
+not an error.
+
+This is also where G1 is actually earned. A gate briefed with three slices instead
+of nine is the difference between the design's token claim and a slogan.
+
 ### 3.6.1 Tool allowlists, and how `forbidden` renders
 
 **Every role's allowlist is fixed and written down here**, because §15.1 asserts on
@@ -867,7 +894,7 @@ RuleSet = {
     "smoke":      {str: object},                 # §9.6
     "thresholds": {str: int},
     "model_aliases": {alias: model_id},          # §4.4.1 — needed to map `fallback`
-    "models":     {role: model_id},              # aliases already resolved
+    "models":     {role: alias},                 # an ALIAS, as in HubConfig
     "fallback":   alias,
     "effort":     {role: str},                   # includes a "default" key
     "billing":    {"mode": str},                 # §5.2
@@ -917,6 +944,12 @@ HubConfig = {
 `load_hub_config() -> HubConfig` reads `~/.taller/taller.yml` and nothing else. It
 succeeds on a completely empty hub, where `language` is `None` and every other key
 carries its shipped default.
+
+**`RuleSet["models"]` holds aliases, not model ids** — identically to `HubConfig`,
+so one resolver (`role → alias → model`) serves both and `model_aliases` stays the
+single place a concrete model name appears (§5.1). An earlier draft annotated it
+"aliases already resolved", which would have needed a second resolver and made the
+first ruleset-based dispatch fail.
 
 **`RuleSet` embeds a resolved `HubConfig`,** so the two paths differ only in whether
 project layers were merged on top. `RuleSet` therefore also carries
