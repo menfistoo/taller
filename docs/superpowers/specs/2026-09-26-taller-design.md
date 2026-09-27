@@ -645,7 +645,10 @@ by your choice, from the catalogue or from discovery (§4.7):
 ~/.taller/                         git repository — versioned content ONLY
 ├── taller.yml                     DEFAULT config: models, effort, budget,
 │                                  thresholds, language, weights, paths floor
-├── projects.json                  registry: path, profile, brand, last seen
+├── projects.json                  registry: path, profile, brand, last seen.
+│                                  GIT-IGNORED: its paths are machine-local, and
+│                                  versioned, every registration would move HEAD
+│                                  and mark every other snapshot stale (§4.6)
 ├── brands/
 │   ├── <your-brand>/
 │   │   ├── tokens.css             THE source of truth for colour + font VALUES
