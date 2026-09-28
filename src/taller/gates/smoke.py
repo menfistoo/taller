@@ -37,6 +37,8 @@ REQUEST_TIMEOUT_S = 15
 TAIL_LINES = 30
 TEMPLATE_SUFFIXES = (".html", ".htm", ".j2", ".jinja", ".jinja2")
 _VARIABLE = re.compile(r"\$\{?([A-Z_][A-Z0-9_]*)\}?")
+# "Running on http://127.0.0.1:5000", and the same shape from other frameworks.
+_PORT_TAKEN = re.compile(r"(?:127\.0\.0\.1|localhost|0\.0\.0\.0|\[::\]):(\d{2,5})")
 
 
 def run(worktree: Path | str, ruleset: Mapping[str, Any], *,
@@ -79,6 +81,12 @@ def problems(config: Any) -> list[str]:
             found.append("smoke.boot is empty: nothing to start")
         wiring = " ".join([str(config.get("boot") or ""), str(config.get("ready") or ""),
                            *(str(v) for v in (config.get("env") or {}).values())])
+        ready = str(config.get("ready") or "")
+        fixed = _PORT_TAKEN.search(ready)
+        if fixed and "TALLER_SMOKE_PORT" not in ready:
+            found.append(f"smoke.ready polls a fixed port ({fixed.group(1)}) instead of the "
+                         f"one the gate allocates, so nothing would answer there; use "
+                         f"`ready: auto`, or $TALLER_SMOKE_PORT in the URL")
         if "TALLER_SMOKE_PORT" not in wiring:
             # Without it the app binds its own port - on Windows even the one the
             # owner's dev server holds - and smoke may talk to the wrong process.
@@ -162,10 +170,7 @@ def _http(worktree: Path, project: Path, config: Mapping[str, Any],
                     "Run the boot command by hand and read the error."))
                 return verdict(GATE, findings, metrics)
             if state == "timeout":
-                findings.append(finding(
-                    "smoke.timeout", "", 0,
-                    f"The app did not answer 200 at {ready} within {timeout_s:g} s.\n"
-                    f"{_tail(log_path)}", None))
+                findings.append(_timed_out(log_path, ready, port, timeout_s))
                 return verdict(GATE, findings, metrics)
 
             base = f"http://127.0.0.1:{port}"
@@ -187,6 +192,29 @@ def _http(worktree: Path, project: Path, config: Mapping[str, Any],
             log_path.unlink(missing_ok=True)
         except OSError:
             pass
+
+
+def _timed_out(log_path: Path, ready: str, port: int, timeout_s: float) -> Finding:
+    """Nothing answered. An app that announced another port took its own, so say which.
+
+    Most frameworks print the address they bound. When that is not the port the gate
+    allocated, the app is ignoring $TALLER_SMOKE_PORT - a different problem from a
+    slow start, and one the owner can fix in a line. Found the hard way: a project
+    whose boot script had 5000 written into it (2026-09-28).
+    """
+    tail = _tail(log_path)
+    took = [taken for taken in _PORT_TAKEN.findall(tail) if taken != str(port)]
+    if took:
+        return finding(
+            "smoke.timeout", "", 0,
+            f"The app started on port {took[0]}, not the port Taller allocated ({port}): "
+            f"it is not reading $TALLER_SMOKE_PORT, so nothing answered at {ready}.\n{tail}",
+            'Have the boot command use the port: in a Flask project, '
+            'port=int(os.environ.get("PORT", "5000")) in run_local.py, with '
+            'env: {PORT: "$TALLER_SMOKE_PORT"} in the smoke settings.')
+    return finding("smoke.timeout", "", 0,
+                   f"The app did not answer 200 at {ready} within {timeout_s:g} s.\n{tail}",
+                   None)
 
 
 def _wait_ready(process: subprocess.Popen, url: str, deadline: float,

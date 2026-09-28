@@ -163,6 +163,16 @@ def _profiles() -> list[Check]:
             f"missing: {', '.join(missing)}" if missing else "",
             fix="Restore the module files, or `taller setup`." if missing else "",
         ))
+        # An installed profile is never overwritten, so a Taller that gains a
+        # setting leaves this hub without it until the owner asks for it.
+        gaps = catalogue.profile_gaps(name)
+        checks.append(Check(
+            f"profile {name} is current with this version of Taller",
+            FAIL if gaps else PASS,
+            f"predates this Taller; it has no {', '.join(gaps)}" if gaps else "",
+            fix=f"`taller profiles update {name}` adds them and keeps your own edits."
+                if gaps else "",
+        ))
     return checks
 
 

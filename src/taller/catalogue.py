@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -88,6 +89,69 @@ def installed_profiles() -> list[str]:
     if not paths.profiles().is_dir():
         return []
     return sorted(p.stem for p in paths.profiles().glob("*.yml"))
+
+
+def profile_gaps(name: str) -> list[str]:
+    """Settings this Taller's profile has that the hub's installed copy lacks.
+
+    An installed profile is never overwritten - it is the owner's, and may hold her
+    own edits (`install_profile`) - so a Taller that gains a setting leaves every
+    existing hub without it. That is deliberate but it must not be silent: it
+    surfaced once as a blocked ticket whose smoke check could not run. A key the
+    owner has *changed* is hers and is not a gap; only a key she has never had is.
+
+    Dotted paths, in the shipped profile's order, e.g. `smoke.env.PORT`.
+    """
+    try:
+        shipped, installed = read_profile(name), read_hub_profile(name)
+    except ConfigError:
+        return []                       # not installed, or not a catalogue profile
+    return _missing_keys(shipped, installed, prefix="")
+
+
+def _missing_keys(shipped: Any, installed: Any, *, prefix: str) -> list[str]:
+    if not isinstance(shipped, dict):
+        return []
+    out: list[str] = []
+    for key, value in shipped.items():
+        where = f"{prefix}{key}"
+        if not isinstance(installed, dict) or key not in installed:
+            leaves = _missing_keys(value, None, prefix=f"{where}.")
+            out.extend(leaves or [where])
+        else:
+            out.extend(_missing_keys(value, installed[key], prefix=f"{where}."))
+    return out
+
+
+def merge_into_hub_profile(name: str) -> list[str]:
+    """Add the settings the hub's copy lacks, keeping every value it already has.
+
+    Returns the dotted paths added. The owner's edits survive: only keys absent
+    from her copy are written, never a value she has changed.
+    """
+    added = profile_gaps(name)
+    if not added:
+        return []
+    shipped, installed = read_profile(name), read_hub_profile(name)
+    merged = _fill(shipped, installed)
+    with locking.hub_lock():
+        locking.atomic_write_text(
+            hub_profile_path(name),
+            yaml.safe_dump(merged, allow_unicode=True, sort_keys=False))
+    return added
+
+
+def _fill(shipped: Any, installed: Any) -> Any:
+    """`installed`, plus anything `shipped` has that it does not."""
+    if not isinstance(shipped, dict) or not isinstance(installed, dict):
+        return installed
+    out = dict(installed)
+    for key, value in shipped.items():
+        if key not in out:
+            out[key] = value
+        else:
+            out[key] = _fill(value, out[key])
+    return out
 
 
 def hub_profile_path(name: str) -> Path:

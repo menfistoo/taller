@@ -33,6 +33,14 @@ Use `--color-primary` for chrome and `--color-accent` for a single call to actio
 """
 
 
+def git(repo: Path, *args: str) -> str:
+    """`git` in a repository, as text. Raises on failure."""
+    import subprocess
+
+    return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True,
+                          encoding="utf-8", check=True).stdout
+
+
 def write(path: Path, text: str) -> Path:
     """UTF-8, LF, parents created. The only way this module writes a file."""
     path.parent.mkdir(parents=True, exist_ok=True)

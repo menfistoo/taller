@@ -121,6 +121,16 @@ def build_parser() -> argparse.ArgumentParser:
     models_verbs.add_parser("probe", help="ask each model one trivial question").add_argument(
         "--model", action="append", help="probe only this model (repeatable)")
 
+    profiles_parser = verbs.add_parser("profiles", help="the hub's profiles, and keeping "
+                                                      "them current")
+    profiles_verbs = profiles_parser.add_subparsers(dest="action", required=True,
+                                                    metavar="action")
+    profiles_verbs.add_parser("list", help="which profiles this hub has, and whether each "
+                                          "is current")
+    profiles_update = profiles_verbs.add_parser(
+        "update", help="add the settings a newer Taller brought, keeping your own edits")
+    profiles_update.add_argument("name", help="the profile, as `taller profiles list` names it")
+
     resolve = verbs.add_parser("resolve", help="regenerate a project's generated files")
     resolve.add_argument("path", nargs="?", help="the project (default: the one you are in)")
 
@@ -149,8 +159,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _handler(args: argparse.Namespace) -> Handler:
-    from .commands import (amend, brand, doctor, hook, models, project, resolve, scan,
-                           settings, setup, ticket)
+    from .commands import (amend, brand, doctor, hook, models, profiles, project, resolve,
+                           scan, settings, setup, ticket)
 
     table: dict[tuple[str, str | None], Handler] = {
         ("setup", None): setup.run,
@@ -175,6 +185,8 @@ def _handler(args: argparse.Namespace) -> Handler:
         ("ticket", "resume"): ticket.resume,
         ("ticket", "close"): ticket.close,
         ("models", "probe"): models.probe,
+        ("profiles", "list"): profiles.list_,
+        ("profiles", "update"): profiles.update,
         ("resolve", None): resolve.run,
         ("scan", None): scan.run,
         ("amend", None): amend.run,

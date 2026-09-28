@@ -26,6 +26,8 @@ log = os.environ.get("HITS")
 if mode == "crash":
     sys.stderr.write("Traceback: the app could not start\\n")
     sys.exit(3)
+if mode == "slow":
+    time.sleep(600)             # never answers, and says nothing about a port
 if mode == "hang":
     child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"])
     open(os.environ["CHILD_PID"], "w").write(str(child.pid))
@@ -70,7 +72,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-http.server.HTTPServer(("127.0.0.1", int(os.environ["PORT"])), Handler).serve_forever()
+port = 5000 if mode == "wrongport" else int(os.environ["PORT"])
+server = http.server.HTTPServer(("127.0.0.1", port), Handler)
+# Real frameworks announce the port they took; the gate reads this when it cannot
+# reach the one it allocated.
+print("Running on http://127.0.0.1:" + str(port), flush=True)
+server.serve_forever()
 '''
 
 
