@@ -68,7 +68,7 @@ def test_each_command_has_frontmatter_and_only_taller_bash(verb):
 def test_each_command_runs_its_own_taller_verb(verb, command):
     _, body = front_matter(ROOT / "commands" / f"{verb}.md")
 
-    assert command in body.replace("--answers <answers file> ", "")
+    assert command in body
 
 
 @pytest.mark.parametrize("verb", ["new", "approve", "resume"])
@@ -82,7 +82,7 @@ def test_long_runs_go_to_the_background(verb):
 def test_every_command_handles_needs(verb):
     _, body = front_matter(ROOT / "commands" / f"{verb}.md")
 
-    assert "--answers" in body and "NEEDS" in body
+    assert "taller answer" in body and "NEEDS" in body
 
 
 def test_the_hook_calls_the_cli():

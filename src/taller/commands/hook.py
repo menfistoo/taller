@@ -23,9 +23,17 @@ BRIEFING_MAX = 4000          # §3.1's ~500-token briefing, plus the open ticket
 INDEX = ".taller/constitution/00-index.md"
 
 
+def read_event() -> Any:
+    """Claude Code sends UTF-8; Windows' stdin would decode it in the ANSI code page,
+    and an accented folder would then match no project (plugin review, I6)."""
+    stream = getattr(sys.stdin, "buffer", None)
+    raw = stream.read().decode("utf-8") if stream is not None else sys.stdin.read()
+    return json.loads(raw or "{}")
+
+
 def session_start(args: Any, prompter: Prompter) -> int:
     try:
-        event = json.loads(sys.stdin.read() or "{}")
+        event = read_event()
         text = briefing(Path(event["cwd"])) if isinstance(event, dict) and \
             event.get("cwd") else ""
     except Exception:                    # a hook never breaks the session it serves

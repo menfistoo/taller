@@ -26,6 +26,7 @@ FIELDS = ("input", "cache_write", "cache_read", "output")
 TRANSCRIPT_FIELDS = {"input_tokens": "input", "cache_creation_input_tokens": "cache_write",
                      "cache_read_input_tokens": "cache_read", "output_tokens": "output"}
 TRANSCRIPTS_ROOT: Path | None = None      # None: ~/.claude/projects
+PRINT_MODE = "sdk-cli"                     # a transcript's entrypoint for `claude -p`
 
 
 def weighted(by_model: Mapping[str, Mapping[str, int]], weights: Mapping[str, float]) -> int:
@@ -107,6 +108,10 @@ def _count(line: str, branch: str, known: set[str], seen: set[str],
         return
     if not isinstance(entry, dict) or entry.get("type") != "assistant" \
             or entry.get("gitBranch") != branch or entry.get("sessionId") in known:
+        return
+    # `claude -p` writes "sdk-cli": Taller's own dispatches, including the killed or
+    # failed ones whose session id was never folded (plugin review, I4).
+    if entry.get("entrypoint") == PRINT_MODE:
         return
     message = entry.get("message") or {}
     usage, model, key = message.get("usage"), message.get("model"), message.get("id")

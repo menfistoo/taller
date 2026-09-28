@@ -86,10 +86,11 @@ def test_the_answer_from_the_file_is_used(home, sheet, tmp_path, monkeypatch):
     assert tickets.load(project, 1)["kind"] == "bug"
 
 
-def test_without_a_terminal_taller_asks_for_answers_instead_of_hanging(home, monkeypatch,
-                                                                        capsys):
+def test_inside_a_chat_taller_asks_for_answers_instead_of_hanging(home, monkeypatch,
+                                                                   capsys):
     project = support.new_project()
     monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    monkeypatch.setenv("CLAUDECODE", "1")                  # a Claude Code chat's shell
 
     code = cli.main(["ticket", "new", "--path", str(project)])
 

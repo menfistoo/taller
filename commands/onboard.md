@@ -1,34 +1,43 @@
 ---
 description: Set Taller up, then create a new project with it or bring an existing repository in
 argument-hint: new <name>, or adopt <path>
-allowed-tools: Bash(taller setup:*), Bash(taller doctor:*), Bash(taller project new:*), Bash(taller project adopt:*), Bash(taller --answers:*)
+allowed-tools: Bash(taller setup:*), Bash(taller doctor:*), Bash(taller project new:*), Bash(taller project adopt:*), Bash(taller answer:*)
 ---
 
 The owner wants: $ARGUMENTS
 
 If it is not clear whether they want a new project or to bring an existing repository
-in, ask.
+in, ask. For a new project, confirm with the owner where it should be created.
 
-Every step below uses an answers file: `taller-answers-onboard.json` in your temporary
-directory. When Taller prints `NEEDS <id>` and exits with code 3, it is asking the owner
-something. Ask the owner that question in plain words - explain any term they may not
-know, and offer the choices Taller listed - then add `"<id>": "<answer>"` to the file (a
-list of strings when it asks for several lines) and run the same command again. Answers
-are kept between runs, so repeating a command does not start over.
-
-1. `taller doctor` shows whether Taller is set up. If it is not, run
-   `taller --answers <answers file> setup` until it finishes.
+1. `taller doctor` shows whether Taller is set up. If it is not, run `taller setup`.
 
 2. For a new project:
 
-   `taller --answers <answers file> project new <name> --no-open`
+   `taller project new <name> --path <the folder it goes in> --no-open`
 
    For an existing repository:
 
-   `taller --answers <answers file> project adopt <path> --no-open`
+   `taller project adopt <path> --no-open`
 
-3. Taller shows a brief before it writes anything. Read it to the owner in plain words
-   and let them approve it or change an answer; their choice is the `brief` answer.
+   Taller asks the onboarding questions one at a time. Explain any term the owner may
+   not know, and offer the choices Taller lists. Taller shows a brief before it writes
+   anything: read it to the owner in plain words and let them approve it or change an
+   answer.
+
+3. When Taller prints `NEEDS <id>` and exits with code 3, it needs an answer only the
+   owner can give. Ask the owner the question it printed, in plain words, then record
+   their answer and run the same command again:
+
+   `taller answer <id> "<the answer>"`
+
+   (one quoted argument per line when the question asks for several lines). Taller
+   keeps these answers for this one command and forgets them when it finishes. If it
+   says the question comes again in this run, record the owner's answer for this time
+   the same way.
+
+   If Taller says it is busy because another process is still working (usually a ticket
+   run in the background), wait for that run to finish, then try again. Never remove or
+   edit Taller's lock files.
 
 4. When it finishes, tell the owner what was created and that `/taller:new` starts the
    first ticket.

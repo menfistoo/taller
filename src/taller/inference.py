@@ -219,8 +219,7 @@ def infer(dispatch: Dispatch, executable: str = "claude") -> Result:
                 errors="replace",
                 cwd=str(cwd),
                 timeout=dispatch.timeout,
-                env=({k: v for k, v in os.environ.items() if k not in dispatch.unset_env}
-                     if dispatch.unset_env else None),
+                env=_environment(dispatch),
             )
         except subprocess.TimeoutExpired:
             return Result(
@@ -290,6 +289,20 @@ def infer(dispatch: Dispatch, executable: str = "claude") -> Result:
         usage=_usage(payload),
         cost_usd=payload.get("total_cost_usd"),
     )
+
+
+# What a Claude Code chat's shell carries about that chat. A dispatch started from
+# the chat (the plugin's `taller ticket run`) must be a standalone `claude -p`, not
+# a child of the chat's session (plugin review, I7).
+HOST_SESSION = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID",
+                "CLAUDE_CODE_HOST_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION",
+                "CLAUDE_CODE_SESSION_ATTENDED", "CLAUDE_CODE_MESSAGING_SOCKET",
+                "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_PID")
+
+
+def _environment(dispatch: "Dispatch") -> dict[str, str]:
+    drop = set(HOST_SESSION) | set(dispatch.unset_env)
+    return {k: v for k, v in os.environ.items() if k not in drop}
 
 
 def _run_bounded(argv: list[str], *, input: str, encoding: str, errors: str, cwd: str,

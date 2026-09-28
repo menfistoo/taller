@@ -38,5 +38,8 @@ its rules, and its open tickets.
 - Long runs (a ticket's build, its checks) run in the background; the chat tells you
   when they finish. They can take many minutes.
 - Only you approve or reject. The chat never does either on its own.
-- When Taller needs an answer, the chat asks you and keeps your answers in a small file
-  in its temporary folder, so running a command again never starts over.
+- When Taller needs an answer, the chat asks you and passes it on (`taller answer`).
+  Taller keeps your answers for that one command, so running it again never starts
+  over, and forgets them when the command finishes, so they never answer another.
+- While a ticket runs in the background, other commands on the same project wait for
+  it; the chat tells you when it is free.

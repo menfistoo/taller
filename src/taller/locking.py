@@ -92,11 +92,7 @@ def file_lock(
             if _reap_if_stale(path):
                 continue
             if time.monotonic() >= deadline:
-                raise LockTimeout(
-                    f"Could not take the lock at {path} within {timeout:g}s. "
-                    f"Another Taller process is probably still working. "
-                    f"If none is, run `taller doctor` or remove the file."
-                )
+                raise LockTimeout(_busy(path, timeout))
             time.sleep(_POLL)
 
     # From here the lock file exists, so every path must be able to remove it.
@@ -113,6 +109,20 @@ def file_lock(
         depth.pop(key, None)
         with contextlib.suppress(FileNotFoundError):
             path.unlink()
+
+
+def _busy(path: Path, timeout: float) -> str:
+    """Why the lock could not be taken. A live holder is named and never offered
+    for removal: deleting a working process's lock lets two writers collide."""
+    try:
+        raw = path.read_text(encoding="ascii").strip()
+    except (OSError, UnicodeDecodeError):
+        raw = ""
+    if raw.isdigit() and _pid_alive(int(raw)):
+        return (f"Taller is busy: process {raw} is still working on this (a ticket run, "
+                f"perhaps). Wait for it to finish, then try again.")
+    return (f"Could not take the lock at {path} within {timeout:g}s. Another Taller "
+            f"process is probably still working; `taller doctor` tells whether it is.")
 
 
 def _reap_if_stale(path: Path) -> bool:

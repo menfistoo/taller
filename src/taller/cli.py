@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any, Callable
 
+from . import answers
 from .errors import TallerError
 from .prompter import AnswerSheetPrompter, Cancelled, NeedsAnswer, Prompter, TerminalPrompter
 
@@ -122,6 +124,11 @@ def build_parser() -> argparse.ArgumentParser:
     resolve = verbs.add_parser("resolve", help="regenerate a project's generated files")
     resolve.add_argument("path", nargs="?", help="the project (default: the one you are in)")
 
+    answer = verbs.add_parser("answer", help="answer the question a command stopped on "
+                                             "(NEEDS <id>), from a chat")
+    answer.add_argument("id", help="the question's id, as NEEDS printed it")
+    answer.add_argument("value", nargs="+", help="the answer; several for several lines")
+
     hook_parser = verbs.add_parser("hook", help="what the Claude Code plugin's hooks call")
     hook_verbs = hook_parser.add_subparsers(dest="action", required=True, metavar="event")
     hook_verbs.add_parser("session-start", help="brief a chat that opens in a project")
@@ -172,30 +179,57 @@ def _handler(args: argparse.Namespace) -> Handler:
         ("scan", None): scan.run,
         ("amend", None): amend.run,
         ("hook", "session-start"): hook.session_start,
+        ("answer", None): _answer,
         ("doctor", None): doctor.run,
     }
     return table[(args.command, getattr(args, "action", None))]
 
 
 def main(argv: list[str] | None = None, prompter: Prompter | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    words = list(sys.argv[1:] if argv is None else argv)
+    args = build_parser().parse_args(words)
+    managed: tuple[str, answers.Sheet] | None = None
     if prompter is None:
         # A console prints Unicode whatever the code page; a redirected stdout on
         # Windows is cp1252, which cannot hold ①. Write UTF-8 there instead.
         if hasattr(sys.stdout, "reconfigure") and not sys.stdout.isatty():
             sys.stdout.reconfigure(encoding="utf-8", errors="replace")
         try:
-            prompter = _prompter(args)
+            prompter, managed = _prompter(args, words)
         except TallerError as exc:
             print(f"taller: {exc}", flush=True)
             return EXIT_REFUSED
     try:
-        return _handler(args)(args, prompter)
+        code = _run_guarded(args, prompter)
     except NeedsAnswer as exc:
-        prompter.say(f"NEEDS {exc.qid}\n{exc.prompt}\n"
-                     f'Put the answer in the answers file as "{exc.qid}": ... and run the '
-                     f"same command again.")
+        again = (f"This question comes again in this run (time {exc.occurrence}); give "
+                 f"the answer for this time.\n" if exc.occurrence > 1 else "")
+        if managed:
+            answers.needs(managed[0], os.getcwd(), words, managed[1])
+            prompter.say(f"NEEDS {exc.qid}\n{exc.prompt}\n{again}"
+                         f'Answer with: taller answer {exc.qid} "<answer>" (one quoted '
+                         f"argument per line when it asks for several), then run the same "
+                         f"command again.")
+        else:
+            prompter.say(f"NEEDS {exc.qid}\n{exc.prompt}\n{again}"
+                         f'Put the answer in the answers file as "{exc.qid}": ... and run '
+                         f"the same command again.")
         return EXIT_NEEDS_ANSWER
+    except BaseException:
+        if managed:
+            answers.finished(managed[0])      # whatever happened, these answers are spent
+        raise
+    if managed:
+        answers.finished(managed[0])
+    return code
+
+
+def _run_guarded(args: argparse.Namespace, prompter: Prompter) -> int:
+    """The command, with every expected failure turned into its exit code."""
+    try:
+        return _handler(args)(args, prompter)
+    except NeedsAnswer:
+        raise                                   # main reports it: it knows the sheet
     except Cancelled as exc:
         prompter.say(str(exc))
         return EXIT_CANCELLED
@@ -208,25 +242,37 @@ def main(argv: list[str] | None = None, prompter: Prompter | None = None) -> int
         return EXIT_INTERRUPTED
 
 
-def _prompter(args: argparse.Namespace) -> Prompter:
-    """The keyboard when there is one; otherwise answers from a file, or none.
+def _prompter(args: argparse.Namespace, words: list[str]
+              ) -> tuple[Prompter, tuple[str, answers.Sheet] | None]:
+    """Who answers this command's questions.
 
-    Without a terminal - a Claude Code chat, a script - a prompt would wait for
-    ever or read end-of-file, so every question becomes NEEDS instead (plan:
-    plugin, Task 1).
+    `--answers FILE`: the file. Inside a Claude Code chat (`CLAUDECODE` is set in
+    its shell): the answers Taller keeps for this very command, which the chat
+    adds to with `taller answer`. Anyone else - a terminal, an IDE console that
+    is not a terminal - is asked at the keyboard, as before (plugin review, I1).
     """
     if args.answers:
-        return AnswerSheetPrompter(_load_answers(Path(args.answers)))
-    if not sys.stdin or not sys.stdin.isatty():
-        return AnswerSheetPrompter({})
-    return TerminalPrompter()
+        return AnswerSheetPrompter(_load_answers(Path(args.answers))), None
+    if os.environ.get("CLAUDECODE") and args.command not in ("answer", "hook"):
+        sheet_key = answers.key(os.getcwd(), words)
+        sheet = answers.load(sheet_key)
+        return AnswerSheetPrompter(sheet, repeats=True), (sheet_key, sheet)
+    return TerminalPrompter(), None
+
+
+def _answer(args: argparse.Namespace, prompter: Prompter) -> int:
+    value: Any = args.value[0] if len(args.value) == 1 else list(args.value)
+    record = answers.add(args.id, value)
+    prompter.say(f"Noted {args.id}. Now run the same command again: "
+                 f"taller {' '.join(record.get('argv') or [])}")
+    return 0
 
 
 def _load_answers(path: Path) -> dict[str, Any]:
     if not path.is_file():
         return {}                       # a first run: every question will be NEEDS
     try:
-        data = json.loads(path.read_text(encoding="utf-8") or "{}")
+        data = json.loads(path.read_text(encoding="utf-8-sig") or "{}")
     except ValueError as exc:
         raise TallerError(f"{path} is not valid JSON: {exc}") from exc
     if not isinstance(data, dict):

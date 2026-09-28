@@ -25,6 +25,11 @@ def main() -> int:
     if argv_path:
         with open(argv_path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(sys.argv[1:]) + "\n")
+    # The environment names a dispatch saw, for a test about what it inherits.
+    env_path = os.environ.get("STUB_CLAUDE_ENV")
+    if env_path:
+        with open(env_path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(sorted(os.environ)) + "\n")
 
     # The informational flags `cli_probe` reads. The help text lists every flag
     # Taller knows, minus any a test hides, so `taller doctor` can be driven to

@@ -309,6 +309,7 @@ def save_progress(name: str, answers: Mapping[str, Any]) -> None:
 def discard_progress(name: str) -> None:
     paths.onboarding(name).unlink(missing_ok=True)
     paths.onboarding_brief(name).unlink(missing_ok=True)
+    paths.onboarding(name).with_suffix(".distilled.json").unlink(missing_ok=True)
 
 
 # --- the brief (spec 11.1) ---------------------------------------------------

@@ -30,10 +30,11 @@ class NeedsAnswer(TallerError):
     same command again with the answer added.
     """
 
-    def __init__(self, qid: str, prompt: str):
+    def __init__(self, qid: str, prompt: str, occurrence: int = 1):
         super().__init__(f"needs an answer to {qid}")
         self.qid = qid
         self.prompt = prompt
+        self.occurrence = occurrence        # 2 when this run asks it a second time
 
 
 class UnscriptedQuestion(Exception):
@@ -89,17 +90,21 @@ class TerminalPrompter(Prompter):
 
 
 class AnswerSheetPrompter(Prompter):
-    """Answers from a file, for a command run without a terminal.
+    """Answers from a sheet, for a command run without a terminal.
 
-    Each id answers once: a string for a one-line question, a list for a
-    several-line one. An id the sheet does not answer - or answers with
-    something already rejected - raises NeedsAnswer.
+    An answer is a string for a one-line question, a list for a several-line
+    one. With `repeats`, each id holds a list of answers used in order, so a
+    question asked twice in one run (an edit loop, a toggle) gets its second
+    answer the second time (plugin review, C3). An id with no answer left -
+    including one whose answer was just rejected - raises NeedsAnswer.
     """
 
     interactive = False
 
-    def __init__(self, answers: Mapping[str, Any]):
-        self._answers: dict[str, Any] = dict(answers)
+    def __init__(self, answers: Mapping[str, Any], *, repeats: bool = False):
+        self._answers: dict[str, list[Any]] = {
+            qid: list(value) if repeats else [value] for qid, value in answers.items()}
+        self._asked: dict[str, int] = {}
 
     def say(self, text: str) -> None:
         print(text, flush=True)
@@ -114,9 +119,12 @@ class AnswerSheetPrompter(Prompter):
             [line for line in str(value).splitlines()]
 
     def _take(self, qid: str, prompt: str) -> Any:
-        if qid not in self._answers:
-            raise NeedsAnswer(qid, prompt)
-        return self._answers.pop(qid)
+        turn = self._asked.get(qid, 0)
+        self._asked[qid] = turn + 1
+        given = self._answers.get(qid) or []
+        if turn >= len(given):
+            raise NeedsAnswer(qid, prompt, occurrence=turn + 1)
+        return given[turn]
 
 
 class ScriptedPrompter(Prompter):

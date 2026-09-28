@@ -16,7 +16,7 @@ from typing import Any
 import yaml
 
 from .. import adopt as adopt_lib
-from .. import brands, config, discovery, generated, gitio, onboarding, registry, scaffold
+from .. import brands, config, discovery, generated, gitio, onboarding, paths, registry, scaffold
 from ..errors import ConfigError
 from ..onboarding import Question, ask
 from ..prompter import Prompter
@@ -101,6 +101,13 @@ def _offer_remote(name: str, target: Path, prompter: Prompter) -> str | None:
     """Only if `gh` can, only if asked, and the default is no (spec 11.4, 13.2)."""
     status = discovery.gh_auth_status()
     if not status["ok"]:
+        return None
+    if not prompter.interactive:
+        # The project exists by now; a question here would stop the command after
+        # it had already done its work, and running it again is refused (plugin
+        # review, C2). The default is no, so say how to push later instead.
+        prompter.say(f"  Not pushed to GitHub. To publish it later: `gh repo create {name} "
+                     f"--private --source {target} --remote origin --push`.")
         return None
     create = ask(prompter, Question(
         "remote", "remote", 0,
@@ -330,7 +337,7 @@ def adopt(args: Any, prompter: Prompter) -> int:
     if facts["claude_md"]:
         prompter.say(f"\nReading the old CLAUDE.md (≈{facts['claude_md_tokens']} tokens) to "
                      f"keep only what is specific to {name}. One dispatch.")
-        architecture, error = adopt_lib.distill(facts["claude_md"], answers["profile"])
+        architecture, error = _distilled(name, facts["claude_md"], answers["profile"])
         if error:
             prompter.say(f"  That did not work ({error}). The old file will be archived "
                          f"instead: kept, never loaded.")
@@ -386,6 +393,28 @@ def adopt(args: Any, prompter: Prompter) -> int:
         "  `taller doctor` checks it; `taller project brief` changes an answer.",
     ]))
     return 0
+
+
+def _distilled(name: str, claude_md: str, profile: str) -> tuple[str | None, str | None]:
+    """One distillation per adoption, however many times a chat reruns the command
+    (plugin review, I2): the owner approves the text they were shown."""
+    import hashlib
+    import json
+
+    cache = paths.onboarding(name).with_suffix(".distilled.json")
+    stamp = hashlib.sha1(f"{profile}\n{claude_md}".encode("utf-8")).hexdigest()
+    try:
+        kept = json.loads(cache.read_text(encoding="utf-8"))
+        if kept.get("stamp") == stamp and kept.get("architecture"):
+            return kept["architecture"], None
+    except (OSError, ValueError):
+        pass
+    architecture, error = adopt_lib.distill(claude_md, profile)
+    if architecture:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps({"stamp": stamp, "architecture": architecture}),
+                         encoding="utf-8")
+    return architecture, error
 
 
 def _found(facts: dict) -> list[str]:
