@@ -49,7 +49,7 @@ TITLE_MAX = 120
 
 # Spec 7.1's order, so status.yml diffs read the same way every time.
 STATUS_KEYS = (
-    "id", "slug", "title", "kind", "lane", "stage", "branch", "issue", "created",
+    "id", "slug", "title", "kind", "named_by", "lane", "stage", "branch", "issue", "created",
     "outcome", "gates", "verdicts", "blocked", "fix_rounds", "chief_session", "sync",
     "templates", "checkpoints", "spend",
 )
@@ -248,7 +248,8 @@ def write(project: Path | str, ticket: Ticket, message: str, *,
     return ticket
 
 
-def create(project: Path | str, *, title: str, words: str, kind: str) -> Ticket:
+def create(project: Path | str, *, title: str, words: str, kind: str,
+           named_by: str | None = "owner") -> Ticket:
     """Stage ① intake: the owner's words, verbatim, committed to `main`."""
     title = flatten(title)[:TITLE_MAX]
     if not title:
@@ -264,7 +265,8 @@ def create(project: Path | str, *, title: str, words: str, kind: str) -> Ticket:
         ticket: Ticket = {
             "id": _next_id(project), "slug": slugify(title), "title": title, "kind": kind,
             "lane": None, "stage": "intake", "branch": None, "issue": None,
-            "created": created, "outcome": None, "gates": [], "verdicts": {},
+            "created": created, "outcome": None, "named_by": named_by,
+            "gates": [], "verdicts": {},
             "blocked": None, "fix_rounds": 0, "chief_session": None, "sync": None,
             "templates": {},
             "checkpoints": {name: "pending" for name in CHECKPOINT_AT},
@@ -464,13 +466,19 @@ def _set_lane(ticket: Ticket, lane: str | None) -> str:
             f"change in one file, `--lane full` for anything else.")
     if lane not in LANE_STAGES:
         raise ConfigError(f"{lane!r} is not a lane; use fast or full.")
-    if ticket.get("lane") and ticket["lane"] != lane:
-        raise ConfigError(f"Ticket {ticket['id']}'s lane is already {ticket['lane']}; "
-                          f"a lane is set once and never demoted.")
+    if ticket.get("lane") == "full" and lane == "fast":
+        raise ConfigError(f"Ticket {ticket['id']}'s lane is already full; a lane is "
+                          f"never demoted (spec 8.2).")
     ticket["lane"] = lane
     if lane == "fast":
         ticket["checkpoints"]["design"] = "skipped"
         ticket["checkpoints"]["staging"] = "skipped"
+    else:
+        # Promoted from fast, e.g. at a re-triage after a rejection: the two
+        # lane-dependent checkpoints apply again.
+        for checkpoint in ("design", "staging"):
+            if ticket["checkpoints"][checkpoint] == "skipped":
+                ticket["checkpoints"][checkpoint] = "pending"
     return f" (lane {lane})"
 
 

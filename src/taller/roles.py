@@ -38,8 +38,8 @@ def _object(properties: dict[str, dict]) -> dict:
 
 SCHEMAS: dict[str, dict] = {
     "chief": _object({"kind": {"type": "string", "enum": list(KINDS)},
-                      "title": {"type": "string", "maxLength": 120},
-                      "summary": _TEXT}),
+                      "title": {"type": "string", "minLength": 1, "maxLength": 120},
+                      "summary": {"type": "string", "minLength": 1}}),
     "explorer": _object({"files": _PATHS, "adds_or_deletes_files": _FLAG,
                          "schema_change": _FLAG, "route_change": _FLAG,
                          "dependency_change": _FLAG,
@@ -81,6 +81,8 @@ def _check_value(value: Any, rule: dict) -> str | None:
             return "must be text"
         if "enum" in rule and value not in rule["enum"]:
             return f"must be one of {', '.join(rule['enum'])}, not {value!r}"
+        if "minLength" in rule and len(value.strip()) < rule["minLength"]:
+            return "must not be blank"
         if "maxLength" in rule and len(value) > rule["maxLength"]:
             return f"must be at most {rule['maxLength']} characters"
     elif kind == "boolean":

@@ -14,14 +14,14 @@ those stages pass through with a note, and every owner checkpoint still holds.
 
 from __future__ import annotations
 
-import fnmatch
 import re
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from . import (config, constitution, generated, gitio, inference, locking, models, registry,
-               roles, spend, tickets)
+from . import (config, constitution, generated, gitio, globs, inference, locking, models,
+               registry, roles, spend, tickets)
 from .errors import ConfigError, TallerError
+from .scaffold import flatten
 
 Ticket = dict[str, Any]
 Say = Callable[[str], None]
@@ -44,11 +44,12 @@ class Blocked(TallerError):
 # --- lanes (8.2) ------------------------------------------------------------------
 
 def _security_hit(paths: list[str], ruleset: Mapping[str, Any]) -> tuple[str, str] | None:
-    globs = ((ruleset.get("paths") or {}).get("security_sensitive")) or []
+    """The first changed path matching a security-sensitive glob, gitignore-style."""
+    patterns = ((ruleset.get("paths") or {}).get("security_sensitive")) or []
     for path in paths:
-        for glob in globs:
-            if fnmatch.fnmatch(path.replace("\\", "/"), glob):
-                return path, glob
+        pattern = globs.any_match(path, patterns)
+        if pattern:
+            return path, pattern
     return None
 
 
@@ -163,9 +164,41 @@ def _budget_reason(ticket: Mapping[str, Any], cfg: Mapping[str, Any]) -> str:
             f"Raise budget.per_ticket_stop with `taller settings set`, or close the ticket.")
 
 
+NOTES_SHOWN = 40            # the ticket's history a role is shown, newest last
+PATCH_SHOWN = 12_000       # characters of the diff a role is shown
+
+
 def _context(project: Path, ticket: Mapping[str, Any]) -> str:
+    """What every role starts from: the owner's words and the ticket's history.
+
+    The history is `notes.md`: lanes and why, rejections and their reasons,
+    what the implementer said it did. §7.6 and §14 say a fresh attempt is
+    "briefed from notes.md" - this is that briefing.
+    """
     words = tickets._words(project, ticket).strip()
-    return f"Ticket {ticket['id']:04d}: {ticket['title']}\n\nThe owner's words:\n{words}\n"
+    raw = tickets.read_main(project, f"{tickets.ticket_dir(ticket)}/notes.md") or b""
+    notes = raw.decode("utf-8", errors="replace").strip().splitlines()[-NOTES_SHOWN:]
+    text = f"Ticket {ticket['id']:04d}: {ticket['title']}\n\nThe owner's words:\n{words}\n"
+    if notes:
+        text += "\nWhat has happened so far:\n" + "\n".join(notes) + "\n"
+    return text
+
+
+def _change(project: Path, ticket: Mapping[str, Any]) -> str:
+    """The branch's change against `main` - stat, then the patch, capped."""
+    if not ticket.get("branch"):
+        return ""
+    spec = f"{gitio.MAIN_BRANCH}...{ticket['branch']}"
+    exclude = f":(exclude){DIFF_IGNORED}"
+    stat = gitio.git(project, "-c", "core.quotepath=false", "diff", "--stat", spec, "--",
+                     ".", exclude, check=False).stdout.strip()
+    if not stat:
+        return ""
+    patch = gitio.git(project, "-c", "core.quotepath=false", "diff", spec, "--", ".",
+                      exclude, check=False).stdout
+    if len(patch) > PATCH_SHOWN:
+        patch = patch[:PATCH_SHOWN] + "\n[... the rest of the diff is cut ...]\n"
+    return f"\nThe change on the branch so far:\n{stat}\n\n{patch}"
 
 
 # --- ① classification -----------------------------------------------------------
@@ -181,7 +214,8 @@ def classify(project: Path | str, ticket_id: int) -> Ticket:
             _context(project, ticket) + "\nClassify this ticket.",
             cfg=cfg, ruleset=constitution.resolve(project))
         ticket = tickets.load(project, ticket_id)
-        ticket.update({"kind": value["kind"], "title": value["title"][:tickets.TITLE_MAX],
+        title = flatten(value["title"])[:tickets.TITLE_MAX] or ticket["title"]
+        ticket.update({"kind": value["kind"], "title": title, "named_by": "chief",
                        "chief_session": result.session_id or ticket.get("chief_session")})
         return tickets.write(project, ticket, f"ticket {ticket_id:04d}: classified",
                              note=f"classified by the chief as {value['kind']}: "
@@ -227,8 +261,21 @@ def _step(project: Path, ticket: Ticket, lane: str | None, cfg: Mapping[str, Any
     stage, ticket_id = ticket["stage"], ticket["id"]
     say(f"{tickets._label(stage)}")
 
+    checkpoint = tickets.CHECKPOINT_AT.get(stage)
+    if checkpoint and ticket["checkpoints"][checkpoint] == "approved":
+        # Approved already - typically at ⑨, where approve could not move on
+        # because the branch was not merged yet. Try again rather than ask again.
+        try:
+            tickets.advance(project, ticket_id)
+        except ConfigError as exc:
+            say(f"  Waiting: {exc}")
+            return True
+        return False
+
     if stage == "intake":
-        if not ticket.get("chief_session"):
+        # Only when nobody has named the work yet: the owner's own kind and title
+        # (--kind, the fallback questions, --from-queue) are never overwritten.
+        if ticket.get("named_by") is None:
             classify(project, ticket_id)
         tickets.advance(project, ticket_id)
         return False
@@ -246,6 +293,8 @@ def _step(project: Path, ticket: Ticket, lane: str | None, cfg: Mapping[str, Any
                 raise ConfigError(f"The fast lane is refused: {hit[0]} matches the "
                                   f"security-sensitive glob {hit[1]} (spec 8.2).")
             chosen, reason = lane, "chosen by the owner"
+        if ticket.get("lane") == "full" and chosen == "fast":
+            chosen, reason = "full", "it was already full, and a lane is never demoted"
         tickets.advance(project, ticket_id, lane=chosen,
                         note=f"explorer: {', '.join(facts['files']) or 'no files'}; "
                              f"{chosen} because {reason}")
@@ -255,15 +304,25 @@ def _step(project: Path, ticket: Ticket, lane: str | None, cfg: Mapping[str, Any
     if stage == "design":
         tree = _worktree(project, ticket_id)
         ticket = tickets.load(project, ticket_id)
-        if _on_branch(project, ticket, "plan.md") is None:
+        previous = _on_branch(project, ticket, "plan.md")
+        rejected = ticket["checkpoints"]["design"] == "rejected"
+        if previous is None or rejected:
+            ask_for = "Write the plan."
+            if rejected:
+                ask_for = ("The owner rejected the previous plan - the reason is in the "
+                           "history above. Write a new plan that answers it.\n\n"
+                           f"The rejected plan:\n{previous}")
             plan, _ = _ask(project, ticket_id, "architect",
-                           _context(project, ticket) + "\nWrite the plan.",
+                           _context(project, ticket) + _change(project, ticket)
+                           + "\n" + ask_for,
                            cfg=cfg, ruleset=ruleset, cwd=tree)
             _commit_ticket_file(tree, ticket, "plan.md", plan["plan_md"],
                                 f"docs(plan): ticket {ticket_id:04d}")
-            tickets.write(project, tickets.load(project, ticket_id),
-                          f"ticket {ticket_id:04d}: plan written",
-                          note="③ plan written; waiting for your approval")
+            ticket = tickets.load(project, ticket_id)
+            ticket["checkpoints"]["design"] = "pending"
+            tickets.write(project, ticket, f"ticket {ticket_id:04d}: plan written",
+                          note=("③ plan rewritten after the rejection" if rejected
+                                else "③ plan written") + "; waiting for your approval")
         say(f"  Waiting for you: `taller ticket show {ticket_id}`, then approve or reject.")
         return True
 
@@ -275,6 +334,10 @@ def _step(project: Path, ticket: Ticket, lane: str | None, cfg: Mapping[str, Any
                         _context(project, ticket) + (f"\nThe approved plan:\n{plan}" if plan
                                                      else "") + "\nMake the change.",
                         cfg=cfg, ruleset=ruleset, cwd=tree, writable=[str(tree)])
+        if gitio.git(tree, "status", "--porcelain", check=False).stdout.strip():
+            gitio.git(tree, "add", "--all")
+            gitio.git(tree, "commit", "--quiet", "-m",
+                      "chore: uncommitted work from the implementer")
         ticket = tickets.load(project, ticket_id)
         diff = _diff(project, ticket["branch"])
         if not diff["files"]:
@@ -301,7 +364,8 @@ def _step(project: Path, ticket: Ticket, lane: str | None, cfg: Mapping[str, Any
         ticket = tickets.load(project, ticket_id)
         if _on_branch(project, ticket, "review.md") is None:
             summary, _ = _ask(project, ticket_id, "summariser",
-                              _context(project, ticket) + "\nSummarise the change for review.",
+                              _context(project, ticket) + _change(project, ticket)
+                              + "\nSummarise the change for review.",
                               cfg=cfg, ruleset=ruleset, cwd=tree)
             _commit_ticket_file(tree, ticket, "review.md", summary["summary_md"],
                                 f"docs(review): ticket {ticket_id:04d}")
@@ -362,5 +426,6 @@ def _commit_ticket_file(tree: Path, ticket: Mapping[str, Any], name: str, text: 
     path = tree / tickets.ticket_dir(ticket) / name
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text.rstrip("\n") + "\n", encoding="utf-8", newline="")
-    gitio.git(tree, "add", "--", str(path.relative_to(tree)).replace("\\", "/"))
-    gitio.git(tree, "commit", "--quiet", "-m", message)
+    relative = str(path.relative_to(tree)).replace("\\", "/")
+    gitio.git(tree, "add", "--", relative)
+    gitio.git(tree, "commit", "--quiet", "-m", message, "--", relative)

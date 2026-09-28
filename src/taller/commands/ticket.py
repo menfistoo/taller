@@ -89,7 +89,7 @@ def new(args: Any, prompter: Prompter) -> int:
     else:
         # G2: the owner states intent once; the chief names the work (spec 7.6).
         ticket = tickets.create(project, title=_propose_title(words), words=words,
-                                kind="idea")
+                                kind="idea", named_by=None)
         try:
             ticket = chief.classify(project, ticket["id"])
         except TallerError as exc:
@@ -102,7 +102,7 @@ def new(args: Any, prompter: Prompter) -> int:
                                            "A short title for it", "text"),
                         default=ticket["title"])
             ticket = tickets.load(project, ticket["id"])
-            ticket.update({"kind": kind, "title": title})
+            ticket.update({"kind": kind, "title": title, "named_by": "owner"})
             ticket = tickets.write(project, ticket, f"ticket {ticket['id']:04d}: named",
                                    note=f"named by the owner: {kind}")
     lines = [f"Created ticket {ticket['id']:04d} - {ticket['title']}",

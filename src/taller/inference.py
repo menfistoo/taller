@@ -313,6 +313,12 @@ def _run_bounded(argv: list[str], *, input: str, encoding: str, errors: str, cwd
         except subprocess.TimeoutExpired:
             pass                                # the pipes are abandoned, not awaited
         raise
+    except BaseException:
+        # Ctrl-C, or anything else: the dispatch runs in its own process group,
+        # so it never saw the interrupt and would keep working - an implementer
+        # still writing into the worktree the next run starts on.
+        _kill_tree(process)
+        raise
     return subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
 
 
@@ -402,19 +408,27 @@ def _build(dispatch: Dispatch, executable: str) -> tuple[list[str], Path]:
 
 
 def _brief(dispatch: Dispatch) -> str:
-    """The system prompt: the role's definition, then any `system` the caller adds.
+    """The system prompt: ONE line naming the role.
 
-    The definition comes first, so the brief's first line is `ROLE: <role>`. It
-    is short on purpose: it travels on the command line, which Windows caps at
-    32,767 characters (8,191 through cmd.exe). The project's rules - which can be
-    far longer - travel in the prompt instead (`_rules`).
+    Everything else - the role's definition, the caller's `system`, the project's
+    rules - travels in the prompt on stdin (`_prompt`). The command line is a
+    poor carrier for anything longer: Windows caps it at 32,767 characters, and a
+    `claude.cmd` launcher (an npm install) runs through cmd.exe, which caps it at
+    8,191 and drops everything after the first line break. One line survives all
+    of that. Found by the phase B review.
     """
+    return (f"ROLE: {dispatch.role}. You are working as Taller's {dispatch.role}; your "
+            f"instructions and the project's rules are at the start of the prompt.")
+
+
+def _instructions(dispatch: Dispatch) -> str:
+    """The role's definition, then anything the caller adds."""
     from . import roles                   # roles imports this module
 
     parts = [roles.definition(dispatch.role).strip()]
     if dispatch.system:
         parts.append(dispatch.system)
-    return "\n\n".join(p.strip() for p in parts if p and p.strip()) + "\n"
+    return "\n\n".join(p.strip() for p in parts if p and p.strip())
 
 
 def _rules(dispatch: Dispatch) -> str:
@@ -435,15 +449,17 @@ def _rules(dispatch: Dispatch) -> str:
 
 
 def _prompt(dispatch: Dispatch) -> str:
-    """What goes to stdin: the project's rules for this role, then the task.
+    """What goes to stdin: the role's instructions, the project's rules, the task.
 
-    Stdin has no length limit, which is why the rules are here and not in the
-    system prompt (see `_brief`).
+    Stdin has no length limit and no shell in the way, which is why all of it is
+    here and not on the command line (see `_brief`).
     """
+    parts = [f"# Your role\n\n{_instructions(dispatch)}"]
     rules = _rules(dispatch)
-    if not rules:
-        return dispatch.prompt
-    return f"# The project's rules\n\n{rules}\n\n# The task\n\n{dispatch.prompt}"
+    if rules:
+        parts.append(f"# The project's rules\n\n{rules}")
+    parts.append(f"# The task\n\n{dispatch.prompt}")
+    return "\n\n".join(parts)
 
 
 def _expand_forbidden(globs: list[str]) -> list[str]:

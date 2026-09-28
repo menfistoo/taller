@@ -19,6 +19,7 @@ Handler = Callable[[argparse.Namespace, Prompter], int]
 # An expected failure: the message is the whole story, so no traceback.
 EXIT_CANCELLED = 1
 EXIT_REFUSED = 2
+EXIT_INTERRUPTED = 130                 # the shell convention for Ctrl-C
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -168,6 +169,10 @@ def main(argv: list[str] | None = None, prompter: Prompter | None = None) -> int
     except TallerError as exc:
         prompter.say(f"taller: {exc}")
         return EXIT_REFUSED
+    except KeyboardInterrupt:
+        prompter.say("Stopped. Everything already done is saved; run the command again "
+                     "to carry on.")
+        return EXIT_INTERRUPTED
 
 
 if __name__ == "__main__":

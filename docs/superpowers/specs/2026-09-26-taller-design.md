@@ -421,8 +421,8 @@ inside a subagent turn where `structured_output` does not reach.
 | `prompt` | stdin, with `-p --output-format json` |
 | `model`, else `config`/`ruleset` lookup for `role` | `--model` |
 | `effort`, else the `effort` lookup for `role`, else `effort.default` | `--effort <level>` (native flag; verified present on 2.1.74, accepting `low` `medium` `high` `max`) |
-| the role's definition (`agents/<role>.md`), then `system` | `--append-system-prompt` |
-| the role's slices from `ruleset` | the head of the prompt, on stdin — **not** the command line, which Windows caps at 32,767 characters (8,191 through `cmd.exe`); a full briefing can exceed it (found in phase B) |
+| one line naming the role (`ROLE: <role>. …`) | `--append-system-prompt` |
+| the role's definition (`agents/<role>.md`), then `system`, then the role's slices from `ruleset` | the head of the prompt, on stdin — **not** the command line. Windows caps a command line at 32,767 characters, and a `claude.cmd` launcher (an npm install) runs through `cmd.exe`, which caps it at 8,191 and drops everything after the first line break. Found in phase B. |
 | `resume` | `--resume <session_id>` |
 | `cwd` | process working directory |
 | `tools` | `--allowedTools` |

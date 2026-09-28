@@ -117,8 +117,10 @@ def _role_of(argv: list[str]) -> str | None:
         return None
     index = argv.index("--append-system-prompt") + 1
     brief = argv[index] if index < len(argv) else ""
-    first = brief.splitlines()[0] if brief else ""
-    return first[len("ROLE: "):].strip() if first.startswith("ROLE: ") else None
+    import re
+
+    found = re.match(r"ROLE: (\w+)", brief or "")
+    return found.group(1) if found else None
 
 
 def _scripted(path: str) -> int:

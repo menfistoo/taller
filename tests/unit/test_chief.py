@@ -59,8 +59,9 @@ def script(tmp_path: Path, monkeypatch):
 
 
 def new_ticket(project: Path) -> int:
+    """A ticket as `ticket new` leaves it for the chief: not yet named by anyone."""
     return tickets.create(project, title="Placeholder", words="The warning red is wrong.",
-                          kind="idea")["id"]
+                          kind="idea", named_by=None)["id"]
 
 
 def on_branch(project: Path, ticket: dict, name: str) -> str | None:

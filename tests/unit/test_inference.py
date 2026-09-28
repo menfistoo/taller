@@ -151,7 +151,7 @@ def test_effort_survives_an_explicit_system_prompt(tmp_home, stub_claude):
     inference.infer(dispatch)
     assert "--effort high" in stub_claude.flags()
     # The shim carries only the brief's first line; the rest is asserted on _brief.
-    assert inference._brief(dispatch).rstrip().endswith("you are a planner")
+    assert inference._instructions(dispatch).rstrip().endswith("you are a planner")
 
 
 def test_a_schema_mismatch_is_its_own_failure(tmp_home, stub_claude, monkeypatch):
@@ -406,7 +406,7 @@ def test_the_briefing_reaches_append_system_prompt(tmp_home, stub_claude):
     inference.infer(dispatch)
     flags = stub_claude.flags()
     assert "--append-system-prompt ROLE: gate_ux" in flags
-    assert "ONE-LINE-BRIEF" in inference._brief(dispatch)
+    assert "ONE-LINE-BRIEF" in inference._prompt(dispatch)
 
 
 def test_a_ruleset_dispatch_resolves_its_model(tmp_home, stub_claude):

@@ -32,7 +32,7 @@ def test_the_role_briefs_and_its_slices_head_the_prompt(tmp_home: Path):
 
     brief, prompt = inference._brief(dispatch), inference._prompt(dispatch)
 
-    assert brief.splitlines()[0] == "ROLE: gate_ux"
+    assert brief.startswith("ROLE: gate_ux") and "\n" not in brief
     assert "Buttons say what they do." not in brief, "rules must not ride the command line"
     assert "Buttons say what they do." in prompt and "Never log a password." not in prompt
     assert prompt.index("Buttons say what they do.") < prompt.index("Review the change.")
@@ -53,9 +53,11 @@ def test_an_explicit_system_is_added_after_the_role(tmp_home: Path):
     dispatch = inference.Dispatch(role="chief", prompt="p", config=config.load_hub_config(),
                                   system="Ticket 7 is at triage.")
 
-    brief = inference._brief(dispatch)
+    instructions = inference._instructions(dispatch)
 
-    assert brief.startswith("ROLE: chief") and brief.rstrip().endswith("Ticket 7 is at triage.")
+    assert instructions.startswith("ROLE: chief")
+    assert instructions.rstrip().endswith("Ticket 7 is at triage.")
+    assert "Ticket 7 is at triage." in inference._prompt(dispatch)
 
 
 GOOD = {
