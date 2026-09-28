@@ -72,6 +72,13 @@ def finding(rule: str, file: str = "", line: int = 0, message: str = "",
             "fix_hint": fix_hint, "overridden": None}
 
 
+def verdict(gate: str, findings: list[Finding], metrics: dict[str, Any]) -> Verdict:
+    """A gate that ran: `fail` when anything reaches the owner or a fixer (§9.3)."""
+    failing = any(f.get("severity") in (*ACTED_ON, "MEDIUM") for f in findings)
+    return {"gate": gate, "result": "fail" if failing else "pass", "findings": findings,
+            "metrics": metrics}
+
+
 def select(ticket: Mapping[str, Any], diff: Mapping[str, Any], ruleset: Mapping[str, Any],
            *, has_tests: bool = False) -> list[str]:
     """The gates §9.2 runs at ⑤ for this change. Smoke is ⑥'s, never selected here."""

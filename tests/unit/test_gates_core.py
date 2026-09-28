@@ -177,3 +177,20 @@ def test_tree_lists_every_tracked_file_as_added(repo: Path):
     by_path = {f["path"]: f for f in built["files"]}
     assert set(by_path) == {"app.css", "keep.py"}
     assert by_path["keep.py"]["added"] == [{"line": 1, "text": "x = 1"}]
+
+
+def test_a_diff_knows_every_file_tracked_at_head(repo: Path):
+    (repo / "new.py").write_text("print(1)\n", encoding="utf-8", newline="")
+    commit(repo, "feat: new")
+
+    assert diffs.build(repo, "main", "work")["tracked"] == ["app.css", "keep.py", "new.py"]
+    assert diffs.tree(repo)["tracked"] == ["app.css", "keep.py", "new.py"]
+
+
+def test_a_verdict_fails_on_anything_above_low():
+    low = gates.verdict("size", [gates.finding("size.duplicate-block")], {"files_checked": 1})
+    medium = gates.verdict("constitution", [gates.finding("constitution.root-markdown")], {})
+
+    assert (low["gate"], low["result"], low["metrics"]) == ("size", "pass", {"files_checked": 1})
+    assert medium["result"] == "fail"
+    assert gates.verdict("size", [], {})["result"] == "pass"

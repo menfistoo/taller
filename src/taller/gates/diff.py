@@ -60,7 +60,14 @@ def build(repo: Path | str, base: str, head: str) -> Diff:
             repo, spec, path)
         files.append({"path": path, "status": status, "added": added, "removed": removed,
                       "content": content})
-    return {"base": base, "head": head, "commits": list(reversed(commits)), "files": files}
+    return {"base": base, "head": head, "commits": list(reversed(commits)), "files": files,
+            "tracked": _tracked(_git(repo, "ls-tree", "-r", "--name-only", head))}
+
+
+def _tracked(listing: bytes) -> list[str]:
+    """Every path at the head, ticket files excluded: which imports are local."""
+    paths = listing.decode("utf-8", errors="replace").splitlines()
+    return sorted(path for path in paths if path and not path.startswith(IGNORED))
 
 
 def _show(repo: Path | str, ref: str, path: str) -> bytes | None:
@@ -97,9 +104,8 @@ def tree(repo: Path | str) -> Diff:
     """Every tracked file in the working tree, all lines as added - for `scan()`."""
     repo = Path(repo)
     files = []
-    for path in _git(repo, "ls-files").decode("utf-8", errors="replace").splitlines():
-        if not path or path.startswith(IGNORED):
-            continue
+    tracked = _tracked(_git(repo, "ls-files"))
+    for path in tracked:
         try:
             content = _text((repo / path).read_bytes())
         except OSError:
@@ -107,4 +113,4 @@ def tree(repo: Path | str) -> Diff:
         lines = content.splitlines() if content is not None else []
         files.append({"path": path, "status": "A", "content": content, "removed": [],
                       "added": [{"line": n, "text": text} for n, text in enumerate(lines, 1)]})
-    return {"base": "", "head": "HEAD", "commits": [], "files": files}
+    return {"base": "", "head": "HEAD", "commits": [], "files": files, "tracked": tracked}
