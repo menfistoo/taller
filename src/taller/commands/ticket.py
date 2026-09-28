@@ -13,7 +13,7 @@ from typing import Any, Mapping
 
 import yaml
 
-from .. import chief, gitio, locking, registry, tickets
+from .. import chief, config, gitio, locking, registry, spend, tickets
 from ..errors import ConfigError, TallerError
 from ..onboarding import Question, ask
 from ..prompter import Prompter
@@ -211,6 +211,12 @@ def show(args: Any, prompter: Prompter) -> int:
         lines.append(f"  GitHub issue #{ticket['issue']}")
     if tickets.effective_sync(project, ticket) == "pending":
         lines.append("  Not pushed to GitHub yet; the next move retries.")
+    weights = config.load_hub_config().get("weights") or {}
+    lines.append(f"  Spend: {(ticket.get('spend') or {}).get('weighted_tokens', 0)} "
+                 f"weighted tokens.")
+    chat = spend.weighted(spend.from_transcripts(project, ticket), weights)
+    if chat:
+        lines.append(f"  In a chat: {chat} weighted tokens (not dispatched by Taller).")
     lines.append(f"  {next_hint(ticket)}")
     raw = tickets.read_main(project, f"{tickets.ticket_dir(ticket)}/notes.md") or b""
     history = raw.decode("utf-8", errors="replace").strip().splitlines()[-6:]
