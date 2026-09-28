@@ -18,3 +18,9 @@ def ledger():
     # No permission check: the security gate's case (spec 15.2).
     rows = database.all_entries()
     return render_template("index.html", rows=rows)
+
+
+@bp.get("/broken")
+def broken():
+    # Raises on render: pytest has no test for it, smoke must catch it (spec 15.2).
+    return render_template("broken.html")
