@@ -208,6 +208,12 @@ def run(project: Path | str, ticket_id: int, *, lane: str | None = None,
                     say(f"  Spend so far: {ticket['spend']['weighted_tokens']} weighted "
                         f"tokens, past the warning line.")
                 stop = _step(project, ticket, lane, cfg, say)
+                if not stop and tickets.load(project, ticket_id)["stage"] == ticket["stage"] \
+                        and not tickets.load(project, ticket_id).get("blocked"):
+                    # A handler that neither waits nor moves the ticket would spin
+                    # for ever; found by mutating the review stop.
+                    raise Blocked(f"no progress at {tickets._label(ticket['stage'])}: the "
+                                  f"stage finished without moving the ticket on")
             except Blocked as exc:
                 say(f"  Stopped: {exc}")
                 return tickets.block(project, ticket_id, str(exc))

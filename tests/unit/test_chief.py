@@ -248,3 +248,14 @@ def test_an_unavailable_model_falls_back_and_is_recorded(project: Path, script, 
 
     assert ticket["stage"] == "design" and not ticket["blocked"]
     assert ticket["fallbacks"] == [{"role": "architect", "requested": "opus", "used": "sonnet"}]
+
+
+def test_a_stage_that_makes_no_progress_blocks_instead_of_spinning(project: Path, monkeypatch):
+    """Found by a mutation: a handler that neither waits nor advances looped for ever."""
+    monkeypatch.setattr(chief, "_step", lambda *args, **kwargs: False)
+    ticket_id = new_ticket(project)
+
+    ticket = chief.run(project, ticket_id, say=lambda text: None)
+
+    assert ticket["blocked"] and "no progress" in ticket["blocked"]["reason"]
+    assert ticket["stage"] == "intake"
