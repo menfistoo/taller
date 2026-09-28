@@ -68,6 +68,10 @@ def main() -> int:
         _out("this is not json")
         return 0
 
+    script = os.environ.get("STUB_CLAUDE_SCRIPT")
+    if script:
+        return _scripted(script)
+
     payload = os.environ.get("STUB_CLAUDE_RESPONSE")
     if payload:
         _out(payload)
@@ -96,6 +100,68 @@ def main() -> int:
             }
         },
     }))
+    return 0
+
+
+SCRIPTED_USAGE = {"claude-sonnet-5": {"inputTokens": 100, "cacheCreationInputTokens": 0,
+                                      "cacheReadInputTokens": 0, "outputTokens": 50}}
+
+
+def _role_of(argv: list[str]) -> str | None:
+    """The role, from the first line of the brief: always `ROLE: <role>`.
+
+    The brief is the last argument and the only multi-line one, so on Windows the
+    .cmd shim delivers its first line and nothing after - which is all this needs.
+    """
+    if "--append-system-prompt" not in argv:
+        return None
+    index = argv.index("--append-system-prompt") + 1
+    brief = argv[index] if index < len(argv) else ""
+    first = brief.splitlines()[0] if brief else ""
+    return first[len("ROLE: "):].strip() if first.startswith("ROLE: ") else None
+
+
+def _scripted(path: str) -> int:
+    """Answer from a per-role script: `{role: [answer, ...]}`, consumed in order.
+
+    An answer is `{"value": {...}}` (returned as structured_output), optionally
+    with `"effects"` - `{"write": path, "text": ...}` or `{"commit": message}`,
+    applied in the working directory - or `{"fail": text}` for a failed turn.
+    """
+    import subprocess
+
+    role = _role_of(sys.argv[1:])
+    with open(path, encoding="utf-8") as fh:
+        script = json.load(fh)
+    queue = script.get(role) or []
+    if not queue:
+        sys.stderr.write(f"stub: no scripted answer left for role {role}\n")
+        return 4
+    answer = queue.pop(0)
+    script[role] = queue
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(script, fh)
+
+    for effect in answer.get("effects", []):
+        if "write" in effect:
+            target = os.path.join(os.getcwd(), effect["write"])
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with open(target, "w", encoding="utf-8", newline="") as fh:
+                fh.write(effect["text"])
+        if "commit" in effect:
+            subprocess.run(["git", "add", "--all"], check=True, capture_output=True)
+            subprocess.run(["git", "commit", "--quiet", "-m", effect["commit"]], check=True,
+                           capture_output=True)
+
+    session = answer.get("session", f"{role}-session")
+    if "fail" in answer:
+        _out(json.dumps({"type": "result", "subtype": "error", "is_error": True,
+                         "result": answer["fail"], "session_id": session}))
+        return 1
+    _out(json.dumps({"type": "result", "subtype": "success", "is_error": False,
+                     "result": "", "session_id": session,
+                     "structured_output": answer.get("value"),
+                     "modelUsage": SCRIPTED_USAGE}))
     return 0
 
 

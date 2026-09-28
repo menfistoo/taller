@@ -13,8 +13,8 @@ from typing import Any
 
 import yaml
 
-from .. import gitio, locking, registry, tickets
-from ..errors import ConfigError
+from .. import chief, gitio, locking, registry, tickets
+from ..errors import ConfigError, TallerError
 from ..onboarding import Question, ask
 from ..prompter import Prompter
 from . import common
@@ -81,12 +81,30 @@ def new(args: Any, prompter: Prompter) -> int:
         words = "\n".join(lines).strip()
         if not words:
             prompter.say("  A few words are needed.")
-    kind = ask(prompter, Question("ticket.kind", "kind", 0, "What kind of work is it?",
-                                  "choice", choices=KIND_CHOICES))
-    title = ask(prompter, Question("ticket.title", "title", 0, "A short title for it",
-                                   "text"), default=_propose_title(words))
-
-    ticket = tickets.create(project, title=title, words=words, kind=kind)
+    if getattr(args, "kind", None):
+        # The owner names the work themselves (phase D's path).
+        title = ask(prompter, Question("ticket.title", "title", 0, "A short title for it",
+                                       "text"), default=_propose_title(words))
+        ticket = tickets.create(project, title=title, words=words, kind=args.kind)
+    else:
+        # G2: the owner states intent once; the chief names the work (spec 7.6).
+        ticket = tickets.create(project, title=_propose_title(words), words=words,
+                                kind="idea")
+        try:
+            ticket = chief.classify(project, ticket["id"])
+        except TallerError as exc:
+            prompter.say(f"  The chief could not classify it ({exc}). Answer these two "
+                         f"yourself:")
+            kind = ask(prompter, Question("ticket.kind", "kind", 0,
+                                          "What kind of work is it?", "choice",
+                                          choices=KIND_CHOICES))
+            title = ask(prompter, Question("ticket.title", "title", 0,
+                                           "A short title for it", "text"),
+                        default=ticket["title"])
+            ticket = tickets.load(project, ticket["id"])
+            ticket.update({"kind": kind, "title": title})
+            ticket = tickets.write(project, ticket, f"ticket {ticket['id']:04d}: named",
+                                   note=f"named by the owner: {kind}")
     lines = [f"Created ticket {ticket['id']:04d} - {ticket['title']}",
              f"  {tickets.ticket_dir(ticket)}"]
     if ticket.get("issue"):
@@ -226,6 +244,15 @@ def resume(args: Any, prompter: Prompter) -> int:
         ["  Nothing needed repairing."]
     lines.append(f"  {next_hint(ticket)}")
     prompter.say("\n".join(lines))
+    return 0
+
+
+def run(args: Any, prompter: Prompter) -> int:
+    """`taller ticket run`: carry the ticket until it needs you (phase B)."""
+    project = _project(args)
+    ticket = chief.run(project, args.id, lane=args.lane, say=prompter.say)
+    prompter.say(f"Ticket {ticket['id']:04d} is at {_label(ticket['stage'])}.\n"
+                 f"  {next_hint(ticket)}")
     return 0
 
 

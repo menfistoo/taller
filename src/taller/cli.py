@@ -90,11 +90,15 @@ def build_parser() -> argparse.ArgumentParser:
     ticket_new.add_argument("words", nargs="*", help="what should be done (asked if left out)")
     ticket_new.add_argument("--from-queue", action="store_true",
                             help="turn the project's first-version queue into tickets")
+    ticket_new.add_argument("--kind", choices=("bug", "feature", "refactor", "question", "idea"),
+                            help="name the kind yourself instead of asking the chief")
     ticket_verb("list", "open tickets", with_id=False).add_argument(
         "--all", action="store_true", help="closed ones too")
     ticket_verb("show", "one ticket, and what comes next")
     ticket_verb("transition", "move to the next stage").add_argument(
         "--lane", choices=("fast", "full"), help="chosen at triage")
+    ticket_verb("run", "carry the ticket until it needs you").add_argument(
+        "--lane", choices=("fast", "full"), help="override the lane chosen at triage")
     ticket_verb("approve", "approve at a checkpoint and move on")
     ticket_verb("reject", "reject at a checkpoint").add_argument(
         "--reason", help="why (asked if left out)")
@@ -136,6 +140,7 @@ def _handler(args: argparse.Namespace) -> Handler:
         ("ticket", "list"): ticket.list_,
         ("ticket", "show"): ticket.show,
         ("ticket", "transition"): ticket.transition,
+        ("ticket", "run"): ticket.run,
         ("ticket", "approve"): ticket.approve,
         ("ticket", "reject"): ticket.reject,
         ("ticket", "resume"): ticket.resume,

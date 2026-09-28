@@ -409,7 +409,8 @@ def _refuse_if_blocked(ticket: Mapping[str, Any]) -> None:
             f"`taller ticket resume {ticket['id']}` once that is dealt with.")
 
 
-def advance(project: Path | str, ticket_id: int, *, lane: str | None = None) -> Ticket:
+def advance(project: Path | str, ticket_id: int, *, lane: str | None = None,
+            note: str | None = None) -> Ticket:
     """Move to the next stage of the ticket's lane, doing what entering it needs."""
     project = Path(project)
     with locking.project_lock(registry.get_project(project)["name"]):
@@ -446,7 +447,8 @@ def advance(project: Path | str, ticket_id: int, *, lane: str | None = None) -> 
             extra = (f"; {', '.join(done)}" if done else "") + _close_issue_note(project, ticket)
         ticket["stage"] = target
         return write(project, ticket, f"ticket {ticket_id:04d}: {stage} -> {target}",
-                     note=f"{_label(stage)} → {_label(target)}{detail}{extra}")
+                     note=f"{_label(stage)} → {_label(target)}{detail}{extra}"
+                          + (f"; {note}" if note else ""))
 
 
 def _set_lane(ticket: Ticket, lane: str | None) -> str:

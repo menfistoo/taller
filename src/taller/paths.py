@@ -75,8 +75,14 @@ def doctor_dispatch_cache() -> Path:
 
 
 def ticket_worktree(project_name: str, ticket_dir_name: str) -> Path:
-    """A ticket's own worktree, on its branch, from ④ build (spec 8.1)."""
-    return run_dir() / "worktrees" / f"{project_name}-{ticket_dir_name}"
+    """A ticket's own worktree, on its branch, from ④ build (spec 8.1).
+
+    Deliberately not under `worktrees/`: that root holds the `main` worktrees,
+    which no dispatch may ever write (3.6.1), and a ticket worktree is exactly
+    where the implementer writes. Separate roots keep that guard a plain
+    containment check.
+    """
+    return run_dir() / "ticket-worktrees" / f"{project_name}-{ticket_dir_name}"
 
 
 def main_worktree(project_name: str) -> Path:

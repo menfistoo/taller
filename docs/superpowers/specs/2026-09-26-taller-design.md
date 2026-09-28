@@ -421,7 +421,8 @@ inside a subagent turn where `structured_output` does not reach.
 | `prompt` | stdin, with `-p --output-format json` |
 | `model`, else `config`/`ruleset` lookup for `role` | `--model` |
 | `effort`, else the `effort` lookup for `role`, else `effort.default` | `--effort <level>` (native flag; verified present on 2.1.74, accepting `low` `medium` `high` `max`) |
-| `system`, else the role's slices from `ruleset` | `--append-system-prompt` |
+| the role's definition (`agents/<role>.md`), then `system` | `--append-system-prompt` |
+| the role's slices from `ruleset` | the head of the prompt, on stdin — **not** the command line, which Windows caps at 32,767 characters (8,191 through `cmd.exe`); a full briefing can exceed it (found in phase B) |
 | `resume` | `--resume <session_id>` |
 | `cwd` | process working directory |
 | `tools` | `--allowedTools` |
@@ -1846,7 +1847,7 @@ simultaneously, and the loser fails with a clear message after 5s.
 |---|---|---|
 | ① | intake | Owner describes it in any words. Chief classifies. Ticket committed to `main`, `gh issue` opened. |
 | ② | triage | Slices loaded, snapshot refreshed. Explorer locates files. **Lane decided.** |
-| ③ | design | Architect writes `plan.md`. **Owner checkpoint 1.** |
+| ③ | design | Architect writes `plan.md`. **Owner checkpoint 1.** On the full lane the branch and worktree open here, since §7.2 puts `plan.md` on the branch. |
 | ④ | build | Worktree + branch. Implementer writes code and commits. |
 | ⑤ | gates | Selected gates in parallel, up to `concurrency.max_parallel_gates` (§5.2, enforced in §3.6). Findings → fixer, max `max_fix_rounds`. |
 | ⑥ | smoke | **The application boots and the change is exercised through it** (§9.6). No `pytest` here — that is the tests gate at ⑤. |

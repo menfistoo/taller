@@ -14,7 +14,7 @@ from taller.prompter import ScriptedPrompter
 
 
 @pytest.fixture
-def project(tmp_home: Path, identity, monkeypatch) -> Path:
+def project(tmp_home: Path, identity, stub_claude, monkeypatch) -> Path:
     monkeypatch.setattr(discovery, "_run_gh", lambda args: None)
     return support.new_project()
 

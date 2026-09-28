@@ -22,20 +22,31 @@ def test_every_role_has_a_definition_starting_with_its_marker(role: str):
     assert len(text) > 200, "a definition says who it is, what it may touch, what it answers"
 
 
-def test_the_brief_is_definition_then_slices(tmp_home: Path):
+def test_the_role_briefs_and_its_slices_head_the_prompt(tmp_home: Path):
     ruleset = {"slices": {
         "ux": {"text": "> UX rules.\nButtons say what they do.\n"},
         "security": {"text": "> Security rules.\nNever log a password.\n"},
     }}
-    dispatch = inference.Dispatch(role="gate_ux", prompt="p", config=config.load_hub_config(),
-                                  ruleset=ruleset)
+    dispatch = inference.Dispatch(role="gate_ux", prompt="Review the change.",
+                                  config=config.load_hub_config(), ruleset=ruleset)
 
-    brief = inference._brief(dispatch)
+    brief, prompt = inference._brief(dispatch), inference._prompt(dispatch)
 
     assert brief.splitlines()[0] == "ROLE: gate_ux"
-    assert "Buttons say what they do." in brief
-    assert "Never log a password." not in brief
-    assert brief.index("ROLE: gate_ux") < brief.index("Buttons say what they do.")
+    assert "Buttons say what they do." not in brief, "rules must not ride the command line"
+    assert "Buttons say what they do." in prompt and "Never log a password." not in prompt
+    assert prompt.index("Buttons say what they do.") < prompt.index("Review the change.")
+
+
+def test_a_long_constitution_never_reaches_the_command_line(tmp_home: Path):
+    """Windows caps a command line at 32,767 characters (8,191 through cmd.exe)."""
+    ruleset = {**config.load_hub_config(), "slices": {"conventions": {"text": "x" * 40_000}}}
+    dispatch = inference.Dispatch(role="implementer", prompt="p",
+                                  config=config.load_hub_config(), ruleset=ruleset)
+
+    argv, _ = inference._build(dispatch, "claude")
+
+    assert sum(len(arg) for arg in argv) < 8_000
 
 
 def test_an_explicit_system_is_added_after_the_role(tmp_home: Path):

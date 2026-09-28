@@ -384,7 +384,8 @@ def test_a_role_is_briefed_with_only_its_own_slices(tmp_home):
         },
     }
     dispatch = _bootstrap_dispatch(role="gate_ux", ruleset=ruleset)
-    brief = inference._brief(dispatch)
+    # The rules travel in the prompt (stdin), not the system prompt: see _brief.
+    brief = inference._rules(dispatch)
 
     assert "UX-SLICE" in brief
     assert "BRAND-SLICE" in brief
@@ -396,8 +397,7 @@ def test_a_role_is_briefed_with_only_its_own_slices(tmp_home):
 def test_a_missing_slice_is_skipped_not_an_error(tmp_home):
     """A project need not provide every slice."""
     dispatch = _bootstrap_dispatch(role="gate_ux", ruleset={"slices": {"ux": {"text": "ONLY-UX"}}})
-    brief = inference._brief(dispatch)
-    assert brief.startswith("ROLE: gate_ux") and brief.endswith("\n\nONLY-UX\n")
+    assert inference._rules(dispatch) == "ONLY-UX"
 
 
 def test_the_briefing_reaches_append_system_prompt(tmp_home, stub_claude):

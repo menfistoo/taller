@@ -203,7 +203,7 @@ def infer(dispatch: Dispatch, executable: str = "claude") -> Result:
         try:
             completed = _run_bounded(
                 argv,
-                input=dispatch.prompt,
+                input=_prompt(dispatch),
                 # UTF-8 on both directions, explicitly. Without it Python uses the
                 # locale encoding - cp1252 on Windows - and two things break
                 # silently: a prompt containing any character outside cp1252 (an
@@ -402,25 +402,48 @@ def _build(dispatch: Dispatch, executable: str) -> tuple[list[str], Path]:
 
 
 def _brief(dispatch: Dispatch) -> str:
-    """The role's definition, then only THIS role's slices (3.6.0), then `system`.
+    """The system prompt: the role's definition, then any `system` the caller adds.
 
-    The definition comes first, so the brief's first line is `ROLE: <role>`.
-    An earlier version concatenated every slice in the RuleSet, so a UX gate was
-    briefed with the security and product slices too - wasteful, confusing, and it
-    quietly gave up the context saving the whole design is built on.
+    The definition comes first, so the brief's first line is `ROLE: <role>`. It
+    is short on purpose: it travels on the command line, which Windows caps at
+    32,767 characters (8,191 through cmd.exe). The project's rules - which can be
+    far longer - travel in the prompt instead (`_rules`).
     """
     from . import roles                   # roles imports this module
 
     parts = [roles.definition(dispatch.role).strip()]
+    if dispatch.system:
+        parts.append(dispatch.system)
+    return "\n\n".join(p.strip() for p in parts if p and p.strip()) + "\n"
+
+
+def _rules(dispatch: Dispatch) -> str:
+    """Only THIS role's slices of the constitution (3.6.0), for the head of the prompt.
+
+    An earlier version concatenated every slice in the RuleSet, so a UX gate was
+    briefed with the security and product slices too - wasteful, confusing, and it
+    quietly gave up the context saving the whole design is built on.
+    """
     slices = (dispatch.ruleset or {}).get("slices") or {}
+    parts = []
     for name in role_slices(dispatch.role):
         resolved = slices.get(name)
         if not resolved:
             continue                    # a slice this project does not provide
         parts.append(resolved["text"] if isinstance(resolved, dict) else str(resolved))
-    if dispatch.system:
-        parts.append(dispatch.system)
-    return "\n\n".join(p.strip() for p in parts if p and p.strip()) + "\n"
+    return "\n\n".join(p.strip() for p in parts if p and p.strip())
+
+
+def _prompt(dispatch: Dispatch) -> str:
+    """What goes to stdin: the project's rules for this role, then the task.
+
+    Stdin has no length limit, which is why the rules are here and not in the
+    system prompt (see `_brief`).
+    """
+    rules = _rules(dispatch)
+    if not rules:
+        return dispatch.prompt
+    return f"# The project's rules\n\n{rules}\n\n# The task\n\n{dispatch.prompt}"
 
 
 def _expand_forbidden(globs: list[str]) -> list[str]:
