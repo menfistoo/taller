@@ -8,11 +8,13 @@ change to exercise. Nothing is written: no commit, no file, no ticket.
 from __future__ import annotations
 
 import json
+import shutil
+import tempfile
 from collections import Counter
 from pathlib import Path
 from typing import Any, Mapping
 
-from .. import constitution, gates, registry, tickets
+from .. import constitution, gates, gitio, registry, tickets
 from ..errors import TallerError
 from ..gates import constitution as constitution_gate
 from ..gates import diff as gate_diff
@@ -31,7 +33,7 @@ def health(project: Path, ruleset: Mapping[str, Any]) -> dict[str, Any]:
     verdicts = [
         constitution_gate.scan(tree, ruleset, snapshot_sha=_snapshot_sha(project)),
         size_gate.scan(tree, ruleset),
-        tests_gate.scan(project, ruleset),
+        _tests_elsewhere(project, ruleset),
     ]
     findings = [f for v in verdicts for f in v["findings"]]
     tally = Counter(f["rule"] for f in findings)
@@ -84,6 +86,23 @@ def run(args: Any, prompter: Prompter) -> int:
             continue
         prompter.say(render(entry["name"], figures))
     return 0
+
+
+def _tests_elsewhere(project: Path, ruleset: Mapping[str, Any]) -> dict[str, Any]:
+    """The owner's suite, run in a throwaway checkout of HEAD - never in hers.
+
+    Her suite may write (a coverage report, a database), and `scan` promises to
+    write nothing. Her interpreter is still the one used: the venv lives with her.
+    """
+    root = Path(tempfile.mkdtemp(prefix="taller-scan-"))
+    checkout = root / "checkout"
+    try:
+        gitio.git(project, "worktree", "add", "--quiet", "--detach", str(checkout), "HEAD")
+        return tests_gate.scan(checkout, ruleset, project=project)
+    finally:
+        gitio.git(project, "worktree", "remove", "--force", str(checkout), check=False)
+        gitio.git(project, "worktree", "prune", check=False)
+        shutil.rmtree(root, ignore_errors=True)
 
 
 def _snapshot_sha(project: Path) -> str | None:

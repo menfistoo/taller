@@ -41,9 +41,15 @@ _VARIABLE = re.compile(r"\$\{?([A-Z_][A-Z0-9_]*)\}?")
 
 def run(worktree: Path | str, ruleset: Mapping[str, Any], *,
         templates: Mapping[str, list[str]] | None = None,
-        changed: Sequence[str] = ()) -> Verdict:
-    """`templates`: the explorer's template -> routes map; `changed`: the diff's paths."""
+        changed: Sequence[str] = (), project: Path | str | None = None) -> Verdict:
+    """`templates`: the explorer's template -> routes map; `changed`: the diff's paths.
+
+    `project` is the owner's checkout (default: the worktree). The worktree is a
+    fresh checkout without anything gitignored, so the interpreter (its venv) and
+    the database to copy are both taken from the project.
+    """
     worktree = Path(worktree)
+    project = Path(project) if project is not None else worktree
     config = ruleset.get("smoke")
     if not isinstance(config, Mapping) or not config.get("kind"):
         return _error("No `smoke` configuration: the profile or taller.yml must declare "
@@ -51,11 +57,12 @@ def run(worktree: Path | str, ruleset: Mapping[str, Any], *,
     kind = config["kind"]
     if kind == "none":
         return verdict(GATE, [], {"skipped": True})
+    found = problems(config)
+    if found:
+        return _error("The smoke configuration cannot be honoured: " + "; ".join(found))
     if kind == "import":
-        return _import(worktree, config)
-    if kind != "http":
-        return _error(f"Unknown smoke kind {kind!r}: use http, import or none.")
-    return _http(worktree, config, templates or {}, changed)
+        return _import(worktree, project, config)
+    return _http(worktree, project, config, templates or {}, changed)
 
 
 def problems(config: Any) -> list[str]:
@@ -70,6 +77,13 @@ def problems(config: Any) -> list[str]:
     if kind == "http":
         if not str(config.get("boot") or "").strip():
             found.append("smoke.boot is empty: nothing to start")
+        wiring = " ".join([str(config.get("boot") or ""), str(config.get("ready") or ""),
+                           *(str(v) for v in (config.get("env") or {}).values())])
+        if "TALLER_SMOKE_PORT" not in wiring:
+            # Without it the app binds its own port - on Windows even the one the
+            # owner's dev server holds - and smoke may talk to the wrong process.
+            found.append("neither smoke.boot nor smoke.env uses $TALLER_SMOKE_PORT, so the "
+                         "app would not start on the port the gate allocates")
         if config.get("data", "none") not in ("copy", "fresh", "none"):
             found.append(f"smoke.data {config.get('data')!r} is not copy, fresh or none")
         if config.get("data") == "copy" and not config.get("database"):
@@ -77,6 +91,9 @@ def problems(config: Any) -> list[str]:
     if kind == "import" and not config.get("module"):
         found.append("smoke.module is not set")
     auth = config.get("auth")
+    if isinstance(auth, Mapping) and auth.get("kind", "none") not in ("none", "basic"):
+        found.append(f"smoke.auth.kind {auth.get('kind')!r} is not supported yet; use "
+                     f"basic or none")
     if isinstance(auth, Mapping) and auth.get("kind", "none") != "none":
         secret = str(auth.get("secret") or "")
         for name in _VARIABLE.findall(secret):
@@ -88,14 +105,15 @@ def problems(config: Any) -> list[str]:
 
 # --- http ------------------------------------------------------------------------------
 
-def _http(worktree: Path, config: Mapping[str, Any], templates: Mapping[str, list[str]],
-          changed: Sequence[str]) -> Verdict:
+def _http(worktree: Path, project: Path, config: Mapping[str, Any],
+          templates: Mapping[str, list[str]], changed: Sequence[str]) -> Verdict:
     findings: list[Finding] = []
     routes = [str(route) for route in config.get("routes") or ["/"]]
     for path in changed:
         if not path.lower().endswith(TEMPLATE_SUFFIXES):
             continue
-        mapped = [str(route) for route in templates.get(path) or []]
+        # `/dia/<fecha>` is a pattern, not a page: fetching it literally is a 404.
+        mapped = [str(route) for route in templates.get(path) or [] if "<" not in str(route)]
         if not mapped:
             findings.append(finding(
                 "smoke.unmapped-template", path, 0,
@@ -112,7 +130,7 @@ def _http(worktree: Path, config: Mapping[str, Any], templates: Mapping[str, lis
     process: subprocess.Popen | None = None
     log_path = data_dir.parent / f"{data_dir.name}.log"
     try:
-        error = _prepare_data(worktree, config, data_dir)
+        error = _prepare_data(project, config, data_dir, metrics)
         if error:
             return _error(error, metrics)
         ready = str(config.get("ready") or "auto")
@@ -120,7 +138,7 @@ def _http(worktree: Path, config: Mapping[str, Any], templates: Mapping[str, lis
         env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8",
                **{str(k): _substitute(str(v), values)
                   for k, v in (config.get("env") or {}).items()}}
-        argv = _argv(_substitute(str(config.get("boot") or ""), values), worktree)
+        argv = _argv(_substitute(str(config.get("boot") or ""), values), project)
         if not argv:
             return _error("`smoke.boot` is empty: nothing to start.", metrics)
         with open(log_path, "wb") as log:
@@ -220,8 +238,8 @@ def _get(url: str, config: Mapping[str, Any], values: Mapping[str, str], *,
     request = urllib.request.Request(url)
     handlers: list[Any] = [urllib.request.ProxyHandler({})]
     if auth and auth.get("kind") == "basic":
-        user = _substitute(str(auth.get("user") or ""), values)
-        secret = _substitute(str(auth.get("secret") or ""), values)
+        user = _expand(_substitute(str(auth.get("user") or ""), values))
+        secret = _expand(_substitute(str(auth.get("secret") or ""), values))
         token = base64.b64encode(f"{user}:{secret}".encode("utf-8")).decode("ascii")
         request.add_header("Authorization", f"Basic {token}")
     else:
@@ -237,11 +255,11 @@ def _get(url: str, config: Mapping[str, Any], values: Mapping[str, str], *,
 
 # --- import ------------------------------------------------------------------------------
 
-def _import(worktree: Path, config: Mapping[str, Any]) -> Verdict:
+def _import(worktree: Path, project: Path, config: Mapping[str, Any]) -> Verdict:
     module = str(config.get("module") or "")
     if not module:
         return _error("`smoke.module` is not set for `kind: import`.")
-    python = tests_gate.interpreter(worktree)
+    python = tests_gate.interpreter(project)
     if not Path(python).is_file():
         return _error(python)
     timeout_s = float(config.get("timeout_s") or 30)
@@ -269,8 +287,13 @@ def _free_port() -> int:
         return probe.getsockname()[1]
 
 
-def _prepare_data(worktree: Path, config: Mapping[str, Any], data_dir: Path) -> str | None:
-    """`copy` copies the live database file only - never its -wal or -shm."""
+def _prepare_data(project: Path, config: Mapping[str, Any], data_dir: Path,
+                  metrics: dict[str, Any]) -> str | None:
+    """`copy` copies the owner's database file only - never its -wal or -shm.
+
+    A project that has never run has no database yet; it boots on an empty one,
+    and `metrics.data` says so rather than pretending a copy was made.
+    """
     mode = str(config.get("data") or "none")
     if mode in ("none", "fresh"):
         return None
@@ -279,10 +302,18 @@ def _prepare_data(worktree: Path, config: Mapping[str, Any], data_dir: Path) -> 
     source = config.get("database")
     if not source:
         return "`smoke.data: copy` needs `smoke.database`: the project database to copy."
-    live = worktree / str(source)
+    live = project / str(source)
     if live.is_file():
         shutil.copyfile(live, data_dir / live.name)
+        metrics["data"] = f"a copy of {source}"
+    else:
+        metrics["data"] = f"empty: no database at {source} in {project}"
     return None
+
+
+def _expand(text: str) -> str:
+    """Any other `$NAME` from the environment - what doctor checks is set."""
+    return _VARIABLE.sub(lambda m: os.environ.get(m.group(1), m.group(0)), text)
 
 
 def _substitute(text: str, values: Mapping[str, str]) -> str:
@@ -291,12 +322,12 @@ def _substitute(text: str, values: Mapping[str, str]) -> str:
     return text
 
 
-def _argv(command: str, worktree: Path) -> list[str]:
-    """`python ...` runs under the interpreter the tests gate would use."""
+def _argv(command: str, project: Path) -> list[str]:
+    """`python ...` runs under the project's interpreter, as the tests gate does."""
     argv = shlex.split(command, posix=os.name != "nt")
     argv = [part.strip('"') for part in argv] if os.name == "nt" else argv
     if argv and argv[0] in ("python", "python3", "py"):
-        python = tests_gate.interpreter(worktree)
+        python = tests_gate.interpreter(project)
         argv[0] = python if Path(python).is_file() else argv[0]
     return argv
 

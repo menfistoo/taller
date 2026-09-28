@@ -70,7 +70,10 @@ def derive(path: Path | str) -> Facts:
         "commits": int(count.stdout.strip()) if count.returncode == 0 else 0,
         "claude_md": claude_text,
         "claude_md_tokens": constitution.estimate_tokens(claude_text) if claude_text else 0,
-        "review_dirs": [name for name in REVIEW_DIRS if (repo / name).is_dir()],
+        # Only what git tracks: `git rm` of an ignored folder fails half-way through
+        # the adoption commit, and there is nothing of the owner's history to retire.
+        "review_dirs": [name for name in REVIEW_DIRS if (repo / name).is_dir() and gitio.git(
+            repo, "ls-files", "--", name, check=False).stdout.strip()],
     }
 
 
@@ -276,7 +279,7 @@ def apply(project: Path | str, *, name: str, answers: Mapping[str, Any], facts: 
     gitio.git(project, "add", "--", *files)
     for directory in remove or []:
         if directory in REVIEW_DIRS and (project / directory).is_dir():
-            gitio.git(project, "rm", "-r", "--quiet", "--", directory)
+            gitio.git(project, "rm", "-r", "--quiet", "--ignore-unmatch", "--", directory)
     gitio.git(project, "commit", "--quiet", "-m", f"Adopt {name} into Taller")
 
     registry.add_project(path=project, name=name, profile=profile, brand=brand, adopted=True)

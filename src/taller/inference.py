@@ -51,9 +51,10 @@ ROLE_TOOLS: dict[str, list[str]] = {
     "explorer": READ_ONLY,
     "scribe": ["Read"],
     "summariser": ["Read"],
-    "gate_security": READ_ONLY,
-    "gate_quality": READ_ONLY,
-    "gate_ux": READ_ONLY,
+    # The gates are shown the change, capped; `git diff` lets them read the rest.
+    "gate_security": READ_ONLY + ["Bash(git diff*)", "Bash(git log*)"],
+    "gate_quality": READ_ONLY + ["Bash(git diff*)", "Bash(git log*)"],
+    "gate_ux": READ_ONLY + ["Bash(git diff*)", "Bash(git log*)"],
     "architect": READ_ONLY + ["Write", "Edit"],
     "implementer": READ_ONLY + ["Write", "Edit", "NotebookEdit", BARE_BASH],
     "fixer": READ_ONLY + [
@@ -64,7 +65,10 @@ ROLE_TOOLS: dict[str, list[str]] = {
 }
 
 # Only the fixer restricts paths, and only the fixer therefore loses bare Bash.
-FIXER_FORBIDDEN = ["**/test_*.py", "**/*_test.py"]
+# A test is switched off as easily from pytest's configuration as from the test
+# file itself (spec 9.7: the fixer may not make a failing test pass that way).
+FIXER_FORBIDDEN = ["**/test_*.py", "**/*_test.py", "**/conftest.py", "pytest.ini",
+                   "pyproject.toml", "setup.cfg", "tox.ini"]
 
 
 def role_tools(role: str) -> list[str]:

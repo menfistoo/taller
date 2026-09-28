@@ -31,15 +31,28 @@ _TOTAL = re.compile(r"^TOTAL\s.*?(\d+(?:\.\d+)?)%\s*$", re.MULTILINE)
 
 
 def run(worktree: Path | str, ruleset: Mapping[str, Any], *,
-        timeout_s: float = TIMEOUT_S) -> Verdict:
+        project: Path | str | None = None, timeout_s: float = TIMEOUT_S,
+        only: list[str] | None = None) -> Verdict:
+    """The suite in `worktree`, under `project`'s interpreter (default: the worktree's).
+
+    A ticket worktree is a fresh checkout: the venv the owner's project runs in is
+    gitignored and exists only in her checkout, which is why `project` is separate.
+    `only` narrows the run to those test ids.
+    """
     worktree = Path(worktree)
-    python = interpreter(worktree)
-    if isinstance(python, str) and not Path(python).is_file():
+    python = interpreter(Path(project) if project is not None else worktree)
+    if not Path(python).is_file():
         return _error(python, {})
+    # `python -m pytest` without pytest exits 1 - the code for "tests failed". Ask first,
+    # so a missing tool escalates instead of sending a fixer after it.
+    if not _imports(python, "pytest"):
+        return _error(f"pytest is not installed for {python}, so the tests cannot run. "
+                      f"Install it in that environment.", {})
     thresholds = ruleset.get("thresholds") or {}
     minimum = float(thresholds.get("min_coverage_pct") or 0)
-    measure = minimum > 0 and _has_pytest_cov(python)
-    argv = [python, *ARGS, *(["--cov=.", "--cov-report=term"] if measure else [])]
+    measure = minimum > 0 and not only and _imports(python, "pytest_cov")
+    argv = [python, *ARGS, *(["--cov=.", "--cov-report=term"] if measure else []),
+            *(only or [])]
 
     # No __pycache__ left behind: `taller scan` promises to write nothing.
     env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1",
@@ -70,9 +83,11 @@ def run(worktree: Path | str, ruleset: Mapping[str, Any], *,
             findings.append(finding(
                 "tests.failed", test_id.split("::", 1)[0], 0, f"{test_id} failed.",
                 "Fix the code under test. The test itself may not be changed."))
+            findings[-1]["test_id"] = test_id
         if not findings:
-            findings.append(finding("tests.failed", "", 0,
-                                    f"The suite failed.\n{_tail(output)}", None))
+            # Exit 1 naming no failed test is pytest failing, not a test failing.
+            return _error(f"pytest exited with code 1 but named no failed test.\n"
+                          f"{_tail(output)}", metrics)
 
     if measure:
         total = _TOTAL.search(output)
@@ -89,10 +104,27 @@ def run(worktree: Path | str, ruleset: Mapping[str, Any], *,
 scan = run
 
 
-def interpreter(worktree: Path) -> str:
-    """The project's venv interpreter if it has a venv, else Taller's own."""
+def failing(worktree: Path | str, ids: list[str], ruleset: Mapping[str, Any], *,
+            project: Path | str | None = None) -> set[str]:
+    """Which of `ids` also fail in `worktree` (main, for a failure already there)."""
+    if not ids:
+        return set()
+    present = [i for i in ids if (Path(worktree) / i.split("::", 1)[0]).is_file()]
+    if not present:
+        return set()
+    result = run(worktree, ruleset, project=project, only=present)
+    if result["result"] == "error":
+        return set()
+    return {f.get("test_id") for f in result["findings"] if f["rule"] == "tests.failed"}
+
+
+def interpreter(project: Path) -> str:
+    """The project's venv interpreter if it has a venv, else Taller's own.
+
+    Give it the owner's checkout, not a ticket worktree: the venv is gitignored.
+    """
     for name in ("venv", ".venv"):
-        root = worktree / name
+        root = project / name
         if root.is_dir():
             for candidate in (root / "Scripts" / "python.exe", root / "bin" / "python"):
                 if candidate.is_file():
@@ -102,9 +134,9 @@ def interpreter(worktree: Path) -> str:
     return sys.executable
 
 
-def _has_pytest_cov(python: str) -> bool:
+def _imports(python: str, module: str) -> bool:
     try:
-        return subprocess.run([python, "-c", "import pytest_cov"], capture_output=True,
+        return subprocess.run([python, "-c", f"import {module}"], capture_output=True,
                               timeout=60).returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         return False

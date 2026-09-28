@@ -36,6 +36,9 @@ if mode == "db":
     assert not os.path.exists(database + "-wal") and not os.path.exists(database + "-shm")
     with open(database, "ab") as handle:
         handle.write(b"written by the smoke run")
+if mode == "copied":
+    assert open(os.environ["DATABASE"]).read() == os.environ["EXPECT"]
+expect_auth = os.environ.get("EXPECT_AUTH")
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *args):
@@ -45,6 +48,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if log:
             with open(log, "a") as handle:
                 handle.write(self.path + "\\n")
+        if expect_auth:
+            import base64
+            wanted = "Basic " + base64.b64encode(expect_auth.encode()).decode()
+            if self.headers.get("Authorization") != wanted:
+                return self.answer(401, b"who are you")
         if self.path == "/broken":
             return self.answer(500, b"boom")
         if self.path == "/private":

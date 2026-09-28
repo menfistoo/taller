@@ -39,12 +39,12 @@ Say = Callable[[str], None]
 PASS_THROUGH = {
     "pr": "the pull request arrives in phase F; merge the branch yourself",
 }
-# The fixer may never touch a test (spec 9.7); a round whose diff does is undone.
+# The fixer may never touch a test (spec 9.7), nor switch one off from pytest's
+# configuration; a round whose diff does is undone.
 TEST_FILES = ("test_*.py", "*_test.py")
+TEST_CONFIG = ("conftest.py", "pytest.ini", "pyproject.toml", "setup.cfg", "tox.ini")
 SNAPSHOT = ".taller/resolved.json"
-# How the CLI says a model is out of reach, as distinct from any other failure.
-UNAVAILABLE = re.compile(r"model\b.*\b(not available|not found|does not exist|unavailable|"
-                         r"invalid)", re.IGNORECASE)
+UNAVAILABLE = models.UNAVAILABLE
 DIFF_IGNORED = ".taller/work/"
 
 
@@ -177,6 +177,7 @@ def _budget_reason(ticket: Mapping[str, Any], cfg: Mapping[str, Any]) -> str:
 
 NOTES_SHOWN = 40            # the ticket's history a role is shown, newest last
 PATCH_SHOWN = 12_000       # characters of the diff a role is shown
+GATE_PATCH_MAX = 200_000   # a gate judges the change, so it is shown (nearly) all of it
 
 
 def _context(project: Path, ticket: Mapping[str, Any]) -> str:
@@ -195,7 +196,7 @@ def _context(project: Path, ticket: Mapping[str, Any]) -> str:
     return text
 
 
-def _change(project: Path, ticket: Mapping[str, Any]) -> str:
+def _change(project: Path, ticket: Mapping[str, Any], limit: int = PATCH_SHOWN) -> str:
     """The branch's change against `main` - stat, then the patch, capped."""
     if not ticket.get("branch"):
         return ""
@@ -207,8 +208,9 @@ def _change(project: Path, ticket: Mapping[str, Any]) -> str:
         return ""
     patch = gitio.git(project, "-c", "core.quotepath=false", "diff", spec, "--", ".",
                       exclude, check=False).stdout
-    if len(patch) > PATCH_SHOWN:
-        patch = patch[:PATCH_SHOWN] + "\n[... the rest of the diff is cut ...]\n"
+    if len(patch) > limit:
+        patch = patch[:limit] + ("\n[... the rest of the diff is cut; `git diff "
+                                 f"{gitio.MAIN_BRANCH}...HEAD` shows it ...]\n")
     return f"\nThe change on the branch so far:\n{stat}\n\n{patch}"
 
 
@@ -384,7 +386,9 @@ def _step(project: Path, ticket: Ticket, lane: str | None, cfg: Mapping[str, Any
                               + _gate_report(project, ticket, ruleset)
                               + "\nSummarise the change for review.",
                               cfg=cfg, ruleset=ruleset, cwd=tree)
-            _commit_ticket_file(tree, ticket, "review.md", summary["summary_md"],
+            _commit_ticket_file(tree, ticket, "review.md",
+                                summary["summary_md"].rstrip() + "\n"
+                                + _findings_section(project, ticket),
                                 f"docs(review): ticket {ticket_id:04d}")
             tickets.write(project, tickets.load(project, ticket_id),
                           f"ticket {ticket_id:04d}: review written",
@@ -421,23 +425,26 @@ def _gates(project: Path, ticket_id: int, cfg: Mapping[str, Any],
     say(f"  Gates: {', '.join(selected)}")
     snapshot = _main_snapshot_sha(project)
     results: list[inference.Result] = []
-    diff_text = _change(project, ticket)
+    diff_text = _gate_patch(project, ticket)
     runners: dict[str, Callable[[], dict[str, Any]]] = {
         "constitution": lambda: constitution_gate.run(change, ruleset, snapshot_sha=snapshot),
         "size": lambda: size_gate.run(change, ruleset, tree=gate_diff.tree(tree)),
-        "tests": lambda: tests_gate.run(tree, ruleset),
+        "tests": lambda: tests_gate.run(tree, ruleset, project=project),
     }
     for name in llm.GATES:
         runners[name] = (lambda name=name: llm.run(
             name, project, ticket, diff_text, ruleset, cfg, cwd=tree,
             on_result=results.append)[0])
     workers = max(1, int((cfg.get("concurrency") or {}).get("max_parallel_gates") or 1))
+    clean = _dirty(tree)
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {name: pool.submit(_safely, name, runners[name]) for name in selected}
     verdicts = [futures[name].result() for name in selected]
+    _restore(tree, _dirty(tree) - clean)     # a gate leaves nothing for a fixer to sweep
     for result in results:                  # folded here, one writer at a time
         if result.usage or result.ok:
             spend.fold(project, ticket_id, result, cfg)
+    _known_failures(project, verdicts, ruleset)
     findings = _record(project, ticket_id, tree, verdicts, ruleset, "⑤ gates")
     return _route(project, ticket_id, findings, cfg, ruleset, say, stage="gates",
                   commands_ran=commands_ran)
@@ -450,7 +457,8 @@ def _smoke(project: Path, ticket_id: int, cfg: Mapping[str, Any],
     changed = [f["path"] for f in
                gate_diff.build(project, gitio.MAIN_BRANCH, ticket["branch"])["files"]]
     verdict = _safely("smoke", lambda: smoke_gate.run(
-        tree, ruleset, templates=ticket.get("templates") or {}, changed=changed))
+        tree, ruleset, templates=ticket.get("templates") or {}, changed=changed,
+        project=project))
     findings = _record(project, ticket_id, tree, [verdict], ruleset, "⑥ smoke")
     return _route(project, ticket_id, findings, cfg, ruleset, say, stage="smoke")
 
@@ -558,21 +566,28 @@ def _fix_round(project: Path, ticket_id: int, found: list[dict[str, Any]],
     tree = _worktree(project, ticket_id)
     ticket = tickets.load(project, ticket_id)
     before = gitio.git(tree, "rev-parse", "HEAD").stdout.strip()
+    # What is already dirty - a gate's coverage.xml, the owner's own edit - is not
+    # the fixer's to commit, and not the fixer's to be blamed for.
+    baseline = _dirty(tree)
     listing = "\n".join(f"- {_describe(f)}" for f in found)
     fixed, _ = _ask(project, ticket_id, "fixer",
                     _context(project, ticket) + _change(project, ticket)
                     + f"\nFix these findings, and nothing else:\n{listing}\n",
                     cfg=cfg, ruleset=ruleset, cwd=tree, writable=[str(tree)])
-    if gitio.git(tree, "status", "--porcelain", check=False).stdout.strip():
-        gitio.git(tree, "add", "--all")
-        gitio.git(tree, "commit", "--quiet", "-m", "chore: uncommitted work from the fixer")
-    touched = gitio.git(tree, "diff", "--name-only", f"{before}..HEAD").stdout.split()
+    leftovers = sorted(_dirty(tree) - baseline)
+    if leftovers:
+        gitio.git(tree, "add", "--", *leftovers)
+        gitio.git(tree, "commit", "--quiet", "-m", "chore: uncommitted work from the fixer",
+                  "--", *leftovers)
+    touched = _paths_between(tree, before, "HEAD")
     tests_dir = str((ruleset.get("paths") or {}).get("tests_dir") or "tests").strip("/")
     changed_tests = [path for path in touched
                      if globs.match(path, f"{tests_dir}/**")
-                     or any(globs.match(path, pattern) for pattern in TEST_FILES)]
+                     or any(globs.match(path, pattern) for pattern in TEST_FILES + TEST_CONFIG)]
     if changed_tests:
-        gitio.git(tree, "reset", "--quiet", "--hard", before)
+        # --keep leaves what was dirty before the round alone; --hard only if it must.
+        if gitio.git(tree, "reset", "--quiet", "--keep", before, check=False).returncode:
+            gitio.git(tree, "reset", "--quiet", "--hard", before)
         raise Blocked(f"the fixer changed {', '.join(changed_tests)} - a test is changed by "
                       f"a person, never to make a check pass - so its round was undone. "
                       f"The findings need you: " + "; ".join(_describe(f) for f in found))
@@ -583,6 +598,71 @@ def _fix_round(project: Path, ticket_id: int, found: list[dict[str, Any]],
     tickets.write(project, ticket, f"ticket {ticket_id:04d}: fix round {ticket['fix_rounds']}",
                   note=f"fix round {ticket['fix_rounds']}: {fixed['summary']}")
     say(f"  Fix round {ticket['fix_rounds']}: {fixed['summary']}")
+
+
+def _dirty(tree: Path) -> set[str]:
+    """Every path `git status` reports, verbatim (no quoting), renames as two."""
+    raw = gitio.git(tree, "-c", "core.quotepath=false", "status", "--porcelain", "-z",
+                    "--untracked-files=all", "--no-renames", check=False).stdout
+    return {entry[3:] for entry in raw.split("\0") if len(entry) > 3}
+
+
+def _restore(tree: Path, paths: set[str]) -> None:
+    """Undo what the gates wrote - a rewritten coverage.xml, an htmlcov/ - so it can
+    ride no commit to `main`."""
+    for path in sorted(paths):
+        tracked = gitio.git(tree, "ls-files", "--error-unmatch", "--", path,
+                            check=False).returncode == 0
+        if tracked:
+            gitio.git(tree, "checkout", "--quiet", "--", path, check=False)
+        else:
+            (tree / path).unlink(missing_ok=True)
+
+
+def _paths_between(tree: Path, before: str, after: str) -> list[str]:
+    """Every path changed between two commits, verbatim: an accented or spaced test
+    file must not slip past the check because git quoted or split its name."""
+    raw = gitio.git(tree, "-c", "core.quotepath=false", "diff", "--name-only", "-z",
+                    "--no-renames", f"{before}..{after}").stdout
+    return [path for path in raw.split("\0") if path]
+
+
+def _known_failures(project: Path, verdicts: list[dict[str, Any]],
+                    ruleset: Mapping[str, Any]) -> None:
+    """A test failing on `main` too is not the change's to fix (§9.3 in spirit):
+    it goes to the owner's summary, not to a fixer who would edit unrelated code."""
+    for verdict in verdicts:
+        if verdict.get("gate") != "tests" or verdict.get("result") == "error":
+            continue
+        failed = [f for f in verdict["findings"] if f["rule"] == "tests.failed"
+                  and f.get("test_id")]
+        if not failed:
+            continue
+        known = tests_gate.failing(_main_view(project), [f["test_id"] for f in failed],
+                                   ruleset, project=project)
+        for found in failed:
+            if found["test_id"] in known:
+                found["severity"] = "MEDIUM"
+                found["message"] += " It fails on main too: already failing on main."
+
+
+def _findings_section(project: Path, ticket: Mapping[str, Any]) -> str:
+    """What the gates found, written by Taller - not left to the summariser's prose."""
+    lines: list[str] = []
+    for name in ticket.get("gates") or []:
+        text = _on_branch(project, ticket, f"gates/{name}.md")
+        if not text:
+            continue
+        lines.extend(f"- {_describe(f)}" for f in gates.parse_verdict(text)["findings"]
+                     if f.get("severity") in ("BLOCKER", "HIGH", "MEDIUM"))
+    if not lines:
+        return "\n## What the gates found\n\nNothing for you to look at.\n"
+    return "\n## What the gates found\n\n" + "\n".join(lines) + "\n"
+
+
+def _gate_patch(project: Path, ticket: Mapping[str, Any]) -> str:
+    """The change as the model gates see it: whole, up to GATE_PATCH_MAX."""
+    return _change(project, ticket, limit=GATE_PATCH_MAX)
 
 
 def _has_tests(change: Mapping[str, Any], ruleset: Mapping[str, Any]) -> bool:

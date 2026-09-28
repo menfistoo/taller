@@ -67,10 +67,22 @@ def run(gate: str, project: Path, ticket: Mapping[str, Any], diff_text: str,
     prompt = prompt_for(gate, ticket, diff_text, ruleset)
     problem = ""
     result = inference.Result(ok=False, error="not dispatched")
-    for _ in range(ATTEMPTS):
-        result = inference.infer(_dispatch(role, prompt, ruleset, cfg, cwd or project))
+    model: str | None = None
+    fell_back = False
+    attempt = 0
+    while attempt < ATTEMPTS:
+        dispatch = _dispatch(role, prompt, ruleset, cfg, cwd or project)
+        dispatch.model = model
+        result = inference.infer(dispatch)
         if on_result is not None:
             on_result(result)
+        # §14: an unreachable model falls back once, and that is not the retry.
+        if not result.ok and not fell_back and models.UNAVAILABLE.search(result.error or ""):
+            fallback = models.fallback_for(role, ruleset or cfg)
+            if fallback:
+                fell_back, model = True, fallback
+                continue
+        attempt += 1
         problem = (result.error or "the dispatch failed") if not result.ok \
             else roles.check(role, result.value)
         if problem is None:
@@ -123,24 +135,35 @@ def _findings(gate: str, raw: Any) -> tuple[list[Finding], list[str]]:
         except (TypeError, ValueError):
             line = 0
         hint = item.get("fix_hint")
-        kept.append({"gate": gate, "severity": item["severity"], "rule": item["rule"],
+        rule, remediation = _repair(gate, item)
+        kept.append({"gate": gate, "severity": item["severity"], "rule": rule,
                      "file": str(item.get("file") or ""), "line": line,
                      "message": item["message"].strip(),
                      "fix_hint": hint if isinstance(hint, str) and hint.strip() else None,
-                     "overridden": None, "remediation": item["remediation"]})
+                     "overridden": None, "remediation": remediation})
     return kept, dropped
 
 
 def _problem(gate: str, item: Any) -> str | None:
+    """What makes a finding unusable. A rule id or remediation that is merely off is
+    repaired in `_repair` instead: a dropped BLOCKER would read as a pass."""
     if not isinstance(item, Mapping):
         return f"a finding that is not an object: {item!r}"
     rule = item.get("rule")
-    if not isinstance(rule, str) or not rule.startswith(f"{gate}.") or rule == f"{gate}.":
-        return f"{rule!r} is not a {gate} rule id"
+    if not isinstance(rule, str) or not rule.strip(" .") or rule.strip() == f"{gate}.":
+        return f"{rule!r} is not a rule id"
     if item.get("severity") not in SEVERITIES:
         return f"{rule}: severity {item.get('severity')!r} is not one of {', '.join(SEVERITIES)}"
-    if item.get("remediation") not in REMEDIATIONS:
-        return f"{rule}: remediation {item.get('remediation')!r} is not agent or escalate"
     if not isinstance(item.get("message"), str) or not item["message"].strip():
         return f"{rule}: no message"
     return None
+
+
+def _repair(gate: str, item: Mapping[str, Any]) -> tuple[str, str]:
+    """The rule under the gate's own domain, and a remediation the owner decides
+    when the model's is not one of the two."""
+    rule = item["rule"].strip()
+    if not rule.startswith(f"{gate}."):
+        rule = f"{gate}.{rule}"
+    remediation = item.get("remediation")
+    return rule, remediation if remediation in REMEDIATIONS else "escalate"

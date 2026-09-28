@@ -12,6 +12,7 @@ than crashing, and the substitution is recorded.
 from __future__ import annotations
 
 import json
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
@@ -61,6 +62,11 @@ def configured(cfg: Mapping[str, Any]) -> list[str]:
     names = [config.resolve_model(role, cfg) for role in cfg["models"]]
     names.append(cfg["model_aliases"][cfg["fallback"]])
     return list(dict.fromkeys(names))
+
+
+# How the CLI says a model is out of reach, as distinct from any other failure.
+UNAVAILABLE = re.compile(r"model\b.*\b(not available|not found|does not exist|unavailable|"
+                         r"invalid)", re.IGNORECASE)
 
 
 def fallback_for(role: str, cfg: Mapping[str, Any]) -> str | None:

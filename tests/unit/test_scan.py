@@ -37,10 +37,11 @@ def test_scan_reports_the_broken_apps_violations_by_severity(tmp_path: Path, ide
     shutil.copytree(FIXTURE, repo)
     support.make_repo(repo, {})
     git(repo, "add", "--all")
+    git(repo, "commit", "-q", "-m", "chore: the fixture")
 
     health = scan.health(repo, RULESET)
 
-    assert health["counts"]["high"] == 5           # 3 colours, 1 font, 1 layer
+    assert health["counts"]["high"] == 6           # 3 colours, 1 font, 1 layer, stale snapshot
     assert health["counts"]["medium"] == 3         # root md, fix_thing.py, a long function
     assert health["counts"]["low"] == 1            # the duplicated block
     assert health["top_rules"][0] == ("brand.hardcoded-color", 3)

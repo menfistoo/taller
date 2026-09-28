@@ -65,7 +65,7 @@ def test_an_empty_list_is_a_pass(project, script):
     assert (verdict["gate"], verdict["result"], verdict["findings"]) == ("quality", "pass", [])
 
 
-def test_a_finding_outside_the_gates_domain_is_dropped_with_a_note(project, script):
+def test_an_unusable_finding_is_dropped_with_a_note_and_a_stray_one_rehomed(project, script):
     stray = {**MISSING_PERMISSION, "rule": "quality.dead-code"}
     shouting = {**MISSING_PERMISSION, "severity": "CRITICAL"}
     script(gate_security=[{"value": {"findings": [stray, MISSING_PERMISSION, shouting,
@@ -73,10 +73,11 @@ def test_a_finding_outside_the_gates_domain_is_dropped_with_a_note(project, scri
 
     verdict, _ = gate(project, "security")
 
-    assert [f["rule"] for f in verdict["findings"]] == ["security.missing-permission"]
+    assert [f["rule"] for f in verdict["findings"]] == [
+        "security.quality.dead-code", "security.missing-permission"]
     dropped = " ".join(verdict["metrics"]["dropped"])
-    assert "quality.dead-code" in dropped and "CRITICAL" in dropped
-    assert len(verdict["metrics"]["dropped"]) == 3
+    assert "CRITICAL" in dropped and "not an object" in dropped
+    assert len(verdict["metrics"]["dropped"]) == 2
 
 
 def test_a_line_that_is_not_a_number_becomes_zero(project, script):
