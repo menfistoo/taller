@@ -84,7 +84,7 @@ def test_taller_driven_the_way_a_chat_drives_it(tmp_home: Path, tmp_path: Path, 
     at = ["--path", str(project)]
 
     # /taller:new, then the background run.
-    chat_runs(["ticket", "new", "Red", "heading", *at],
+    chat_runs(["ticket", "new", "The", "heading", "should", "be", "the", "danger", "red", *at],
               tmp_path / "new.json", capsys)
     chat_runs(["ticket", "run", "1", *at], tmp_path / "new.json", capsys)
     assert tickets.load(project, 1)["stage"] == "review"

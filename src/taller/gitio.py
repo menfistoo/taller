@@ -280,8 +280,20 @@ def ensure_main_worktree(project: Project | Path | str) -> Path:
     # --detach, never a checkout of `main`: see the module docstring. A detached
     # head holds no branch, so git needs no --force and the owner can always
     # check `main` out themselves.
+    allow_long_paths(repo)
     _git(repo, "worktree", "add", "--detach", str(worktree), MAIN_BRANCH)
     return worktree
+
+
+def allow_long_paths(repo: Path | str) -> None:
+    """`core.longpaths` for the repository and all its worktrees.
+
+    A worktree lives deeper than the owner's checkout, so a path that fits there -
+    a rejected ticket's kept verdicts, `.taller/work/<ticket>/rejected/<stamp>/
+    gates/<gate>.md` - can pass Windows' 260-character limit in the worktree, and
+    git then cannot check it out ("Filename too long"). Harmless elsewhere.
+    """
+    _git(repo, "config", "core.longpaths", "true")
 
 
 def _detach_if_attached(worktree: Path) -> None:

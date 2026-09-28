@@ -357,6 +357,7 @@ def _open_worktree(project: Path, ticket: Ticket) -> None:
             raise ConfigError(f"{tree} is a worktree on {holds or 'a detached HEAD'}, not "
                               f"{branch}. Remove it (`git worktree remove {tree}`) and retry.")
     else:
+        gitio.allow_long_paths(project)
         gitio.git(project, "worktree", "add", "--quiet", str(tree), branch)
     ticket["branch"] = branch
 
