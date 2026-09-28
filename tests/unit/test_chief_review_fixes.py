@@ -138,8 +138,9 @@ def test_run_keeps_the_owners_own_naming(project: Path, script):
 
 def test_an_approved_checkpoint_waits_for_the_merge_then_moves_on(project: Path, script):
     full = {**STYLE, "change_kind": "other"}
+    clean = {"value": {"findings": []}}                     # the full lane's model gates
     script(chief=[CLASSIFY], explorer=[{"value": full}], architect=[PLAN], implementer=[BUILD],
-           summariser=[SUMMARY])
+           gate_quality=[clean], gate_ux=[clean], summariser=[SUMMARY])
     ticket_id = new_ticket(project)
     chief.run(project, ticket_id, say=quiet)                  # design
     tickets.approve(project, ticket_id)
