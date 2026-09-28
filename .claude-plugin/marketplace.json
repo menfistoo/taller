@@ -1,0 +1,14 @@
+{
+  "name": "taller",
+  "description": "Taller, as a Claude Code plugin.",
+  "owner": {
+    "name": "Taller"
+  },
+  "plugins": [
+    {
+      "name": "taller",
+      "source": "./",
+      "description": "Slash commands and a session briefing over the taller command."
+    }
+  ]
+}
