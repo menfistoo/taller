@@ -41,7 +41,9 @@ def run(worktree: Path | str, ruleset: Mapping[str, Any], *,
     measure = minimum > 0 and _has_pytest_cov(python)
     argv = [python, *ARGS, *(["--cov=.", "--cov-report=term"] if measure else [])]
 
-    env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+    # No __pycache__ left behind: `taller scan` promises to write nothing.
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1",
+           "PYTHONDONTWRITEBYTECODE": "1"}
     env.pop("PYTEST_ADDOPTS", None)
     started = time.monotonic()
     try:

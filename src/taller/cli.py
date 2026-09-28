@@ -115,6 +115,10 @@ def build_parser() -> argparse.ArgumentParser:
     resolve = verbs.add_parser("resolve", help="regenerate a project's generated files")
     resolve.add_argument("path", nargs="?", help="the project (default: the one you are in)")
 
+    scan = verbs.add_parser("scan", help="every rule over the whole tree: health figures")
+    scan.add_argument("path", nargs="?", help="the project (default: the one you are in)")
+    scan.add_argument("--all", action="store_true", help="every adopted project")
+
     doctor = verbs.add_parser("doctor", help="check the hub and every project")
     doctor.add_argument("--live", action="store_true",
                         help="make the trivial Claude dispatch even if it passed today")
@@ -122,7 +126,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _handler(args: argparse.Namespace) -> Handler:
-    from .commands import brand, doctor, models, project, resolve, settings, setup, ticket
+    from .commands import (brand, doctor, models, project, resolve, scan, settings, setup,
+                           ticket)
 
     table: dict[tuple[str, str | None], Handler] = {
         ("setup", None): setup.run,
@@ -148,6 +153,7 @@ def _handler(args: argparse.Namespace) -> Handler:
         ("ticket", "close"): ticket.close,
         ("models", "probe"): models.probe,
         ("resolve", None): resolve.run,
+        ("scan", None): scan.run,
         ("doctor", None): doctor.run,
     }
     return table[(args.command, getattr(args, "action", None))]

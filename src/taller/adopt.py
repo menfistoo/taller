@@ -226,11 +226,13 @@ def distill(claude_md: str, profile: str) -> tuple[str | None, str | None]:
 # --- apply -------------------------------------------------------------------
 
 def apply(project: Path | str, *, name: str, answers: Mapping[str, Any], facts: Facts,
-          new_brand: tuple[str, str] | None, architecture: str | None) -> str:
+          new_brand: tuple[str, str] | None, architecture: str | None,
+          remove: list[str] | None = None) -> str:
     """Write the adoption as one commit on `main`, register, resolve. Returns sync.
 
     `new_brand` is `(slug, intent)` when the lifted tokens become a new hub brand.
-    Called only after the brief is approved.
+    `remove`: superseded review directories (REVIEW_DIRS) the owner let go of,
+    removed in the same commit. Called only after the brief is approved.
     """
     project = Path(project)
     gitio.require_clean_main(project, "`taller project adopt`")
@@ -272,6 +274,9 @@ def apply(project: Path | str, *, name: str, answers: Mapping[str, Any], facts: 
         target.write_bytes(data)
     gitio.git(project, "config", "merge.ours.driver", "true")
     gitio.git(project, "add", "--", *files)
+    for directory in remove or []:
+        if directory in REVIEW_DIRS and (project / directory).is_dir():
+            gitio.git(project, "rm", "-r", "--quiet", "--", directory)
     gitio.git(project, "commit", "--quiet", "-m", f"Adopt {name} into Taller")
 
     registry.add_project(path=project, name=name, profile=profile, brand=brand, adopted=True)

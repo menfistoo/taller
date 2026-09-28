@@ -325,6 +325,7 @@ def adopt(args: Any, prompter: Prompter) -> int:
         new_brand = (slug, intent)
         answers["brand"] = slug
 
+    keep_review_dirs = False
     architecture = None
     if facts["claude_md"]:
         prompter.say(f"\nReading the old CLAUDE.md (≈{facts['claude_md_tokens']} tokens) to "
@@ -335,7 +336,7 @@ def adopt(args: Any, prompter: Prompter) -> int:
                          f"instead: kept, never loaded.")
 
     while True:
-        notes = _adoption_notes(facts, answers, new_brand, architecture)
+        notes = _adoption_notes(facts, answers, new_brand, architecture, keep_review_dirs)
         tokens = facts["tokens"] if new_brand else None
         page = onboarding.write_brief(name, answers, notes, tokens)
         prompter.say("\n" + onboarding.brief_text(name, answers, notes))
@@ -348,6 +349,9 @@ def adopt(args: Any, prompter: Prompter) -> int:
         choices = [("approve", "approve and adopt it"), ("edit", "change an answer")]
         if architecture:
             choices.append(("archive", "archive the old CLAUDE.md instead of this summary"))
+        if facts["review_dirs"]:
+            choices.append(("reviews", "remove the old review directories after all"
+                            if keep_review_dirs else "keep the old review directories"))
         choices.append(("cancel", "stop here"))
         decision = ask(prompter, Question("brief", "brief", 0, "Adopt it from this brief?",
                                           "choice", choices=tuple(choices)))
@@ -360,6 +364,9 @@ def adopt(args: Any, prompter: Prompter) -> int:
         if decision == "archive":
             architecture = None
             continue
+        if decision == "reviews":
+            keep_review_dirs = not keep_review_dirs
+            continue
         raw = prompter.ask("brief.edit", "  Which question, 1 to 12?").strip()
         if raw.isdigit() and 1 <= int(raw) <= 12:
             onboarding.edit(name, prompter, answers, int(raw))
@@ -367,7 +374,8 @@ def adopt(args: Any, prompter: Prompter) -> int:
             prompter.say("  Please give a number from 1 to 12.")
 
     sync = adopt_lib.apply(project, name=name, answers=answers, facts=facts,
-                           new_brand=new_brand, architecture=architecture)
+                           new_brand=new_brand, architecture=architecture,
+                           remove=[] if keep_review_dirs else facts["review_dirs"])
     onboarding.discard_progress(name)
     prompter.say("\n".join([
         "",
@@ -393,13 +401,14 @@ def _found(facts: dict) -> list[str]:
     lines.append(f"{facts['commits']} commits; "
                  + ("tests in tests/" if facts["tests"] else "no tests/ directory"))
     if facts["review_dirs"]:
-        lines.append("review directories the gates will replace (phase C): "
-                     + ", ".join(facts["review_dirs"]))
+        lines.append("review directories Taller's gates replace: "
+                     + ", ".join(f"{name}/" for name in facts["review_dirs"]))
     return lines
 
 
 def _adoption_notes(facts: dict, answers: dict, new_brand: tuple | None,
-                    architecture: str | None) -> tuple[str, ...]:
+                    architecture: str | None, keep_review_dirs: bool = False
+                    ) -> tuple[str, ...]:
     notes = []
     brand = answers.get("brand")
     if facts["tokens"] and brand in (facts["matching_brand"], new_brand and new_brand[0]):
@@ -416,5 +425,9 @@ def _adoption_notes(facts: dict, answers: dict, new_brand: tuple | None,
                         f"({len(architecture)} characters)" if architecture else
                         "the old text is archived in .taller/archive/, never loaded")
                      + ". The original stays in git history.")
+    for name in facts["review_dirs"]:
+        notes.append(f"{name}/ stays: you chose to keep it." if keep_review_dirs else
+                     f"{name}/ is replaced by Taller's gates - removed in the adoption "
+                     f"commit (still in git history).")
     notes.append("One commit on main, then the generated files are written.")
     return tuple(notes)

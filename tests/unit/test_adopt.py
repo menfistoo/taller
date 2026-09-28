@@ -197,7 +197,7 @@ def test_cancel_changes_nothing(repo: Path):
     head = git(repo, "rev-parse", "HEAD")
 
     code = project_command.adopt(args(repo), ScriptedPrompter(
-        {**SETUP, **INTERVIEW, **NEW_BRAND, "brief": "4"}))
+        {**SETUP, **INTERVIEW, **NEW_BRAND, "brief": "5"}))
 
     assert code == 1
     assert git(repo, "rev-parse", "HEAD") == head
@@ -218,3 +218,28 @@ def test_adopting_twice_is_refused(repo: Path):
 
     with pytest.raises(ConfigError, match="already adopted"):
         project_command.adopt(args(repo), ScriptedPrompter({}))
+
+
+# --- superseded review directories (criterion 10) ------------------------------
+
+def test_adoption_removes_superseded_review_dirs(repo: Path):
+    prompter = ScriptedPrompter({**SETUP, **INTERVIEW, **NEW_BRAND, "brief": "1"})
+
+    assert project_command.adopt(args(repo), prompter) == 0
+
+    said = "\n".join(prompter.said)
+    assert "code-review/ is replaced by Taller's gates - removed in the adoption commit" in said
+    assert not (repo / "code-review").exists()
+    removed = git(repo, "show", "--name-status", "--format=", "HEAD~1").splitlines()
+    assert "D\tcode-review/README.md" in removed
+    assert git(repo, "status", "--porcelain") == ""
+
+
+def test_the_owner_can_keep_them(repo: Path):
+    prompter = ScriptedPrompter({**SETUP, **INTERVIEW, **NEW_BRAND, "brief": ("4", "1")})
+
+    assert project_command.adopt(args(repo), prompter) == 0
+
+    said = "\n".join(prompter.said)
+    assert "code-review/ stays: you chose to keep it" in said
+    assert on_main(repo, "code-review/README.md") == "old review agents\n"
