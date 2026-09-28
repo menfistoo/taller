@@ -146,11 +146,12 @@ def test_effort_always_reaches_the_dispatch(tmp_home, stub_claude):
 
 
 def test_effort_survives_an_explicit_system_prompt(tmp_home, stub_claude):
-    # The bootstrap case: `system` replaces the briefing, never the effort.
-    inference.infer(_bootstrap_dispatch(role="architect", system="you are a planner"))
-    flags = stub_claude.flags()
-    assert "--effort high" in flags
-    assert "you are a planner" in flags
+    # The bootstrap case: `system` is added to the brief, and never costs the effort.
+    dispatch = _bootstrap_dispatch(role="architect", system="you are a planner")
+    inference.infer(dispatch)
+    assert "--effort high" in stub_claude.flags()
+    # The shim carries only the brief's first line; the rest is asserted on _brief.
+    assert inference._brief(dispatch).rstrip().endswith("you are a planner")
 
 
 def test_a_schema_mismatch_is_its_own_failure(tmp_home, stub_claude, monkeypatch):
@@ -395,15 +396,17 @@ def test_a_role_is_briefed_with_only_its_own_slices(tmp_home):
 def test_a_missing_slice_is_skipped_not_an_error(tmp_home):
     """A project need not provide every slice."""
     dispatch = _bootstrap_dispatch(role="gate_ux", ruleset={"slices": {"ux": {"text": "ONLY-UX"}}})
-    assert inference._brief(dispatch) == "ONLY-UX"
+    brief = inference._brief(dispatch)
+    assert brief.startswith("ROLE: gate_ux") and brief.endswith("\n\nONLY-UX\n")
 
 
 def test_the_briefing_reaches_append_system_prompt(tmp_home, stub_claude):
     """The argv plumbing, with a single-line briefing the shim can carry."""
-    inference.infer(_bootstrap_dispatch(role="gate_ux", system="ONE-LINE-BRIEF"))
+    dispatch = _bootstrap_dispatch(role="gate_ux", system="ONE-LINE-BRIEF")
+    inference.infer(dispatch)
     flags = stub_claude.flags()
-    assert "--append-system-prompt" in flags
-    assert "ONE-LINE-BRIEF" in flags
+    assert "--append-system-prompt ROLE: gate_ux" in flags
+    assert "ONE-LINE-BRIEF" in inference._brief(dispatch)
 
 
 def test_a_ruleset_dispatch_resolves_its_model(tmp_home, stub_claude):

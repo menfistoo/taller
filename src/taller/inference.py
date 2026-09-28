@@ -361,12 +361,6 @@ def _build(dispatch: Dispatch, executable: str) -> tuple[list[str], Path]:
     # argv WITHOUT the executable; infer() prepends the resolved absolute path.
     argv = ["-p", "--output-format", "json", "--model", model, "--effort", effort]
 
-    # `system` replaces the slice briefing, never the effort. An earlier draft
-    # computed effort and then discarded it whenever a caller supplied `system`,
-    # which is exactly the bootstrap case.
-    system = dispatch.system or _brief(dispatch)
-    if system:
-        argv += ["--append-system-prompt", system]
     if dispatch.resume:
         argv += ["--resume", dispatch.resume]
     if dispatch.tools:
@@ -394,26 +388,39 @@ def _build(dispatch: Dispatch, executable: str) -> tuple[list[str], Path]:
         if dispatch.supports_permission_prompts:
             argv += ["--permission-prompts", "none"]
 
+    # The brief is always the role's definition, then its slices, then any
+    # `system` the caller adds - never `system` alone, or a dispatch would not
+    # know which role it is. It goes LAST: it is the one multi-line argument, and
+    # a Windows .cmd shim (the test stub) drops everything after a line break,
+    # so every flag that matters must come before it. The real binary is spawned
+    # without a shell and receives all of it either way.
+    argv += ["--append-system-prompt", _brief(dispatch)]
+
     # --bare is deliberately absent: it never reads OAuth credentials, so it
     # would silently require an API key (spec 3.6.2).
     return argv, cwd
 
 
 def _brief(dispatch: Dispatch) -> str:
-    """Only THIS role's slices (spec 3.6.0). Effort travels as --effort, not prose.
+    """The role's definition, then only THIS role's slices (3.6.0), then `system`.
 
+    The definition comes first, so the brief's first line is `ROLE: <role>`.
     An earlier version concatenated every slice in the RuleSet, so a UX gate was
-    briefed with the security and product slices too — wasteful, confusing, and it
+    briefed with the security and product slices too - wasteful, confusing, and it
     quietly gave up the context saving the whole design is built on.
     """
+    from . import roles                   # roles imports this module
+
+    parts = [roles.definition(dispatch.role).strip()]
     slices = (dispatch.ruleset or {}).get("slices") or {}
-    parts = []
     for name in role_slices(dispatch.role):
         resolved = slices.get(name)
         if not resolved:
             continue                    # a slice this project does not provide
         parts.append(resolved["text"] if isinstance(resolved, dict) else str(resolved))
-    return "\n\n".join(p for p in parts if p)
+    if dispatch.system:
+        parts.append(dispatch.system)
+    return "\n\n".join(p.strip() for p in parts if p and p.strip()) + "\n"
 
 
 def _expand_forbidden(globs: list[str]) -> list[str]:

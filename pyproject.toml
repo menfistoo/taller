@@ -18,7 +18,7 @@ taller = "taller.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"taller" = ["catalogue/**/*"]
+"taller" = ["catalogue/**/*", "agents/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
