@@ -43,8 +43,15 @@ paths:
   brand_tokens: "static/css/tokens.css"
 
 smoke:
+  # Booted on a port the gate allocates, against a copy of the database, so a
+  # smoke run never meets the owner's dev server or live data (spec 9.6).
   kind: http
   boot: "python run_local.py"
-  ready: "http://127.0.0.1:5000/"
+  ready: auto
   timeout_s: 30
   routes: ["/"]
+  data: copy
+  database: "instance/app.db"
+  env:
+    PORT: "$TALLER_SMOKE_PORT"
+    DATABASE: "$TALLER_SMOKE_DATA/app.db"

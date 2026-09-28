@@ -28,9 +28,9 @@ paths:
 
 smoke:
   # Served by a plain file server, not by the site: there is no application to
-  # boot. `ready: auto` takes the port from the boot process (spec 9.6).
+  # boot. `ready: auto` is the port the gate allocates (spec 9.6).
   kind: http
-  boot: "python -m http.server 0 --directory ."
+  boot: "python -m http.server $TALLER_SMOKE_PORT --bind 127.0.0.1 --directory ."
   ready: "auto"
   timeout_s: 15
   routes: ["/index.html"]

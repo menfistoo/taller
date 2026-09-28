@@ -723,10 +723,15 @@ paths:
   tests_dir: "tests"
 smoke:                         # §9.6
   kind:      http
-  boot:      "python run_local.py"
-  ready:     "http://127.0.0.1:5000/"
+  boot:      "python run_local.py"          # run_local.py reads $PORT
+  ready:     auto              # the port the gate allocates, at /
   timeout_s: 30
   routes:    ["/"]             # always exercised, plus the mapped routes
+  data:      copy
+  database:  "instance/app.db" # the live file copied; never its -wal/-shm
+  env:
+    PORT:     "$TALLER_SMOKE_PORT"
+    DATABASE: "$TALLER_SMOKE_DATA/app.db"
 ```
 
 ```yaml
