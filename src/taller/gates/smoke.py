@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 import shlex
 import shutil
 import socket
@@ -35,6 +36,7 @@ POLL_S = 0.2
 REQUEST_TIMEOUT_S = 15
 TAIL_LINES = 30
 TEMPLATE_SUFFIXES = (".html", ".htm", ".j2", ".jinja", ".jinja2")
+_VARIABLE = re.compile(r"\$\{?([A-Z_][A-Z0-9_]*)\}?")
 
 
 def run(worktree: Path | str, ruleset: Mapping[str, Any], *,
@@ -54,6 +56,34 @@ def run(worktree: Path | str, ruleset: Mapping[str, Any], *,
     if kind != "http":
         return _error(f"Unknown smoke kind {kind!r}: use http, import or none.")
     return _http(worktree, config, templates or {}, changed)
+
+
+def problems(config: Any) -> list[str]:
+    """What would stop the gate before it starts - doctor's phase C row (spec 15.4)."""
+    if not isinstance(config, Mapping) or not config.get("kind"):
+        return ["no `smoke` configuration (declare `kind: none` if the project has "
+                "nothing to boot)"]
+    kind = config["kind"]
+    found: list[str] = []
+    if kind not in ("http", "import", "none"):
+        found.append(f"smoke.kind {kind!r} is not http, import or none")
+    if kind == "http":
+        if not str(config.get("boot") or "").strip():
+            found.append("smoke.boot is empty: nothing to start")
+        if config.get("data", "none") not in ("copy", "fresh", "none"):
+            found.append(f"smoke.data {config.get('data')!r} is not copy, fresh or none")
+        if config.get("data") == "copy" and not config.get("database"):
+            found.append("smoke.data is copy but smoke.database names no file to copy")
+    if kind == "import" and not config.get("module"):
+        found.append("smoke.module is not set")
+    auth = config.get("auth")
+    if isinstance(auth, Mapping) and auth.get("kind", "none") != "none":
+        secret = str(auth.get("secret") or "")
+        for name in _VARIABLE.findall(secret):
+            if not os.environ.get(name):
+                found.append(f"smoke.auth.secret reads ${name}, which is not set in "
+                             f"this environment")
+    return found
 
 
 # --- http ------------------------------------------------------------------------------

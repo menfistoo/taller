@@ -29,7 +29,6 @@ API_KEY_VARIABLES = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
 
 # Spec 15.4's rows that later phases bring. Listed so the report shows them.
 LATER = (
-    ("every gate executes; smoke configuration valid", "C"),
     ("latest taller-ci run on main is green", "F"),
 )
 
@@ -236,7 +235,51 @@ def _project(entry: dict[str, Any]) -> list[Check]:
     checks.append(_tokens(label, repo, expected, ruleset))
     checks.append(_merge_driver(label, repo))
     checks.append(_branches(label, repo, expected))
+    checks.append(_gates(label, repo, ruleset))
     return checks
+
+
+def _gates(label: str, repo: Path, ruleset: dict[str, Any]) -> Check:
+    """Spec 15.4, phase C: every Python gate executes on an empty diff; the smoke
+    configuration is usable, its secret included; each model gate dry-runs.
+
+    The tests gate is not run - that would run the project's whole suite - but
+    its interpreter must exist and import pytest.
+    """
+    from .gates import constitution as constitution_gate
+    from .gates import llm, size, smoke
+    from .gates import tests as tests_gate
+
+    name = f"{label}: every gate executes; smoke configuration valid"
+    problems: list[str] = []
+    empty = {"base": "", "head": "", "commits": [], "files": [], "tracked": []}
+    for gate, check in (("constitution", constitution_gate.run), ("size", size.run)):
+        try:
+            check(empty, ruleset)
+        except Exception as exc:              # a crash here is the finding
+            problems.append(f"the {gate} gate raised {type(exc).__name__}: {exc}")
+    python = tests_gate.interpreter(repo)
+    if not Path(python).is_file():
+        problems.append(python)
+    else:
+        try:
+            ran = subprocess.run([python, "-c", "import pytest"], capture_output=True,
+                                 timeout=60)
+            if ran.returncode != 0:
+                problems.append(f"pytest is not installed for {python}")
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            problems.append(f"{python} could not be run: {exc}")
+    problems.extend(smoke.problems(ruleset.get("smoke")))
+    cfg = config.load_hub_config()
+    for gate in llm.GATES:
+        problem = llm.dry_run(gate, ruleset, cfg)
+        if problem:
+            problems.append(problem)
+    if problems:
+        return Check(name, FAIL, "; ".join(problems), phase="C",
+                     fix="Fix the smoke block in taller.yml or the profile, set the named "
+                         "variable, or install what is missing.")
+    return Check(name, PASS, phase="C")
 
 
 def _tickets(label: str, repo: Path) -> Check:

@@ -50,6 +50,32 @@ SCHEMAS: dict[str, dict] = {
     "summariser": _object({"summary_md": _TEXT}),
 }
 
+# The three model gates answer with findings (spec 9.7): each declares its own
+# severity and remediation. Items are validated one by one in `gates.llm`, where
+# a malformed finding is dropped with a note rather than failing the answer.
+_FINDING = {
+    "type": "object",
+    "properties": {
+        "rule": {"type": "string"},
+        "severity": {"type": "string", "enum": ["BLOCKER", "HIGH", "MEDIUM", "LOW", "NIT"]},
+        "file": {"type": "string"},
+        "line": {"type": "integer"},
+        "message": {"type": "string"},
+        "fix_hint": {"type": ["string", "null"]},
+        "remediation": {"type": "string", "enum": ["agent", "escalate"]},
+    },
+    "required": ["rule", "severity", "file", "line", "message", "remediation"],
+}
+for _gate in ("gate_security", "gate_quality", "gate_ux"):
+    SCHEMAS[_gate] = _object({"findings": {"type": "array", "items": _FINDING}})
+
+SCHEMAS["fixer"] = _object({"summary": _TEXT, "commits": _PATHS})
+
+# Optional: which routes render each template the change touches (spec 9.6). The
+# smoke gate GETs them; a template it cannot map is shown to the owner at ⑦.
+SCHEMAS["explorer"]["properties"]["templates"] = {
+    "type": "object", "additionalProperties": _PATHS}
+
 
 @lru_cache(maxsize=None)
 def definition(role: str) -> str:
@@ -67,6 +93,8 @@ def check(role: str, value: Any) -> str | None:
         return f"the {role} answer must be an object, not {type(value).__name__}"
     for key, rule in schema["properties"].items():
         if key not in value:
+            if key not in schema.get("required", []):
+                continue
             return f"the {role} answer has no `{key}`"
         problem = _check_value(value[key], rule)
         if problem:
@@ -85,10 +113,22 @@ def _check_value(value: Any, rule: dict) -> str | None:
             return "must not be blank"
         if "maxLength" in rule and len(value) > rule["maxLength"]:
             return f"must be at most {rule['maxLength']} characters"
+    elif kind == "object":
+        if not isinstance(value, dict):
+            return "must be a mapping"
+        inner = rule.get("additionalProperties")
+        if isinstance(inner, dict):
+            for item in value.values():
+                problem = _check_value(item, inner)
+                if problem:
+                    return problem
     elif kind == "boolean":
         if not isinstance(value, bool):
             return "must be true or false"
     elif kind == "array":
-        if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        if not isinstance(value, list):
+            return "must be a list"
+        strings = (rule.get("items") or {}).get("type") == "string"
+        if strings and not all(isinstance(v, str) for v in value):
             return "must be a list of text"
     return None

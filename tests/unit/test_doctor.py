@@ -53,7 +53,7 @@ def test_a_fresh_project_passes_every_phase_a_check(project: Path):
     assert failed == []
     skipped_a = [c.name for c in checks if c.status == doctor.SKIP and c.phase == "A"]
     assert skipped_a == [], "a phase A check was skipped"
-    assert {c.phase for c in checks if c.status == doctor.SKIP} == {"B", "C", "F"}
+    assert {c.phase for c in checks if c.status == doctor.SKIP} == {"B", "F"}
 
 
 def test_the_dispatch_runs_without_an_api_key_and_is_cached(project: Path, stub_claude,
