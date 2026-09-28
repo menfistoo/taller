@@ -122,6 +122,15 @@ def build_parser() -> argparse.ArgumentParser:
     resolve = verbs.add_parser("resolve", help="regenerate a project's generated files")
     resolve.add_argument("path", nargs="?", help="the project (default: the one you are in)")
 
+    hook_parser = verbs.add_parser("hook", help="what the Claude Code plugin's hooks call")
+    hook_verbs = hook_parser.add_subparsers(dest="action", required=True, metavar="event")
+    hook_verbs.add_parser("session-start", help="brief a chat that opens in a project")
+
+    amend = verbs.add_parser("amend", help="commit a rule change and refresh what it reaches")
+    amend.add_argument("--reason", help="why the rule changes (asked if left out)")
+    amend.add_argument("--path", help="the project whose rules changed (default: the one "
+                                      "you are in, if any)")
+
     scan = verbs.add_parser("scan", help="every rule over the whole tree: health figures")
     scan.add_argument("path", nargs="?", help="the project (default: the one you are in)")
     scan.add_argument("--all", action="store_true", help="every adopted project")
@@ -133,8 +142,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _handler(args: argparse.Namespace) -> Handler:
-    from .commands import (brand, doctor, models, project, resolve, scan, settings, setup,
-                           ticket)
+    from .commands import (amend, brand, doctor, hook, models, project, resolve, scan,
+                           settings, setup, ticket)
 
     table: dict[tuple[str, str | None], Handler] = {
         ("setup", None): setup.run,
@@ -161,6 +170,8 @@ def _handler(args: argparse.Namespace) -> Handler:
         ("models", "probe"): models.probe,
         ("resolve", None): resolve.run,
         ("scan", None): scan.run,
+        ("amend", None): amend.run,
+        ("hook", "session-start"): hook.session_start,
         ("doctor", None): doctor.run,
     }
     return table[(args.command, getattr(args, "action", None))]
