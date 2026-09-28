@@ -8,17 +8,20 @@ same code a terminal does.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
-from typing import Callable
+from pathlib import Path
+from typing import Any, Callable
 
 from .errors import TallerError
-from .prompter import Cancelled, Prompter, TerminalPrompter
+from .prompter import AnswerSheetPrompter, Cancelled, NeedsAnswer, Prompter, TerminalPrompter
 
 Handler = Callable[[argparse.Namespace, Prompter], int]
 
 # An expected failure: the message is the whole story, so no traceback.
 EXIT_CANCELLED = 1
 EXIT_REFUSED = 2
+EXIT_NEEDS_ANSWER = 3                  # a question nobody was there to answer
 EXIT_INTERRUPTED = 130                 # the shell convention for Ctrl-C
 
 
@@ -27,6 +30,10 @@ def build_parser() -> argparse.ArgumentParser:
         prog="taller",
         description="Run your projects through an engineering team you direct.",
     )
+    parser.add_argument(
+        "--answers", metavar="FILE",
+        help="answer questions from this JSON file instead of asking; an unanswered "
+             "one stops with NEEDS <id>")
     verbs = parser.add_subparsers(dest="command", required=True, metavar="command")
 
     verbs.add_parser("setup", help="connect, find your projects and brands, choose languages")
@@ -166,9 +173,18 @@ def main(argv: list[str] | None = None, prompter: Prompter | None = None) -> int
         # Windows is cp1252, which cannot hold ①. Write UTF-8 there instead.
         if hasattr(sys.stdout, "reconfigure") and not sys.stdout.isatty():
             sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-        prompter = TerminalPrompter()
+        try:
+            prompter = _prompter(args)
+        except TallerError as exc:
+            print(f"taller: {exc}", flush=True)
+            return EXIT_REFUSED
     try:
         return _handler(args)(args, prompter)
+    except NeedsAnswer as exc:
+        prompter.say(f"NEEDS {exc.qid}\n{exc.prompt}\n"
+                     f'Put the answer in the answers file as "{exc.qid}": ... and run the '
+                     f"same command again.")
+        return EXIT_NEEDS_ANSWER
     except Cancelled as exc:
         prompter.say(str(exc))
         return EXIT_CANCELLED
@@ -179,6 +195,32 @@ def main(argv: list[str] | None = None, prompter: Prompter | None = None) -> int
         prompter.say("Stopped. Everything already done is saved; run the command again "
                      "to carry on.")
         return EXIT_INTERRUPTED
+
+
+def _prompter(args: argparse.Namespace) -> Prompter:
+    """The keyboard when there is one; otherwise answers from a file, or none.
+
+    Without a terminal - a Claude Code chat, a script - a prompt would wait for
+    ever or read end-of-file, so every question becomes NEEDS instead (plan:
+    plugin, Task 1).
+    """
+    if args.answers:
+        return AnswerSheetPrompter(_load_answers(Path(args.answers)))
+    if not sys.stdin or not sys.stdin.isatty():
+        return AnswerSheetPrompter({})
+    return TerminalPrompter()
+
+
+def _load_answers(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}                       # a first run: every question will be NEEDS
+    try:
+        data = json.loads(path.read_text(encoding="utf-8") or "{}")
+    except ValueError as exc:
+        raise TallerError(f"{path} is not valid JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise TallerError(f"{path} must hold a JSON object of question id to answer.")
+    return data
 
 
 if __name__ == "__main__":

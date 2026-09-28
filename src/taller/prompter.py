@@ -22,6 +22,20 @@ class Cancelled(TallerError):
     """The owner ended the conversation (Ctrl+C, Ctrl+D, or chose cancel)."""
 
 
+class NeedsAnswer(TallerError):
+    """A question the answer sheet does not cover, when nobody is at a keyboard.
+
+    The CLI reports it as `NEEDS <id>` with its own exit code, so whatever is
+    driving Taller - a Claude Code chat, a script - can ask the owner and run the
+    same command again with the answer added.
+    """
+
+    def __init__(self, qid: str, prompt: str):
+        super().__init__(f"needs an answer to {qid}")
+        self.qid = qid
+        self.prompt = prompt
+
+
 class UnscriptedQuestion(Exception):
     """A scripted prompter was asked something its answer sheet does not cover.
 
@@ -31,6 +45,10 @@ class UnscriptedQuestion(Exception):
 
 
 class Prompter(ABC):
+    # False when no person can answer mid-command: a caller that would fall back
+    # to asking (ticket new, when the chief cannot classify) does something else.
+    interactive = True
+
     @abstractmethod
     def say(self, text: str) -> None:
         """Show text. No answer expected."""
@@ -68,6 +86,37 @@ class TerminalPrompter(Prompter):
             if not line.strip():
                 return lines
             lines.append(line)
+
+
+class AnswerSheetPrompter(Prompter):
+    """Answers from a file, for a command run without a terminal.
+
+    Each id answers once: a string for a one-line question, a list for a
+    several-line one. An id the sheet does not answer - or answers with
+    something already rejected - raises NeedsAnswer.
+    """
+
+    interactive = False
+
+    def __init__(self, answers: Mapping[str, Any]):
+        self._answers: dict[str, Any] = dict(answers)
+
+    def say(self, text: str) -> None:
+        print(text, flush=True)
+
+    def ask(self, qid: str, prompt: str) -> str:
+        value = self._take(qid, prompt)
+        return "\n".join(str(v) for v in value) if isinstance(value, list) else str(value)
+
+    def ask_lines(self, qid: str, prompt: str) -> list[str]:
+        value = self._take(qid, prompt)
+        return [str(v) for v in value] if isinstance(value, list) else \
+            [line for line in str(value).splitlines()]
+
+    def _take(self, qid: str, prompt: str) -> Any:
+        if qid not in self._answers:
+            raise NeedsAnswer(qid, prompt)
+        return self._answers.pop(qid)
 
 
 class ScriptedPrompter(Prompter):

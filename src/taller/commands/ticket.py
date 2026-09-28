@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import yaml
 
@@ -93,6 +93,14 @@ def new(args: Any, prompter: Prompter) -> int:
         try:
             ticket = chief.classify(project, ticket["id"])
         except TallerError as exc:
+            if not prompter.interactive:
+                # Nobody to ask mid-command. The chief classifies an unnamed
+                # ticket at ① anyway, so leave it for then; asking would mean a
+                # rerun, and a rerun would make a second ticket.
+                prompter.say(f"  The chief could not classify it yet ({exc}); it will be "
+                             f"classified when it runs.")
+                ticket = tickets.load(project, ticket["id"])
+                return _created(prompter, ticket)
             prompter.say(f"  The chief could not classify it ({exc}). Answer these two "
                          f"yourself:")
             kind = ask(prompter, Question("ticket.kind", "kind", 0,
@@ -105,6 +113,10 @@ def new(args: Any, prompter: Prompter) -> int:
             ticket.update({"kind": kind, "title": title, "named_by": "owner"})
             ticket = tickets.write(project, ticket, f"ticket {ticket['id']:04d}: named",
                                    note=f"named by the owner: {kind}")
+    return _created(prompter, ticket)
+
+
+def _created(prompter: Prompter, ticket: Mapping[str, Any]) -> int:
     lines = [f"Created ticket {ticket['id']:04d} - {ticket['title']}",
              f"  {tickets.ticket_dir(ticket)}"]
     if ticket.get("issue"):
