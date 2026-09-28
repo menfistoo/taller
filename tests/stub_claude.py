@@ -42,6 +42,14 @@ def main() -> int:
              + "".join(f"  {flag} <value>   stub\n" for flag in flags))
         return 0
 
+    # The prompt travels on stdin (inference._prompt); a test that must see what a
+    # role was told reads it here, one JSON line per dispatch.
+    stdin_path = os.environ.get("STUB_CLAUDE_STDIN")
+    if stdin_path:
+        prompt = sys.stdin.buffer.read().decode("utf-8", errors="replace")
+        with open(stdin_path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"role": _role_of(sys.argv[1:]), "stdin": prompt}) + "\n")
+
     # Stands in for "this binary would have billed an API key": doctor's live
     # check must prove the dispatch succeeds with none in the environment.
     if os.environ.get("STUB_CLAUDE_REFUSE_API_KEY") and os.environ.get("ANTHROPIC_API_KEY"):

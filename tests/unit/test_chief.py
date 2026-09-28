@@ -146,7 +146,7 @@ def test_a_fast_run_stops_at_review_with_spend_recorded(project: Path, script):
     assert ticket["spend"]["weighted_tokens"] > 0
     assert "claude-sonnet-5" in ticket["spend"]["by_model"]
     notes = tickets.read_main(project, f"{tickets.ticket_dir(ticket)}/notes.md").decode()
-    assert "phase C" in notes, "the gate pass-through was not noted"
+    assert "⑤ gates: constitution pass" in notes and "⑥ smoke: smoke pass" in notes
 
 
 def test_a_full_run_stops_at_design_with_the_plan_on_the_branch(project: Path, script):

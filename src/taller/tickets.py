@@ -412,12 +412,16 @@ def _refuse_if_blocked(ticket: Mapping[str, Any]) -> None:
 
 
 def advance(project: Path | str, ticket_id: int, *, lane: str | None = None,
-            note: str | None = None) -> Ticket:
-    """Move to the next stage of the ticket's lane, doing what entering it needs."""
+            note: str | None = None, fields: Mapping[str, Any] | None = None) -> Ticket:
+    """Move to the next stage of the ticket's lane, doing what entering it needs.
+
+    `fields` are set on the ticket in the same commit (the explorer's `templates`).
+    """
     project = Path(project)
     with locking.project_lock(registry.get_project(project)["name"]):
         ticket = load(project, ticket_id)
         _refuse_if_blocked(ticket)
+        ticket.update(fields or {})
         stage = ticket["stage"]
         if stage == "close":
             raise ConfigError(f"Ticket {ticket_id} is closed.")

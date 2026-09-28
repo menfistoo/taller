@@ -8,18 +8,28 @@ used only where judgement is: classifying the owner's words, surveying the
 code, planning, building, summarising. Every dispatch's usage is folded into
 the ticket as soon as it returns.
 
-Phase B has no gates, smoke check, pull request or staging deploy yet (C and F);
-those stages pass through with a note, and every owner checkpoint still holds.
+⑤ runs the gates §9.2 selects and ⑥ the smoke check (spec 9); each finding goes
+where its rule says - a fixer round, a deterministic command, or the owner. The
+pull request and staging deploy arrive in phase F; until then ⑧ waits for the
+owner's own merge, and every owner checkpoint still holds.
 """
 
 from __future__ import annotations
 
+import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from . import (config, constitution, generated, gitio, globs, inference, locking, models,
-               registry, roles, spend, tickets)
+from . import (config, constitution, gates, generated, gitio, globs, inference, locking,
+               models, overrides, registry, roles, spend, tickets)
+from .gates import constitution as constitution_gate
+from .gates import diff as gate_diff
+from .gates import llm
+from .gates import size as size_gate
+from .gates import smoke as smoke_gate
+from .gates import tests as tests_gate
 from .errors import ConfigError, TallerError
 from .scaffold import flatten
 
@@ -27,10 +37,11 @@ Ticket = dict[str, Any]
 Say = Callable[[str], None]
 
 PASS_THROUGH = {
-    "gates": "the quality gates arrive in phase C; passed through",
-    "smoke": "the smoke check arrives in phase C; passed through",
     "pr": "the pull request arrives in phase F; merge the branch yourself",
 }
+# The fixer may never touch a test (spec 9.7); a round whose diff does is undone.
+TEST_FILES = ("test_*.py", "*_test.py")
+SNAPSHOT = ".taller/resolved.json"
 # How the CLI says a model is out of reach, as distinct from any other failure.
 UNAVAILABLE = re.compile(r"model\b.*\b(not available|not found|does not exist|unavailable|"
                          r"invalid)", re.IGNORECASE)
@@ -242,8 +253,10 @@ def run(project: Path | str, ticket_id: int, *, lane: str | None = None,
                     say(f"  Spend so far: {ticket['spend']['weighted_tokens']} weighted "
                         f"tokens, past the warning line.")
                 stop = _step(project, ticket, lane, cfg, say)
-                if not stop and tickets.load(project, ticket_id)["stage"] == ticket["stage"] \
-                        and not tickets.load(project, ticket_id).get("blocked"):
+                after = tickets.load(project, ticket_id)
+                # A fix round keeps the stage and counts a round: that is progress.
+                if not stop and after["stage"] == ticket["stage"] and not after.get("blocked") \
+                        and after.get("fix_rounds") == ticket.get("fix_rounds"):
                     # A handler that neither waits nor moves the ticket would spin
                     # for ever; found by mutating the review stop.
                     raise Blocked(f"no progress at {tickets._label(ticket['stage'])}: the "
@@ -297,7 +310,8 @@ def _step(project: Path, ticket: Ticket, lane: str | None, cfg: Mapping[str, Any
             chosen, reason = "full", "it was already full, and a lane is never demoted"
         tickets.advance(project, ticket_id, lane=chosen,
                         note=f"explorer: {', '.join(facts['files']) or 'no files'}; "
-                             f"{chosen} because {reason}")
+                             f"{chosen} because {reason}",
+                        fields={"templates": dict(facts.get("templates") or {})})
         return False
 
     ruleset = constitution.resolve(project)
@@ -355,9 +369,11 @@ def _step(project: Path, ticket: Ticket, lane: str | None, cfg: Mapping[str, Any
         tickets.advance(project, ticket_id, note=f"implementer: {built['summary']}")
         return False
 
-    if stage in ("gates", "smoke"):
-        tickets.advance(project, ticket_id, note=PASS_THROUGH[stage])
-        return False
+    if stage == "gates":
+        return _gates(project, ticket_id, cfg, ruleset, say)
+
+    if stage == "smoke":
+        return _smoke(project, ticket_id, cfg, ruleset, say)
 
     if stage == "review":
         tree = _worktree(project, ticket_id)
@@ -365,6 +381,7 @@ def _step(project: Path, ticket: Ticket, lane: str | None, cfg: Mapping[str, Any
         if _on_branch(project, ticket, "review.md") is None:
             summary, _ = _ask(project, ticket_id, "summariser",
                               _context(project, ticket) + _change(project, ticket)
+                              + _gate_report(project, ticket, ruleset)
                               + "\nSummarise the change for review.",
                               cfg=cfg, ruleset=ruleset, cwd=tree)
             _commit_ticket_file(tree, ticket, "review.md", summary["summary_md"],
@@ -390,6 +407,229 @@ def _step(project: Path, ticket: Ticket, lane: str | None, cfg: Mapping[str, Any
     # staging and release: owner checkpoints with nothing to do first.
     say(f"  Waiting for you: `taller ticket approve {ticket_id}`.")
     return True
+
+
+# --- ⑤ gates and ⑥ smoke (spec 9) ---------------------------------------------------
+
+def _gates(project: Path, ticket_id: int, cfg: Mapping[str, Any],
+           ruleset: Mapping[str, Any], say: Say, *, commands_ran: bool = False) -> bool:
+    """Select, run, record, route. A command finding re-runs the gates once."""
+    tree = _worktree(project, ticket_id)
+    ticket = tickets.load(project, ticket_id)
+    change = gate_diff.build(project, gitio.MAIN_BRANCH, ticket["branch"])
+    selected = gates.select(ticket, change, ruleset, has_tests=_has_tests(change, ruleset))
+    say(f"  Gates: {', '.join(selected)}")
+    snapshot = _main_snapshot_sha(project)
+    results: list[inference.Result] = []
+    diff_text = _change(project, ticket)
+    runners: dict[str, Callable[[], dict[str, Any]]] = {
+        "constitution": lambda: constitution_gate.run(change, ruleset, snapshot_sha=snapshot),
+        "size": lambda: size_gate.run(change, ruleset, tree=gate_diff.tree(tree)),
+        "tests": lambda: tests_gate.run(tree, ruleset),
+    }
+    for name in llm.GATES:
+        runners[name] = (lambda name=name: llm.run(
+            name, project, ticket, diff_text, ruleset, cfg, cwd=tree,
+            on_result=results.append)[0])
+    workers = max(1, int((cfg.get("concurrency") or {}).get("max_parallel_gates") or 1))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {name: pool.submit(_safely, name, runners[name]) for name in selected}
+    verdicts = [futures[name].result() for name in selected]
+    for result in results:                  # folded here, one writer at a time
+        if result.usage or result.ok:
+            spend.fold(project, ticket_id, result, cfg)
+    findings = _record(project, ticket_id, tree, verdicts, ruleset, "⑤ gates")
+    return _route(project, ticket_id, findings, cfg, ruleset, say, stage="gates",
+                  commands_ran=commands_ran)
+
+
+def _smoke(project: Path, ticket_id: int, cfg: Mapping[str, Any],
+           ruleset: Mapping[str, Any], say: Say) -> bool:
+    tree = _worktree(project, ticket_id)
+    ticket = tickets.load(project, ticket_id)
+    changed = [f["path"] for f in
+               gate_diff.build(project, gitio.MAIN_BRANCH, ticket["branch"])["files"]]
+    verdict = _safely("smoke", lambda: smoke_gate.run(
+        tree, ruleset, templates=ticket.get("templates") or {}, changed=changed))
+    findings = _record(project, ticket_id, tree, [verdict], ruleset, "⑥ smoke")
+    return _route(project, ticket_id, findings, cfg, ruleset, say, stage="smoke")
+
+
+def _safely(name: str, runner: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+    """A gate that crashed could not run: `result: error`, never a pass (7.4)."""
+    try:
+        return runner()
+    except Exception as exc:                 # the crash itself is the finding
+        return {"gate": name, "result": "error", "findings": [], "metrics": {},
+                "error": f"{type(exc).__name__}: {exc}"}
+
+
+def _record(project: Path, ticket_id: int, tree: Path, verdicts: list[dict[str, Any]],
+            ruleset: Mapping[str, Any], label: str) -> list[dict[str, Any]]:
+    """Overrides applied; `gates/<name>.md` committed on the branch; status updated."""
+    hub_sha = str(ruleset.get("hub_sha") or "")
+    findings: list[dict[str, Any]] = []
+    for verdict in verdicts:
+        own = verdict["findings"]
+        # apply() appends findings about the overrides themselves; the
+        # constitution gate already reports those, once.
+        verdict["findings"] = overrides.apply(own, dict(ruleset))[:len(own)]
+        if verdict["result"] != "error":
+            verdict["result"] = gates.verdict(verdict["gate"], verdict["findings"],
+                                              verdict["metrics"])["result"]
+        findings.extend(verdict["findings"])
+    findings.extend(gates.errors(verdicts))
+
+    ticket = tickets.load(project, ticket_id)
+    folder = tree / tickets.ticket_dir(ticket) / "gates"
+    folder.mkdir(parents=True, exist_ok=True)
+    for verdict in verdicts:
+        (folder / f"{verdict['gate']}.md").write_bytes(
+            gates.render_verdict(verdict, hub_sha=hub_sha, prose=_prose(verdict)))
+    relative = folder.relative_to(tree).as_posix()
+    gitio.git(tree, "add", "--", relative)
+    if gitio.git(tree, "diff", "--cached", "--quiet", check=False).returncode:
+        gitio.git(tree, "commit", "--quiet", "-m",
+                  f"chore(gates): ticket {ticket_id:04d} verdicts", "--", relative)
+
+    ticket["gates"] = list(dict.fromkeys([*(ticket.get("gates") or []),
+                                          *(v["gate"] for v in verdicts)]))
+    ticket.setdefault("verdicts", {})
+    for verdict in verdicts:
+        ticket["verdicts"][verdict["gate"]] = {"result": verdict["result"],
+                                               **gates.counts(verdict["findings"]),
+                                               "hub_sha": hub_sha}
+    tickets.write(project, ticket, f"ticket {ticket_id:04d}: {label.split()[-1]} ran",
+                  note=f"{label}: " + ", ".join(f"{v['gate']} {v['result']}"
+                                                for v in verdicts))
+    return findings
+
+
+def _prose(verdict: Mapping[str, Any]) -> str:
+    if verdict["result"] == "error":
+        return f"The {verdict['gate']} gate could not run.\n\n{verdict.get('error', '')}"
+    if not verdict["findings"]:
+        return f"The {verdict['gate']} gate found nothing."
+    return "\n".join(f"- {_describe(f)}" for f in verdict["findings"])
+
+
+def _describe(found: Mapping[str, Any]) -> str:
+    where = f" at {found['file']}:{found['line']}" if found.get("file") else ""
+    hint = f" ({found['fix_hint']})" if found.get("fix_hint") else ""
+    return f"{found['rule']} ({found['severity']}){where}: {found['message']}{hint}"
+
+
+def _route(project: Path, ticket_id: int, findings: list[dict[str, Any]],
+           cfg: Mapping[str, Any], ruleset: Mapping[str, Any], say: Say, *,
+           stage: str, commands_ran: bool = False) -> bool:
+    """Spec 9.3 and 9.7: command, then the owner, then a fixer - or move on."""
+    routed = gates.route(findings)
+    if routed["command"]:
+        described = "; ".join(_describe(f) for f in routed["command"])
+        if commands_ran or stage != "gates":
+            raise Blocked(f"a deterministic fix ran and the finding remains: {described}")
+        for found in routed["command"]:
+            if found["rule"] == "constitution.resolved-snapshot-stale":
+                generated.refresh(project)          # `taller resolve`
+        say("  Ran `taller resolve` for a stale snapshot; running the gates again.")
+        return _gates(project, ticket_id, cfg, ruleset, say, commands_ran=True)
+    if routed["escalate"]:
+        raise Blocked("the gates found what needs your decision: "
+                      + "; ".join(_describe(f) for f in routed["escalate"]))
+    if routed["agent"]:
+        limit = int((ruleset.get("thresholds") or {}).get("max_fix_rounds", 2))
+        rounds = int(tickets.load(project, ticket_id).get("fix_rounds") or 0)
+        if rounds >= limit:
+            raise Blocked(f"{len(routed['agent'])} finding(s) survived {limit} fix rounds: "
+                          + "; ".join(_describe(f) for f in routed["agent"]))
+        _fix_round(project, ticket_id, routed["agent"], cfg, ruleset, say,
+                   back_to_gates=stage != "gates")
+        return False
+    medium = len(routed["summary"])
+    tickets.advance(project, ticket_id,
+                    note=f"{medium} MEDIUM finding(s) go to your review" if medium else None)
+    return False
+
+
+def _fix_round(project: Path, ticket_id: int, found: list[dict[str, Any]],
+               cfg: Mapping[str, Any], ruleset: Mapping[str, Any], say: Say, *,
+               back_to_gates: bool) -> None:
+    """One fixer round (spec 9.7): never a test file - enforced, then verified."""
+    tree = _worktree(project, ticket_id)
+    ticket = tickets.load(project, ticket_id)
+    before = gitio.git(tree, "rev-parse", "HEAD").stdout.strip()
+    listing = "\n".join(f"- {_describe(f)}" for f in found)
+    fixed, _ = _ask(project, ticket_id, "fixer",
+                    _context(project, ticket) + _change(project, ticket)
+                    + f"\nFix these findings, and nothing else:\n{listing}\n",
+                    cfg=cfg, ruleset=ruleset, cwd=tree, writable=[str(tree)])
+    if gitio.git(tree, "status", "--porcelain", check=False).stdout.strip():
+        gitio.git(tree, "add", "--all")
+        gitio.git(tree, "commit", "--quiet", "-m", "chore: uncommitted work from the fixer")
+    touched = gitio.git(tree, "diff", "--name-only", f"{before}..HEAD").stdout.split()
+    tests_dir = str((ruleset.get("paths") or {}).get("tests_dir") or "tests").strip("/")
+    changed_tests = [path for path in touched
+                     if globs.match(path, f"{tests_dir}/**")
+                     or any(globs.match(path, pattern) for pattern in TEST_FILES)]
+    if changed_tests:
+        gitio.git(tree, "reset", "--quiet", "--hard", before)
+        raise Blocked(f"the fixer changed {', '.join(changed_tests)} - a test is changed by "
+                      f"a person, never to make a check pass - so its round was undone. "
+                      f"The findings need you: " + "; ".join(_describe(f) for f in found))
+    ticket = tickets.load(project, ticket_id)
+    ticket["fix_rounds"] = int(ticket.get("fix_rounds") or 0) + 1
+    if back_to_gates:
+        ticket["stage"] = "gates"            # changed code is gated again before smoke
+    tickets.write(project, ticket, f"ticket {ticket_id:04d}: fix round {ticket['fix_rounds']}",
+                  note=f"fix round {ticket['fix_rounds']}: {fixed['summary']}")
+    say(f"  Fix round {ticket['fix_rounds']}: {fixed['summary']}")
+
+
+def _has_tests(change: Mapping[str, Any], ruleset: Mapping[str, Any]) -> bool:
+    """§9.2's "tests exist": any tracked test file, by the fixer's own patterns."""
+    return any(globs.match(path, pattern) for path in change.get("tracked") or []
+               for pattern in TEST_FILES)
+
+
+def _main_snapshot_sha(project: Path) -> str | None:
+    """The hub commit `main`'s snapshot was resolved from (spec 4.6)."""
+    raw = tickets.read_main(project, SNAPSHOT)
+    try:
+        return json.loads(raw.decode("utf-8")).get("hub_sha") if raw else None
+    except (ValueError, AttributeError):
+        return None
+
+
+def _gate_report(project: Path, ticket: Mapping[str, Any],
+                 ruleset: Mapping[str, Any]) -> str:
+    """For ⑦: every verdict's counts, every MEDIUM finding, and whether the rules
+    moved under the ticket since the gates ran (spec 14)."""
+    verdicts = ticket.get("verdicts") or {}
+    if not verdicts:
+        return ""
+    lines = ["\nThe gates:"]
+    mediums: list[str] = []
+    for name in ticket.get("gates") or verdicts:
+        verdict = verdicts.get(name) or {}
+        counts = ", ".join(f"{verdict.get(k, 0)} {k}" for k in
+                           ("blocker", "high", "medium", "low", "nit") if verdict.get(k))
+        lines.append(f"- {name}: {verdict.get('result', '?')}"
+                     + (f" ({counts})" if counts else ""))
+        text = _on_branch(project, ticket, f"gates/{name}.md")
+        if text:
+            mediums.extend(_describe(f) for f in gates.parse_verdict(text)["findings"]
+                           if f.get("severity") == "MEDIUM")
+    if mediums:
+        lines.append("\nMEDIUM findings for the owner to see (never auto-fixed):")
+        lines.extend(f"- {line}" for line in mediums)
+    ran = sorted({str(v.get("hub_sha")) for v in verdicts.values() if v.get("hub_sha")})
+    now = str(ruleset.get("hub_sha") or "")
+    moved = [sha for sha in ran if sha != now]
+    if moved and now:
+        lines.append(f"\nNote: the rules changed since the gates ran (hub "
+                     f"{', '.join(sha[:7] for sha in moved)} then, {now[:7]} now). Say so "
+                     f"in the summary: the verdicts were reached under the older rules.")
+    return "\n".join(lines) + "\n"
 
 
 # --- files on the branch ----------------------------------------------------------
