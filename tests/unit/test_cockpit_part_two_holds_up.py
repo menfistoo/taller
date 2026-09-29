@@ -119,10 +119,10 @@ def test_the_ticket_page_asks_github_once_however_often_it_refreshes(project, cl
     ticket["pr"] = 7
     tickets.write(project, ticket, "ticket 0001: a pull request")
     asked: list[list[str]] = []
-    monkeypatch.setattr(issues, "repo_of", lambda path: "menfistoo/toolshed")
+    monkeypatch.setattr(issues, "repo_of", lambda path: "neighbourhood/toolshed")
     monkeypatch.setattr(discovery, "_run_gh", lambda args, **kwargs: (
         asked.append(list(args)) or support.gh_json(
-            {"state": "OPEN", "url": "https://github.com/menfistoo/toolshed/pull/7",
+            {"state": "OPEN", "url": "https://github.com/neighbourhood/toolshed/pull/7",
              "mergeable": "MERGEABLE", "statusCheckRollup": []})))
 
     for _ in range(3):
