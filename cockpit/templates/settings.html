@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Taller — settings{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-end flex-wrap gap-2">
+  <div>
+    <h1 class="h4 mb-1">Settings</h1>
+    <div class="text-muted small">
+      Every key in force{% if page.project %} for {{ page.project }}{% endif %}, and the layer
+      that last set it. The same list <code>taller settings</code> prints.
+    </div>
+  </div>
+  <form method="get" class="d-flex gap-2 align-items-center">
+    <label class="form-label mb-0 small" for="project">Layer</label>
+    <select class="form-select form-select-sm" id="project" name="project"
+            onchange="this.form.submit()">
+      <option value="">the hub — shared by every project</option>
+      {% for name in page.projects %}
+      <option value="{{ name }}" {% if name == page.project %}selected{% endif %}>{{ name }}</option>
+      {% endfor %}
+    </select>
+  </form>
+</div>
+
+{% if page.mismatch %}
+<div class="alert alert-warning mt-3">Billing: {{ page.mismatch }}</div>
+{% endif %}
+
+<div class="card mt-3">
+  <div class="card-header">Change one</div>
+  <div class="card-body">
+    <form method="post" action="{{ url_for('cockpit.settings_write') }}"
+          class="row g-2 align-items-end">
+      <input type="hidden" name="{{ token_field }}" value="{{ token() }}">
+      <input type="hidden" name="project" value="{{ page.project }}">
+      <div class="col-md-5">
+        <label class="form-label small" for="key">Key</label>
+        <input class="form-control" id="key" name="key" list="every-key"
+               placeholder="thresholds.max_file_lines">
+        <datalist id="every-key">
+          {% for row in page.rows %}<option value="{{ row.key }}">{% endfor %}
+        </datalist>
+      </div>
+      <div class="col-md-5">
+        <label class="form-label small" for="value">Value</label>
+        <input class="form-control" id="value" name="value" placeholder="500">
+        <div class="form-text">YAML: <code>500</code>, <code>true</code>, <code>[a, b]</code></div>
+      </div>
+      <div class="col-md-2 d-grid">
+        <button class="btn btn-primary" type="submit">Change it</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card mt-3">
+  <div class="card-header">
+    {{ page.rows|length }} keys
+    {% if not page.show_money %}
+    <span class="text-muted small">· the price table is hidden: billing is
+      {{ page.mode }}, so money would be fiction</span>
+    {% endif %}
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm mb-0">
+      <thead><tr><th>Key</th><th>Value</th><th>Set by</th></tr></thead>
+      <tbody>
+        {% for row in page.rows %}
+        <tr>
+          <td><code>{{ row.key }}</code></td>
+          <td><code class="text-body">{{ row.shown }}</code></td>
+          <td class="small text-muted">{{ row.source }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
