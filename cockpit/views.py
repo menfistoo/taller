@@ -12,10 +12,11 @@ from typing import Any, Callable
 from flask import (Blueprint, abort, flash, redirect, render_template, request,
                    url_for)
 
-from taller import tickets
+from taller import onboarding, paths, tickets
 from taller.errors import LockTimeout, TallerError
 
-from . import check_token, configuration, health, reading, rules, runs, spending
+from . import (check_token, configuration, health, interview, reading, rules, runs,
+               spending)
 
 bp = Blueprint("cockpit", __name__)
 
@@ -28,6 +29,65 @@ def board():
 @bp.get("/spend")
 def spend():
     return render_template("spend.html", page=spending.figures())
+
+
+@bp.get("/new")
+def interview_new():
+    """Where a project starts: its name, and the folder to put it in."""
+    unfinished = []
+    for kept in sorted(interview.started_dir().glob("*.json")):
+        name = kept.stem
+        answered = len(onboarding.load_progress(name))
+        if answered < len(onboarding.QUESTIONS):
+            unfinished.append((name, answered))
+    return render_template("new.html", page={"default_path": str(paths.home() / "projects"),
+                                             "unfinished": unfinished})
+
+
+@bp.post("/new")
+def interview_start():
+    check_token()
+    name = (request.form.get("name") or "").strip()
+    begun = interview.start(name, request.form.get("path", ""))
+    if begun.get("problem"):
+        flash(begun["problem"], "warning")
+        return redirect(url_for("cockpit.interview_new"))
+    return redirect(url_for("cockpit.interview_page", name=name))
+
+
+@bp.get("/new/<name>")
+def interview_page(name: str):
+    return render_template("interview.html", page=interview.page(name),
+                           questions=onboarding.QUESTIONS)
+
+
+@bp.post("/new/<name>")
+def interview_answer(name: str):
+    """One answer, judged by the same library call the terminal makes."""
+    check_token()
+    key = request.form.get("key", "")
+    if request.form.get("again"):
+        # "Change an answer": forget it, and the page asks it again.
+        answers = onboarding.load_progress(name)
+        answers.pop(key, None)
+        onboarding.save_progress(name, answers)
+        return redirect(url_for("cockpit.interview_page", name=name))
+    taken = interview.answer(name, key, request.form.get("value", ""))
+    if not taken["ok"]:
+        flash(taken["problem"], "warning")
+    return redirect(url_for("cockpit.interview_page", name=name))
+
+
+@bp.post("/new/<name>/create")
+def interview_create(name: str):
+    check_token()
+    try:
+        made = interview.create(name)
+        flash(f"Created {name} in {made['target']}.", "info")
+        return redirect(url_for("cockpit.board"))
+    except TallerError as exc:
+        flash(str(exc), "warning")
+    return redirect(url_for("cockpit.interview_page", name=name))
 
 
 @bp.get("/rules")

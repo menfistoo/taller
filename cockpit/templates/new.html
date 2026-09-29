@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}New project{% endblock %}
+{% block content %}
+
+<h1 class="h4 mb-1">A new project</h1>
+<p class="text-muted small">
+  Twelve questions, the same twelve a terminal asks. Your answers are kept as you go,
+  so you can stop and come back — here or in a terminal.
+</p>
+
+<div class="card mt-3" style="max-width: 40rem;">
+  <div class="card-body">
+    <form method="post" action="{{ url_for('cockpit.interview_start') }}">
+      <input type="hidden" name="{{ token_field }}" value="{{ token() }}">
+      <div class="mb-3">
+        <label class="form-label" for="name">What should it be called?</label>
+        <input class="form-control" id="name" name="name" placeholder="toolshed" autofocus>
+        <div class="form-text">Lowercase letters, digits and hyphens.</div>
+      </div>
+      <div class="mb-3">
+        <label class="form-label" for="path">Which folder should hold it?</label>
+        <input class="form-control" id="path" name="path" value="{{ page.default_path }}">
+        <div class="form-text">A folder of its own is created inside this one.</div>
+      </div>
+      <button class="btn btn-primary" type="submit">Start the questions</button>
+    </form>
+  </div>
+</div>
+
+{% if page.unfinished %}
+<div class="card mt-3" style="max-width: 40rem;">
+  <div class="card-header">Started, not finished</div>
+  <ul class="list-group list-group-flush">
+    {% for name, answered in page.unfinished %}
+    <li class="list-group-item d-flex justify-content-between align-items-center">
+      <a href="{{ url_for('cockpit.interview_page', name=name) }}">{{ name }}</a>
+      <span class="text-muted small">{{ answered }} of 12 answered</span>
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+{% endblock %}
