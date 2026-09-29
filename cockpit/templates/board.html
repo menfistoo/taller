@@ -1,5 +1,71 @@
 {% extends "base.html" %}
+{% block title %}Taller — every ticket{% endblock %}
 {% block content %}
-<h1 class="h4">Every ticket</h1>
-<p class="text-muted">The board arrives with the next task.</p>
+
+{#  Twelve stages do not fit a window, so whatever needs her comes first, in
+    full, before any scrolling. #}
+{% if board.waiting or board.blocked %}
+<div class="alert alert-primary">
+  <div class="fw-semibold mb-1">Needs you</div>
+  <ul class="mb-0 ps-3">
+    {% for t in board.blocked %}
+    <li>
+      <a href="{{ t.url }}" class="alert-link">{{ "%04d"|format(t.id) }} · {{ t.title }}</a>
+      <span class="text-muted">({{ t.project }}, {{ t.label }})</span>
+      <div class="small text-danger">blocked: {{ t.blocked }}</div>
+    </li>
+    {% endfor %}
+    {% for t in board.waiting %}
+    <li>
+      <a href="{{ t.url }}" class="alert-link">{{ "%04d"|format(t.id) }} · {{ t.title }}</a>
+      <span class="text-muted">({{ t.project }}) — waiting for you at {{ t.waiting_on }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{% for project in board.projects if not project.available %}
+<div class="alert alert-warning">
+  <strong>{{ project.name }}</strong> cannot be read: {{ project.problem }}
+</div>
+{% endfor %}
+
+{% set busy = board.stages | selectattr("tickets") | list %}
+{% if busy %}
+<div class="d-flex gap-3 overflow-auto pb-3">
+  {#  Only the stages that hold something: an empty column is a stage nothing is
+      at, and eleven of them would push the work off the screen. #}
+  {% for column in busy %}
+  <div class="flex-shrink-0" style="width: 16rem;">
+    <h2 class="h6 text-muted">{{ column.label }}
+      <span class="badge text-bg-secondary">{{ column.tickets|length }}</span>
+    </h2>
+    {% for t in column.tickets %}
+    <div class="card mb-2 {% if t.blocked %}border-danger{% elif t.waiting_for_you %}border-primary{% endif %}">
+      <div class="card-body p-2">
+        <a href="{{ t.url }}" class="d-block fw-medium text-decoration-none">
+          {{ "%04d"|format(t.id) }} · {{ t.title }}
+        </a>
+        <div class="small text-muted">
+          {{ t.project }}{% if t.lane %} · {{ t.lane }} lane{% endif %}
+        </div>
+        {% if t.blocked %}
+          <div class="small text-danger mt-1">blocked</div>
+        {% elif t.waiting_for_you %}
+          <div class="small text-primary mt-1">waiting for you at {{ t.waiting_on }}</div>
+        {% endif %}
+        {% if t.unsynced %}<div class="small text-warning-emphasis">not pushed yet</div>{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endfor %}
+</div>
+{% elif board.projects %}
+<p class="text-muted">No open tickets. <code>taller ticket new</code>, or
+  <code>/taller:new</code> in a chat, starts one.</p>
+{% else %}
+<p class="text-muted">No projects yet. <code>taller project new</code> starts one.</p>
+{% endif %}
 {% endblock %}

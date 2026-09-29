@@ -8,14 +8,14 @@ from __future__ import annotations
 
 from flask import Blueprint, render_template
 
-from . import check_token
+from . import check_token, reading
 
 bp = Blueprint("cockpit", __name__)
 
 
 @bp.get("/")
 def board():
-    return render_template("board.html")
+    return render_template("board.html", board=reading.board())
 
 
 @bp.post("/ticket/<project>/<int:ticket_id>/approve")
