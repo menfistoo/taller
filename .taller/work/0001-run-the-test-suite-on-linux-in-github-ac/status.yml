@@ -30,8 +30,14 @@ spend:
       cache_write: 37136
       cache_read: 0
       output: 312
-  total_tokens: 37450
-  weighted_tokens: 47982
+    claude-haiku-4-5-20251001:
+      input: 362
+      cache_write: 59572
+      cache_read: 2028552
+      output: 8113
+  total_tokens: 2134049
+  weighted_tokens: 366229
   cost: null
   sessions:
   - e7965f5d-5dda-4c2e-8d86-6aea8720d563
+  - 60847f00-edc8-4f7e-97fb-dbedea9d7ae4
