@@ -70,6 +70,19 @@ def ticket_dir(ticket: Mapping[str, Any]) -> str:
     return f"{WORK}/{int(ticket['id']):04d}-{ticket['slug']}"
 
 
+def on_branch(project: Path | str, ticket: Mapping[str, Any], name: str) -> str | None:
+    """One of the ticket's own files, read from its branch. None when it is not there.
+
+    The chief, the pull request and the cockpit all need this, and all three had
+    their own copy of it.
+    """
+    if not ticket.get("branch"):
+        return None
+    raw = gitio.git(project, "cat-file", "blob",
+                    f"{ticket['branch']}:{ticket_dir(ticket)}/{name}", check=False)
+    return raw.stdout if raw.returncode == 0 else None
+
+
 def stage_number(stage: str) -> int:
     return STAGES.index(stage) + 1
 

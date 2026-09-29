@@ -121,6 +121,11 @@ def build_parser() -> argparse.ArgumentParser:
     models_verbs.add_parser("probe", help="ask each model one trivial question").add_argument(
         "--model", action="append", help="probe only this model (repeatable)")
 
+    cockpit_parser = verbs.add_parser("cockpit", help="Taller's own pages, in a browser")
+    cockpit_parser.add_argument("--port", type=int, help="the port to serve on (default 8765)")
+    cockpit_parser.add_argument("--no-open", action="store_true",
+                                help="do not open a browser window")
+
     stage_parser = verbs.add_parser("stage", help="bring a full ticket up on staging, on a "
                                                   "copy of the data")
     stage_parser.add_argument("id", type=int, help="the ticket's number")
@@ -183,6 +188,7 @@ def _handler(args: argparse.Namespace) -> Handler:
     from .commands import (amend, brand, ci, doctor, hook, models, profiles, project,
                            resolve, scan, settings, setup, ticket)
     from .commands import github as github_command
+    from .commands import cockpit as cockpit_command
     from .commands import stage as stage_command
 
     table: dict[tuple[str, str | None], Handler] = {
@@ -210,6 +216,7 @@ def _handler(args: argparse.Namespace) -> Handler:
         ("models", "probe"): models.probe,
         ("ci", None): lambda args, prompter: (ci.mode if args.mode else ci.run)(args, prompter),
         ("stage", None): stage_command.run,
+        ("cockpit", None): cockpit_command.run,
         ("github", "status"): github_command.status,
         ("github", "protect"): github_command.protect,
         ("profiles", "list"): profiles.list_,

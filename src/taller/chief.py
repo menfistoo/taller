@@ -319,7 +319,7 @@ def _step(project: Path, ticket: Ticket, lane: str | None, cfg: Mapping[str, Any
     if stage == "design":
         tree = _worktree(project, ticket_id)
         ticket = tickets.load(project, ticket_id)
-        previous = _on_branch(project, ticket, "plan.md")
+        previous = tickets.on_branch(project, ticket, "plan.md")
         rejected = ticket["checkpoints"]["design"] == "rejected"
         if previous is None or rejected:
             ask_for = "Write the plan."
@@ -344,7 +344,7 @@ def _step(project: Path, ticket: Ticket, lane: str | None, cfg: Mapping[str, Any
     if stage == "build":
         tree = _worktree(project, ticket_id)
         ticket = tickets.load(project, ticket_id)
-        plan = _on_branch(project, ticket, "plan.md") or ""
+        plan = tickets.on_branch(project, ticket, "plan.md") or ""
         built, _ = _ask(project, ticket_id, "implementer",
                         _context(project, ticket) + (f"\nThe approved plan:\n{plan}" if plan
                                                      else "") + "\nMake the change.",
@@ -379,7 +379,7 @@ def _step(project: Path, ticket: Ticket, lane: str | None, cfg: Mapping[str, Any
     if stage == "review":
         tree = _worktree(project, ticket_id)
         ticket = tickets.load(project, ticket_id)
-        if _on_branch(project, ticket, "review.md") is None:
+        if tickets.on_branch(project, ticket, "review.md") is None:
             summary, _ = _ask(project, ticket_id, "summariser",
                               _context(project, ticket) + _change(project, ticket)
                               + _gate_report(project, ticket, ruleset)
@@ -683,7 +683,7 @@ def _findings_section(project: Path, ticket: Mapping[str, Any]) -> str:
     """What the gates found, written by Taller - not left to the summariser's prose."""
     lines: list[str] = []
     for name in ticket.get("gates") or []:
-        text = _on_branch(project, ticket, f"gates/{name}.md")
+        text = tickets.on_branch(project, ticket, f"gates/{name}.md")
         if not text:
             continue
         lines.extend(f"- {_describe(f)}" for f in gates.parse_verdict(text)["findings"]
@@ -728,7 +728,7 @@ def _gate_report(project: Path, ticket: Mapping[str, Any],
                            ("blocker", "high", "medium", "low", "nit") if verdict.get(k))
         lines.append(f"- {name}: {verdict.get('result', '?')}"
                      + (f" ({counts})" if counts else ""))
-        text = _on_branch(project, ticket, f"gates/{name}.md")
+        text = tickets.on_branch(project, ticket, f"gates/{name}.md")
         if text:
             mediums.extend(_describe(f) for f in gates.parse_verdict(text)["findings"]
                            if f.get("severity") == "MEDIUM")
@@ -766,12 +766,7 @@ def _worktree(project: Path, ticket_id: int) -> Path:
     return tree
 
 
-def _on_branch(project: Path, ticket: Mapping[str, Any], name: str) -> str | None:
-    if not ticket.get("branch"):
-        return None
-    raw = gitio.git(project, "cat-file", "blob",
-                    f"{ticket['branch']}:{tickets.ticket_dir(ticket)}/{name}", check=False)
-    return raw.stdout if raw.returncode == 0 else None
+
 
 
 def _commit_ticket_file(tree: Path, ticket: Mapping[str, Any], name: str, text: str,

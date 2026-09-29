@@ -32,10 +32,10 @@ def body(project: Path | str, ticket: Mapping[str, Any]) -> str:
     words = tickets._words(project, ticket).strip()
     if words:
         parts += ["## What was asked", "", words, ""]
-    review = _on_branch(project, ticket, "review.md")
+    review = tickets.on_branch(project, ticket, "review.md")
     if review:
         parts += ["## What changed", "", review.strip(), ""]
-    plan = _on_branch(project, ticket, "plan.md")
+    plan = tickets.on_branch(project, ticket, "plan.md")
     if plan:
         parts += ["## The plan it followed", "", plan.strip(), ""]
     parts += _verdicts(project, ticket)
@@ -122,7 +122,7 @@ def _verdicts(project: Path, ticket: Mapping[str, Any]) -> list[str]:
                      + (f" ({counts})" if counts else ""))
     mediums = []
     for name in ticket.get("gates") or verdicts:
-        text = _on_branch(project, ticket, f"gates/{name}.md")
+        text = tickets.on_branch(project, ticket, f"gates/{name}.md")
         if not text:
             continue
         mediums += [f"- {f['rule']} ({f['severity']}): {f['message']}"
@@ -133,9 +133,4 @@ def _verdicts(project: Path, ticket: Mapping[str, Any]) -> list[str]:
     return [*lines, ""]
 
 
-def _on_branch(project: Path, ticket: Mapping[str, Any], name: str) -> str | None:
-    if not ticket.get("branch"):
-        return None
-    raw = gitio.git(project, "cat-file", "blob",
-                    f"{ticket['branch']}:{tickets.ticket_dir(ticket)}/{name}", check=False)
-    return raw.stdout if raw.returncode == 0 else None
+
