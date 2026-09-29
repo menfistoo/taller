@@ -15,7 +15,7 @@ from flask import (Blueprint, abort, flash, redirect, render_template, request,
 from taller import tickets
 from taller.errors import LockTimeout, TallerError
 
-from . import check_token, configuration, reading, runs, spending
+from . import check_token, configuration, health, reading, runs, spending
 
 bp = Blueprint("cockpit", __name__)
 
@@ -28,6 +28,23 @@ def board():
 @bp.get("/spend")
 def spend():
     return render_template("spend.html", page=spending.figures())
+
+
+@bp.get("/health")
+def health_page():
+    return render_template("health.html", page={"projects": health.projects()})
+
+
+@bp.post("/health/<project>")
+def health_check(project: str):
+    """Scan one project now. She asked for it, so the request may take its time."""
+    check_token()
+    try:
+        figures = health.check(project)
+        flash(f"Checked {project} in {figures['seconds']}s.", "info")
+    except TallerError as exc:
+        flash(str(exc), "warning")
+    return redirect(url_for("cockpit.health_page"))
 
 
 @bp.get("/settings")
