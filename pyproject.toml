@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "taller"
 version = "0.1.0"
 requires-python = ">=3.11"
-dependencies = ["PyYAML>=6.0", "pypdf>=4.0", "pillow>=10.0"]
+dependencies = ["PyYAML>=6.0", "pypdf>=4.0", "pillow>=10.0", "flask>=3.0"]
 
 [project.optional-dependencies]
 dev = ["pytest>=7.4"]
@@ -14,11 +14,15 @@ dev = ["pytest>=7.4"]
 [project.scripts]
 taller = "taller.cli:main"
 
+# `cockpit` sits beside `src/` rather than inside it: it is a front end over the
+# library, like the CLI, and never something the library imports.
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["src", "."]
+include = ["taller*", "cockpit*"]
 
 [tool.setuptools.package-data]
 "taller" = ["catalogue/**/*", "agents/*.md"]
+"cockpit" = ["templates/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
