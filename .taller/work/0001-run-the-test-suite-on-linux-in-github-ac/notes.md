@@ -5,3 +5,4 @@
 - 2026-09-29T20:15:42 — ① intake → ② triage
 - 2026-09-29T20:17:59 — ② triage → ③ design (lane full); explorer: .github/workflows/test-suite.yml; full because a file is added or deleted
 - 2026-09-29T20:18:04 — branch ticket/0001-run-the-test-suite-on-linux-in-github-ac opened
+- 2026-09-29T20:20:16 — ③ plan written; waiting for your approval
