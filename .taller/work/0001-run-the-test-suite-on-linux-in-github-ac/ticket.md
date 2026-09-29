@@ -1,6 +1,6 @@
 # Run the test suite on Linux in GitHub Actions
 
-- Kind: idea
+- Kind: feature
 - Created: 2026-09-29T20:06:48
 
 ## In the owner's words
