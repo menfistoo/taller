@@ -45,7 +45,7 @@ def run(args: Any, prompter: Prompter) -> int:
     lines: list[str] = []
     if hub_changes:
         hub.commit(f"amend: {reason}")
-        touched = _refresh_hub(hub_changes)
+        touched = generated.refresh_for_hub_paths(hub_changes)
         lines.append(f"Amended the hub rules ({', '.join(hub_changes)}).")
         lines.extend(f"  refreshed {name} (sync: {sync})" for name, sync in touched)
         if not touched:
@@ -90,23 +90,3 @@ def _changed(repo: Path, *where: str) -> list[str]:
                     "--untracked-files=all", "--no-renames", "--", *where,
                     check=False).stdout
     return sorted({entry[3:] for entry in raw.split("\0") if len(entry) > 3})
-
-
-def _refresh_hub(changed: list[str]) -> list[tuple[str, str]]:
-    """Every adopted project a changed module, brand, profile or setting reaches."""
-    if any(p.startswith("profiles/") or p == "taller.yml" for p in changed):
-        return generated.refresh_affected(everything=True, message="taller: resolve after "
-                                                                   "an amendment")
-    touched: dict[str, str] = {}
-    for path in changed:
-        parts = path.split("/")
-        if parts[0] == "modules" and path.endswith(".md"):
-            found = generated.refresh_affected(module=path[len("modules/"):-len(".md")],
-                                               message="taller: resolve after an amendment")
-        elif parts[0] == "brands" and len(parts) > 1:
-            found = generated.refresh_affected(brand=parts[1],
-                                               message="taller: resolve after an amendment")
-        else:
-            continue
-        touched.update(found)
-    return sorted(touched.items())

@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Taller — rules{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-end flex-wrap gap-2">
+  <div>
+    <h1 class="h4 mb-1">The rules {{ page.project }} is held to</h1>
+    <div class="text-muted small">
+      Profile {{ page.profile }} · the hub's files are shared by every project that uses
+      them; saving asks why, commits it, and refreshes everything it reaches.
+    </div>
+  </div>
+  <form method="get" class="d-flex gap-2 align-items-center">
+    <select class="form-select form-select-sm" name="project" onchange="this.form.submit()">
+      {% for name in page.projects %}
+      <option value="{{ name }}" {% if name == page.project %}selected{% endif %}>{{ name }}</option>
+      {% endfor %}
+    </select>
+  </form>
+</div>
+
+{% if page.branch and page.branch != "main" %}
+<div class="alert alert-warning mt-3">
+  {{ page.project }} is on <code>{{ page.branch }}</code>. Its own rules can only be
+  amended on <code>main</code> — a rule amended on a ticket branch would go when the
+  branch goes. The hub's rules can still be amended from here.
+</div>
+{% endif %}
+
+{% if page.overrides %}
+<div class="card mt-3">
+  <div class="card-header">Deviations it is allowed to ship</div>
+  <ul class="list-group list-group-flush">
+    {% for override in page.overrides %}
+    <li class="list-group-item small">
+      <code>{{ override.rule }}</code> in <code>{{ override.scope }}</code>
+      {%- if override.until %} until {{ override.until }}{% endif %}
+      <div class="text-muted">{{ override.reason or "no reason given" }}</div>
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{% for slice_ in page.slices %}
+<h2 class="h6 text-muted mt-4">{{ slice_.name }}</h2>
+{% for source in slice_.sources %}
+<div class="card mb-2">
+  <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <code class="small">{{ source.path }}</code>
+    <span class="badge {% if source.where == 'hub' %}text-bg-primary{% else %}text-bg-secondary{% endif %}">
+      {{ source.where }}</span>
+  </div>
+  <div class="card-body">
+    <form method="post" action="{{ url_for('cockpit.rules_write', project=page.project) }}">
+      <input type="hidden" name="{{ token_field }}" value="{{ token() }}">
+      <input type="hidden" name="path" value="{{ source.path }}">
+      <textarea class="form-control font-monospace small" name="text"
+                rows="{{ [source.text.splitlines()|length + 2, 24]|min }}">{{ source.text }}</textarea>
+      <div class="row g-2 align-items-end mt-2">
+        <div class="col-md">
+          <label class="form-label small">Why does the rule change?</label>
+          <input class="form-control form-control-sm" name="reason"
+                 placeholder="The reason is kept with it">
+        </div>
+        <div class="col-md-auto">
+          <button class="btn btn-sm btn-primary" type="submit">Save and amend</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+{% endfor %}
+{% else %}
+<p class="text-muted mt-3">This project resolves no rule files at all, which should not
+  happen: <code>taller doctor</code> is the next thing to try.</p>
+{% endfor %}
+{% endblock %}

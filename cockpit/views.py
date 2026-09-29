@@ -15,7 +15,7 @@ from flask import (Blueprint, abort, flash, redirect, render_template, request,
 from taller import tickets
 from taller.errors import LockTimeout, TallerError
 
-from . import check_token, configuration, health, reading, runs, spending
+from . import check_token, configuration, health, reading, rules, runs, spending
 
 bp = Blueprint("cockpit", __name__)
 
@@ -28,6 +28,38 @@ def board():
 @bp.get("/spend")
 def spend():
     return render_template("spend.html", page=spending.figures())
+
+
+@bp.get("/rules")
+def rules_page():
+    """One project's rules. With no project named, the first one she has."""
+    wanted = request.args.get("project")
+    if not wanted:
+        available = [entry["name"] for entry in reading.projects() if entry["available"]]
+        if not available:
+            return render_template("problem.html", heading="No projects yet",
+                                   detail="`taller project new` starts one, and its rules "
+                                          "appear here."), 404
+        return redirect(url_for("cockpit.rules_page", project=available[0]))
+    try:
+        page = rules.slices(wanted)
+    except TallerError as exc:
+        abort(404, str(exc))
+    return render_template("rules.html", page=page)
+
+
+@bp.post("/rules/<project>")
+def rules_write(project: str):
+    """Amend one rule file: write, commit, and refresh what it reaches."""
+    check_token()
+    try:
+        for line in rules.save(project, request.form.get("path", ""),
+                               request.form.get("text", ""),
+                               request.form.get("reason", "")):
+            flash(line, "info")
+    except TallerError as exc:
+        flash(str(exc), "warning")
+    return redirect(url_for("cockpit.rules_page", project=project))
 
 
 @bp.get("/health")
