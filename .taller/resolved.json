@@ -1,0 +1,156 @@
+{
+  "billing": {
+    "mode": null
+  },
+  "brand": null,
+  "budget": {
+    "per_ticket_stop": 1200000,
+    "per_ticket_warn": 400000
+  },
+  "ci": {
+    "taller_source": "taller @ git+https://github.com/menfistoo/taller@main"
+  },
+  "cli_min_version": "2.1.74",
+  "concurrency": {
+    "max_parallel_gates": 3,
+    "max_parallel_thinker": 1
+  },
+  "effort": {
+    "architect": "high",
+    "chief": "low",
+    "default": "low",
+    "fixer": "medium",
+    "gate_quality": "medium",
+    "gate_security": "medium",
+    "gate_ux": "medium",
+    "implementer": "medium"
+  },
+  "fallback": "worker",
+  "hub_sha": "a3cb0bf402eacc8cff4458b5745288e48ac3b120",
+  "language": {
+    "code": "en",
+    "commits": "en",
+    "ui": "en"
+  },
+  "mode": "local",
+  "model_aliases": {
+    "cheap": "haiku",
+    "creative": "fable",
+    "thinker": "opus",
+    "worker": "sonnet"
+  },
+  "models": {
+    "architect": "thinker",
+    "chief": "worker",
+    "explorer": "cheap",
+    "fixer": "worker",
+    "gate_quality": "worker",
+    "gate_security": "thinker",
+    "gate_ux": "worker",
+    "implementer": "worker",
+    "scribe": "cheap",
+    "summariser": "cheap"
+  },
+  "non_suppressible": [],
+  "overrides": [],
+  "paths": {
+    "brand_tokens": null,
+    "layers": {},
+    "security_sensitive": [
+      ".env*",
+      "**/*secret*",
+      "**/*credential*",
+      "build.py",
+      "*.spec"
+    ],
+    "tests_dir": "tests",
+    "ui": []
+  },
+  "pricing": {
+    "as_of": "2026-06-24",
+    "claude-fable-5-1": {
+      "input": 10.0,
+      "output": 50.0
+    },
+    "claude-haiku-4-5": {
+      "input": 1.0,
+      "output": 5.0
+    },
+    "claude-opus-5": {
+      "input": 5.0,
+      "output": 25.0
+    },
+    "claude-sonnet-5": {
+      "input": 2.0,
+      "output": 10.0
+    }
+  },
+  "project": {
+    "name": "taller",
+    "profile": "python-packaged"
+  },
+  "slices": {
+    "conventions": {
+      "name": "conventions",
+      "sources": [
+        "C:\\Users\\catia\\.taller\\modules\\conventions\\python.md"
+      ],
+      "text": "> Python naming, module layout, error handling and comment rules for this codebase.\n\n## Naming\n\n`snake_case` for functions, variables and modules; `PascalCase` for classes;\n`UPPER_SNAKE` for module-level constants. A leading underscore means \"not part of\nthis module's interface\" and is the only visibility marker used.\n\nNames say what a thing is, not what type it has: `pending_orders`, not `order_list`.\nBooleans read as assertions: `is_active`, `has_expired`. A function that performs an\naction is a verb phrase; a function that answers a question is a noun or an\nassertion, and does not also change state. Abbreviate nothing that is not already an\nabbreviation everywhere else.\n\nShort names are correct in short scopes. A comprehension variable may be one letter;\na module-level constant may not.\n\n## Structure\n\nOne module has one subject, and its name says which. Functions do one thing at one\nlevel of abstraction: a function that opens a file, parses it, validates it and\nwrites a report is four functions, and only the parsing one is testable on its own.\n\nImports are standard library, then third party, then local, each group separated by a\nblank line and sorted. Never use a wildcard import: it makes the origin of a name\nunanswerable without running the code.\n\nA module does nothing at import time except define things. Work performed at import\ntime runs during test collection and during tooling that merely inspects the module,\nin an order nobody chose.\n\n## Error handling\n\n**Never catch an exception you are not going to handle.** A bare `except` that logs\nand continues converts a crash you would have fixed into wrong output you will not\nnotice. If there is nothing sensible to do, let it propagate.\n\n**Catch the narrowest type, around the narrowest block.** A wide `try` hides which\nstatement failed, and the next person widens the catch rather than narrowing the\nblock.\n\n**Raise with a message that names the input.** \"Invalid value\" costs an hour;\n\"expected an integer for `timeout_s`, got 'soon'\" costs nothing. Use the project's\nown exception types at its boundaries so a caller can distinguish a failure of this\ncode from a failure of the library underneath.\n\n## Comments\n\n**Comments explain why, never what.** The code already says what it does, and a\ncomment restating it becomes a lie the first time the code changes. Comment the\nnon-obvious decision: the constraint that forced this approach, the alternative that\nfailed, the bug this line prevents. A rule whose reason is written down survives\ncontact with a situation its author did not foresee; one without a reason gets\ndeleted by the first person it inconveniences.\n\nDocstrings say what a function is for and what it guarantees, not how it works.\n"
+    },
+    "never": {
+      "name": "never",
+      "sources": [
+        "C:\\Users\\catia\\.taller\\modules\\never.md",
+        "C:\\Users\\catia\\programas\\taller\\.taller\\constitution\\never.md"
+      ],
+      "text": "> Prohibitions that hold in every stack, whatever the ticket says and whoever is asking.\n\nEach rule below is here because breaking it destroys something that cannot be\nrestored by the next commit: a leaked secret, lost data, or the credibility of the\ntest suite. They are not stylistic. A ticket that appears to require one of them is a\nticket to stop and ask about.\n\n## Never commit a secret\n\nNo key, token, password or connection string with credentials in it, ever, in any\nfile, including a test fixture, a comment, an example configuration and a commit\nmessage. Deleting the line later does not help: the value lives in the history, the\nhistory is pushed, and the only real remedy is rotating the secret. If a secret has\nalready been committed, say so immediately - the rotation is the fix, and its cost\ngrows with every hour nobody knows.\n\n## Never weaken a check to make it pass\n\nNot a test, not a linter rule, not a type check, not a gate threshold. A failing\ncheck is information; relaxing it deletes the information and keeps the defect. If\nthe check is genuinely wrong, that is a separate, argued change with its reason\nrecorded - not a value quietly edited in the same commit as the code it was blocking.\n\n## Never edit a test to match broken behaviour\n\nA test asserts what was intended. Changing the assertion because the code now does\nsomething else converts a caught regression into documented behaviour, and the next\nperson has no way to tell which is which. Fix the code. If the intent really has\nchanged, change the test in its own commit, with the reason stated in the message.\n\n## Never delete data to resolve an error\n\nNot a row, not a table, not a file, not a migration, not a branch. Dropping and\nrecreating is not a repair, it is a repair with the evidence destroyed, and it is\nirreversible in exactly the cases where it seemed easiest. Reproduce the error\nagainst a copy. If data really must go, that is the owner's decision, made with a\nbackup in hand.\n\n## Never leave a failing check disabled\n\nA skipped test, a commented-out assertion, a suppressed rule with no reason and a\ndisabled job all report success while checking nothing, which is worse than a red\nbuild because it is quiet. Disable a check only with a recorded reason and the\ncondition for re-enabling it, and never as the last step before calling work done.\n\n## Never bypass review because a change is small\n\nSize does not predict risk: one character in a condition, a permission default, a\npath or a comparison operator is the shape most serious defects arrive in. Review is\nalso the only record of why a change was made. Small changes are cheap to review, so\nthe argument for skipping it is never about cost.\n\n## This project\n\nIt deliberately does not do the following. Work that would make it do so\nis out of scope, whatever the ticket says.\n\n- It will never become a hosted service for other people, and it will never hold an API key or any credential of its own.\n"
+    },
+    "overrides": {
+      "name": "overrides",
+      "sources": [
+        "C:\\Users\\catia\\programas\\taller\\.taller\\constitution\\overrides.md"
+      ],
+      "text": "---\noverrides: []\n---\n\nRecord a deliberate deviation from a rule here, with a reason and, if it\nis temporary, an `until` date. A deviation with no reason is reported.\n"
+    },
+    "product": {
+      "name": "product",
+      "sources": [
+        "C:\\Users\\catia\\programas\\taller\\.taller\\constitution\\product.md"
+      ],
+      "text": "> Runs my projects through an engineering team of Claude agents that I direct, on my own machine and on my subscription.\n\n# taller\n\nRuns my projects through an engineering team of Claude agents that I direct, on my own machine and on my subscription.\n\n## Must never break\n\nWriting a ticket's state to main. Everything Taller knows about a piece of work lives in git, and a wrong write loses the work.\n\n## Who uses it, and from where\n\nOne operator: the owner alone.\n\nReached from: this machine. Used on a phone: no.\n\n## Data\n\nTickets with their plans, verdicts and notes inside each project's own git repository, and the hub's rules, profiles and brands.\n\nMoney, personal data or credentials: no.\n\n## Deploys to\n\nThis machine only.\n"
+    },
+    "security": {
+      "name": "security",
+      "sources": [
+        "C:\\Users\\catia\\.taller\\modules\\security\\minimal.md"
+      ],
+      "text": "> Security rules for a single-operator tool with no sign-in, and when they stop being enough.\n\nThis applies to a program run by the person who owns it: a local tool, a helper\nscript, a page with no accounts. There is no login, so there is nothing to bypass.\nThat removes access control from the picture and removes nothing else.\n\n## Secrets\n\n**Secrets come from the environment or from a file outside the repository.** Not from\na constant, not from a default argument, not from a comment saying it is only for\ntesting. A single operator still pushes to a remote, still shares a screenshot, and\nstill publishes the repository some day. A secret in the history stays compromised\nafter the line is deleted, so the cost of the mistake is not proportional to the\nsize of the project.\n\n**Nothing secret is printed.** Keys and tokens do not belong in log output or in an\nerror message, because logs get pasted into issues and chat when something breaks.\n\n## Input is untrusted even when it is yours\n\nThe operator is trusted; the data is not. A file downloaded from somewhere, a\nresponse from an API, a spreadsheet exported by another program - all of it is input\nwritten by someone else, and it arrives malformed eventually.\n\n**Never pass input into a shell.** Call programs with an argument list, never by\nbuilding a command string, so a value containing a semicolon or a quote cannot\nbecome another command. Never evaluate input as code, and never deserialise it with\na format that can construct arbitrary objects; use JSON or CSV.\n\n**Validate before use, and fail loudly.** A value that is wrong should stop the run\nwith a message naming the file and the field. Silently coercing it is how a bad\ninput becomes a bad output that nobody notices for weeks.\n\n## Paths\n\n**Every path built from input is resolved and checked to be inside the directory it\nbelongs to.** A name like `../../etc/passwd` or an absolute path arriving in a field\nis the whole of path traversal, and it does not require a hostile user - an archive\nor a data file written by another tool is enough. Resolve the candidate, resolve the\nintended parent, and confirm the first is under the second before opening it.\n\n## When this module is no longer the right one\n\nSwitch to the multi-user security module the moment any of these becomes true:\n\n- More than one person signs in, or will.\n- Two people using it should see different data, or have different rights.\n- It becomes reachable from a network the operator does not control.\n- It stores anything about a third party who is not the operator.\n\nThese are not gradual. On the day one of them is true, the rules this module leaves\nout - authentication, a permission check per route, CSRF, an audit trail - are all\nmissing at once, and the application was built without room for them.\n"
+    },
+    "stack": {
+      "name": "stack",
+      "sources": [
+        "C:\\Users\\catia\\.taller\\modules\\stack\\python-packaged.md"
+      ],
+      "text": "> A Python program frozen by PyInstaller into one executable that runs without Python installed.\n\n## Runtime shape\n\nSource is an ordinary Python package with one entry module. The shipped artefact is\na single executable produced by PyInstaller, run from a shell or by a scheduler on a\nmachine that has no interpreter, no virtual environment and no network install path.\nThere is no user interface: input arrives as arguments, configuration files or\nstandard input, and results leave as files, exit codes and text.\n\n## What \"no interpreter on the target\" changes\n\nEverything that normally resolves at install time has to resolve at build time.\n\n**Nothing may be installed at runtime.** No `pip`, no download of a missing wheel,\nno \"first run sets itself up\". The target may have no network and no write access to\nthe program's own directory, so a dependency that is not frozen in is a dependency\nthat does not exist.\n\n**Imports must be static.** PyInstaller discovers dependencies by analysing import\nstatements, so a module imported through `importlib` by a name built at runtime is\ninvisible to it and the frozen program fails with `ModuleNotFoundError` on the one\npath the test suite did not take. If dynamic loading is unavoidable, declare the\nmodule as a hidden import in the spec file and say in a comment why.\n\n**Data files are not beside `__file__`.** A frozen program unpacks into a temporary\ndirectory, so a path built from `__file__` points into that directory and vanishes.\nResolve bundled resources through the runtime's own base directory, and resolve\nwritable paths from an explicit argument or the user's own directories instead.\n\n## Working directory and exit codes\n\nThe working directory is whatever the caller had; it is not the program's location.\nEvery path the program reads or writes is either absolute or resolved against a\ndirectory it was told about. A scheduler is often the only caller, and a scheduler\nreads nothing but the exit code, so return zero only on success, return a non-zero\ncode on failure, and write the reason to stderr before exiting.\n\n## Build and verification\n\nThe build is a checked-in script or spec file, never a command someone remembers.\nThe only meaningful check is running the built executable: the import graph, the\ndata files and the path handling all differ between the source tree and the frozen\nartefact, so a green test suite against source says nothing about the thing you\nship. Build it and run it before calling the work done.\n"
+    }
+  },
+  "smoke": {
+    "kind": "import",
+    "module": "main",
+    "timeout_s": 20
+  },
+  "thresholds": {
+    "dup_block_lines": 12,
+    "max_fast_lane_lines": 50,
+    "max_file_lines": 800,
+    "max_fix_rounds": 2,
+    "max_function_lines": 80,
+    "min_coverage_pct": 0
+  },
+  "weights": {
+    "cache_read": 0.1,
+    "cache_write": 1.25,
+    "input": 1.0,
+    "output": 5.0
+  }
+}
