@@ -119,7 +119,7 @@ def ticket_page(project_name: str, ticket_id: int) -> dict[str, Any]:
     branch has been deleted (a rejection at ⑦, §7.2) still renders, with the
     branch named in `gone`.
     """
-    entry = _entry(project_name)
+    entry = entry_for(project_name)
     path = Path(entry["path"])
     ticket = tickets.load(path, ticket_id)
     gone: list[str] = []
@@ -146,7 +146,8 @@ def ticket_page(project_name: str, ticket_id: int) -> dict[str, Any]:
     }
 
 
-def _entry(project_name: str) -> dict[str, Any]:
+def entry_for(project_name: str) -> dict[str, Any]:
+    """The registry's row for a project, by the name the pages use."""
     for entry in registry.list_projects():
         if entry["name"] == project_name:
             return entry

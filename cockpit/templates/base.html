@@ -19,6 +19,9 @@
 </nav>
 <main class="container-fluid py-3">
   {% if problem %}<div class="alert alert-warning">{{ problem }}</div>{% endif %}
+  {% for message in get_flashed_messages() %}
+  <div class="alert alert-warning">{{ message }}</div>
+  {% endfor %}
   {% block content %}{% endblock %}
 </main>
 <!-- Every form carries this, and every write checks it: a page on another site
