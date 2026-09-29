@@ -1,0 +1,5 @@
+{% extends "base.html" %}
+{% block content %}
+{# Raises on render: the smoke gate's case, which pytest need not catch (spec 15.2). #}
+<p>{{ undefined_helper() }}</p>
+{% endblock %}

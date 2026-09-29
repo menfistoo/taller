@@ -1,0 +1,5 @@
+{
+  "name": "taller",
+  "description": "Run your projects through Taller from inside a Claude Code chat: start, approve, reject and resume tickets, amend the rules, see where everything stands.",
+  "version": "0.1.0"
+}

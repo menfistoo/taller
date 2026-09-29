@@ -1,0 +1,3 @@
+# The project declares a rule non-suppressible; an override then targets it.
+non_suppressible:
+  - brand.hardcoded-font

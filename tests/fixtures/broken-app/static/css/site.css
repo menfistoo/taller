@@ -1,0 +1,5 @@
+/* Three hex values where a token exists, and a literal font (spec 15.2). */
+.warning { color: #1b365d; }
+.banner { background: #c8a45c; }
+.alert { border-color: #1B365D; }
+body { font-family: "Comic Sans MS", cursive; }

@@ -1,0 +1,19 @@
+# An EXAMPLE list of made-up words. No tracked file may contain one of these,
+# whole word, any case - except this file, tests/fixtures/, and the two tests
+# named in support.VOCABULARY_EXEMPT. Spec 15.6, criterion 5.
+#
+# These are stand-ins so the check has something to prove. YOUR real list - your
+# name, your accounts, your line of business, words in your own language - goes
+# in your hub, at ~/.taller/domain_vocabulary.txt, which is never committed.
+# The check reads both.
+#
+# A person and their accounts
+fernwick
+lfernwick
+# A business and its projects
+bowsprit
+quilmora
+zarpeta
+# Nouns from a line of business, in a language that is not this repository's
+cliente
+albaran

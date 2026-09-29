@@ -1,0 +1,11 @@
+.git
+.taller
+venv
+.venv
+.env
+instance
+tests
+__pycache__
+*.db
+*-wal
+*-shm

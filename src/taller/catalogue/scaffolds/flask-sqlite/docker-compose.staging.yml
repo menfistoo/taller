@@ -1,0 +1,17 @@
+# Staging: the same image, its own data, reachable only from this machine.
+# Brought up by `taller stage <ticket>`, which runs exactly:
+#   docker compose -p %%name%%-staging -f docker-compose.staging.yml up -d --build
+# Self-contained on purpose: production's compose is not layered under it, so its
+# Caddy never fights this one for ports 80 and 443.
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env}
+    ports: ["127.0.0.1:8081:8000"]
+    volumes:
+      # A copy of the production database, put here by `taller stage` (spec 13.1).
+      # Production's own volume is never mounted, so nothing on a branch can
+      # reach the real data.
+      - ./data-staging:/data

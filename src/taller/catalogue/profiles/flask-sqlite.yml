@@ -1,0 +1,69 @@
+# A server-rendered web application with a database. Inert until copied into a
+# hub (spec 4.0): nothing here is resolved or enforced from the catalogue.
+name: flask-sqlite
+# Stack: Flask + SQLite WAL + Jinja2 + Bootstrap 5 + gunicorn + Docker Compose
+description: A web app with its own database, used in a browser
+modules:
+  - stack/flask-sqlite
+  - security/web-app
+  - conventions/python
+  - conventions/js
+  - ux/bootstrap
+  - never
+
+# Asked, never assumed (spec 4.0). The key exists so onboarding has a slot to
+# fill; a default here is how a generic tool ends up knowing whose it is. There
+# is deliberately no `language` key at all.
+brand: null
+
+paths:
+  # APPENDS to the hub floor and can never be narrowed (spec 4.4): a project
+  # able to shrink its own security surface would make the gate optional.
+  security_sensitive:
+    - "routes/**"
+    - "blueprints/**"
+    - "database.py"
+    - "**/auth*.py"
+    - "**/permissions*.py"
+    - "migrate_*.py"
+    - "wsgi.py"
+    - "docker-compose*.yml"
+  ui:
+    - "templates/**"
+    - "static/**/*.css"
+    - "static/**/*.js"
+  # What each layer is allowed to import. An empty list means "nothing local".
+  layers:
+    "routes/**": ["database", "utils.*"]
+    "blueprints/**": ["database", "utils.*"]
+    "database.py": []
+  tests_dir: "tests"
+  # Where render_tokens writes the generated token file, inside the project, so
+  # the browser loads a file the image contains (spec 4.2.1).
+  brand_tokens: "static/css/tokens.css"
+
+# Brought up by `taller stage <ticket>` on the deployment host, never in CI
+# (spec 13.1): its own compose project name, its own port, and a COPY of the
+# production database under ./data-staging/.
+staging:
+  # The staging file alone, and self-contained: layering production's compose over
+  # it would drag its Caddy - host ports 80 and 443, and the real certificate
+  # volume - into the staging project (spec 13.1 names both files; a Caddy that
+  # fights production for its ports is not what it asks for).
+  compose: ["docker-compose.staging.yml"]
+  url: "http://127.0.0.1:8081/"
+  timeout_s: 60
+
+smoke:
+  # Booted on a port the gate allocates, against a copy of the database, so a
+  # smoke run never meets the owner's dev server or live data (spec 9.6).
+  kind: http
+  boot: "python run_local.py"
+  ready: auto
+  timeout_s: 30
+  routes: ["/"]
+  data: copy
+  database: "instance/app.db"
+  env:
+    PORT: "$TALLER_SMOKE_PORT"
+    DATABASE: "$TALLER_SMOKE_DATA/app.db"

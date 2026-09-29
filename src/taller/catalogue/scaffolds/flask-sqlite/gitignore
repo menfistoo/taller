@@ -1,0 +1,23 @@
+# Databases and their write-ahead files: data never enters the repository.
+*.db
+# A copy of production data, put here by `taller stage`. Never committed.
+data-staging/
+*.db-wal
+*.db-shm
+*-wal
+*-shm
+instance/
+
+# Environments and secrets
+venv/
+.venv/
+.env
+.env.*
+
+# Python build and cache output
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/

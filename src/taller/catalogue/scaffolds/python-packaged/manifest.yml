@@ -1,0 +1,11 @@
+# A program frozen into one executable (spec 11.4). No interface, so nothing
+# here depends on the brand.
+files:
+  - {path: main.py, substitute: true}
+  - {path: build.py, substitute: true}
+  - {path: requirements.txt}
+  - {path: requirements-dev.txt}
+  - {path: pytest.ini}
+  - {path: tests/test_main.py, substitute: true}
+  - {path: .gitignore, source: gitignore}
+  - {path: README.md, substitute: true}
