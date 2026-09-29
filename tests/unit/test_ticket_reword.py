@@ -93,7 +93,7 @@ def test_rewording_does_not_file_an_issue_with_the_old_words(project, monkeypatc
     from taller import discovery, issues
 
     asked: list[list[str]] = []
-    monkeypatch.setattr(issues, "repo_of", lambda path: "menfistoo/toolshed")
+    monkeypatch.setattr(issues, "repo_of", lambda path: "neighbourhood/toolshed")
     monkeypatch.setattr(discovery, "_run_gh",
                         lambda args, **kwargs: asked.append(list(args)) or None)
 

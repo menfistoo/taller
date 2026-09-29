@@ -197,15 +197,15 @@ def test_the_pull_request_is_shown_as_github_has_it(project, client, monkeypatch
     ticket = at_review(project)
     ticket["pr"] = 7
     tickets.write(project, ticket, "ticket 0001: a pull request")
-    monkeypatch.setattr(issues, "repo_of", lambda path: "menfistoo/toolshed")
+    monkeypatch.setattr(issues, "repo_of", lambda path: "neighbourhood/toolshed")
     monkeypatch.setattr(discovery, "_run_gh", lambda args, **kwargs: support.gh_json(
-        {"state": "MERGED", "url": "https://github.com/menfistoo/toolshed/pull/7",
+        {"state": "MERGED", "url": "https://github.com/neighbourhood/toolshed/pull/7",
          "mergeable": "UNKNOWN", "statusCheckRollup": []}))
 
     page = client.get("/ticket/toolshed/1").get_data(as_text=True)
 
     assert "merged" in page.lower()
-    assert "https://github.com/menfistoo/toolshed/pull/7" in page
+    assert "https://github.com/neighbourhood/toolshed/pull/7" in page
 
 
 def test_github_being_unreachable_is_one_line_not_a_broken_page(project, client, monkeypatch):
@@ -214,7 +214,7 @@ def test_github_being_unreachable_is_one_line_not_a_broken_page(project, client,
     ticket = at_review(project)
     ticket["pr"] = 7
     tickets.write(project, ticket, "ticket 0001: a pull request")
-    monkeypatch.setattr(issues, "repo_of", lambda path: "menfistoo/toolshed")
+    monkeypatch.setattr(issues, "repo_of", lambda path: "neighbourhood/toolshed")
     monkeypatch.setattr(discovery, "_run_gh", lambda args, **kwargs: None)
 
     answer = client.get("/ticket/toolshed/1")
