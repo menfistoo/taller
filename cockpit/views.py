@@ -14,7 +14,7 @@ from flask import Blueprint, abort, flash, redirect, render_template, request, u
 from taller import tickets
 from taller.errors import LockTimeout, TallerError
 
-from . import check_token, reading, runs
+from . import check_token, reading, runs, spending
 
 bp = Blueprint("cockpit", __name__)
 
@@ -22,6 +22,11 @@ bp = Blueprint("cockpit", __name__)
 @bp.get("/")
 def board():
     return render_template("board.html", board=reading.board())
+
+
+@bp.get("/spend")
+def spend():
+    return render_template("spend.html", page=spending.figures())
 
 
 @bp.get("/ticket/<project>/<int:ticket_id>")

@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% block title %}Taller — spend{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-end flex-wrap gap-2">
+  <h1 class="h4 mb-0">Spend</h1>
+  <div class="text-muted small">
+    {% if page.show_cost %}
+    Paid per token, so money is shown.
+    {% else %}
+    A flat fee ({{ page.mode }}), so there is no money to show: what counts is how
+    hard a ticket leaned on the usage window.
+    {% endif %}
+  </div>
+</div>
+
+{% for gone in page.unreadable %}
+<div class="alert alert-warning mt-3">
+  <strong>{{ gone.name }}</strong> cannot be read: {{ gone.problem }}
+</div>
+{% endfor %}
+
+<div class="row g-3 mt-1">
+  <div class="col-sm-4">
+    <div class="card"><div class="card-body">
+      <div class="text-muted small">Weighted tokens, everything</div>
+      <div class="h4 mb-0">
+        {%- if page.partial %}at least {% endif %}{{ "{:,}".format(page.totals.weighted) }}</div>
+    </div></div>
+  </div>
+  <div class="col-sm-4">
+    <div class="card"><div class="card-body">
+      <div class="text-muted small">Tickets that spent anything</div>
+      <div class="h4 mb-0">{{ page.totals.tickets }}</div>
+    </div></div>
+  </div>
+  {% if page.show_cost %}
+  <div class="col-sm-4">
+    <div class="card"><div class="card-body">
+      <div class="text-muted small">Cost, at the shipped price table</div>
+      <div class="h4 mb-0">
+        {%- if page.partial %}at least {% endif %}${{ "%.2f"|format(page.totals.cost) }}</div>
+    </div></div>
+  </div>
+  {% endif %}
+</div>
+
+<div class="card mt-3">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>By ticket</span>
+    <span class="text-muted small">amber past {{ "{:,}".format(page.warn_at) }},
+      stopped at {{ "{:,}".format(page.stop_at) }}</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm mb-0 align-middle">
+      <thead><tr>
+        <th>Ticket</th><th>Where</th><th class="text-end">Weighted</th>
+        <th class="text-end">Tokens</th>{% if page.show_cost %}<th class="text-end">Cost</th>{% endif %}
+      </tr></thead>
+      <tbody>
+        {% for row in page.tickets %}
+        <tr class="{% if row.budget == 'stop' %}table-danger{% elif row.budget == 'warn' %}table-warning{% endif %}">
+          <td>
+            <a href="{{ row.url }}">{{ "%04d"|format(row.id) }} · {{ row.title }}</a>
+            <div class="small text-muted">{{ row.project }}</div>
+          </td>
+          <td class="small text-muted">{{ row.label }}</td>
+          <td class="text-end">
+            {%- if row.partial %}<span class="text-muted">at least </span>{% endif %}
+            {{- "{:,}".format(row.weighted) }}</td>
+          <td class="text-end text-muted">{{ "{:,}".format(row.total) }}</td>
+          {% if page.show_cost %}<td class="text-end">${{ "%.2f"|format(row.cost or 0) }}</td>{% endif %}
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="text-muted">Nothing has been spent yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if page.cut %}
+  <div class="card-footer text-muted small">and {{ page.cut }} more tickets</div>
+  {% endif %}
+</div>
+
+<div class="row g-3 mt-1">
+  <div class="col-lg-6">
+    <div class="card">
+      <div class="card-header">By week</div>
+      <div class="card-body pb-1">
+        <p class="text-muted small">A ticket counts in the week it was opened: Taller keeps a
+          running total per ticket, not a dated log, so no other week would be honest.</p>
+      </div>
+      <table class="table table-sm mb-0">
+        <thead><tr><th>Week</th><th class="text-end">Tickets</th>
+          <th class="text-end">Weighted</th>
+          {% if page.show_cost %}<th class="text-end">Cost</th>{% endif %}</tr></thead>
+        <tbody>
+          {% for week in page.weeks %}
+          <tr>
+            <td>{{ week.week }}</td>
+            <td class="text-end text-muted">{{ week.tickets }}</td>
+            <td class="text-end">{{ "{:,}".format(week.weighted) }}</td>
+            {% if page.show_cost %}<td class="text-end">${{ "%.2f"|format(week.cost or 0) }}</td>{% endif %}
+          </tr>
+          {% else %}
+          <tr><td colspan="4" class="text-muted">Nothing yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="col-lg-6">
+    <div class="card">
+      <div class="card-header">By model</div>
+      <table class="table table-sm mb-0">
+        <thead><tr><th>Model</th><th class="text-end">In</th><th class="text-end">Cache</th>
+          <th class="text-end">Out</th><th class="text-end">Weighted</th></tr></thead>
+        <tbody>
+          {% for row in page.models %}
+          <tr>
+            <td><code class="small">{{ row.model }}</code></td>
+            <td class="text-end text-muted">{{ "{:,}".format(row.input) }}</td>
+            <td class="text-end text-muted">
+              {{ "{:,}".format(row.cache_write + row.cache_read) }}</td>
+            <td class="text-end text-muted">{{ "{:,}".format(row.output) }}</td>
+            <td class="text-end">{{ "{:,}".format(row.weighted) }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="text-muted">Nothing yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
