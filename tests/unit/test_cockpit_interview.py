@@ -132,6 +132,7 @@ def test_a_second_tab_cannot_create_it_twice(client, ready):
 
     page = again.get_data(as_text=True)
     assert "Traceback" not in page
+    assert "already exists" in page, "it must not report her answers as missing"
     assert len([e for e in registry.list_projects() if e["name"] == "toolshed"]) == 1
 
 

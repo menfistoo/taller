@@ -84,3 +84,21 @@ def test_a_blocked_ticket_is_not_reworded_behind_the_block(project):
 
     with pytest.raises(ConfigError):
         tickets.reword(project, 1, title="Heading colour", words="Try again.")
+
+
+def test_rewording_does_not_file_an_issue_with_the_old_words(project, monkeypatch):
+    """The deferred GitHub issue is built from what `main` holds, and during a
+    reword `main` still holds the OLD words - so filing it here would open an
+    issue whose title and body disagree."""
+    from taller import discovery, issues
+
+    asked: list[list[str]] = []
+    monkeypatch.setattr(issues, "repo_of", lambda path: "menfistoo/toolshed")
+    monkeypatch.setattr(discovery, "_run_gh",
+                        lambda args, **kwargs: asked.append(list(args)) or None)
+
+    tickets.reword(project, 1, title="The heading colour",
+                   words="Use the brand's own red.")
+
+    filed = [argv for argv in asked if argv[:2] == ["issue", "create"]]
+    assert not filed, f"an issue was filed while main still held the old words: {filed}"

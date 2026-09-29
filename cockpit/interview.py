@@ -18,10 +18,14 @@ import json
 from pathlib import Path
 from typing import Any
 
-from taller import brands, locking, onboarding, paths, prompter, scaffold
+from taller import (brands, locking, onboarding, paths, prompter, registry,
+                    scaffold)
 from taller.commands import setup as setup_command
 from taller.errors import ConfigError, TallerError
 
+# Creating a project writes a tree, a git repository and the registry; a second
+# tab should wait for that, not be told the project is busy.
+CREATE_TIMEOUT = 120.0
 BRAND_NOTE = ("A new brand is made with `taller brand new`, which opens a page and asks "
               "for its colours and fonts. Choose none for now; a brand can be set later.")
 
@@ -81,37 +85,62 @@ def answer(name: str, key: str, raw: str | list[str]) -> dict[str, Any]:
     question = next((q for q in onboarding.QUESTIONS if q.key == key), None)
     if question is None:
         return {"ok": False, "problem": f"There is no question {key!r}."}
-    answers = onboarding.load_progress(name)
-    sheet = prompter.AnswerSheetPrompter({question.id: raw})
-    try:
-        value = onboarding.ask_one(sheet, question, answers)
-    except prompter.NeedsAnswer:
-        # The library asked again, which is how it says "not that": the terminal
-        # would have re-prompted, and the browser shows the question again.
-        return {"ok": False, "problem": _refusal(question)}
-    except TallerError as exc:
-        return {"ok": False, "problem": str(exc)}
-    answers[key] = value
-    onboarding.save_progress(name, answers)
-    return {"ok": True, "problem": "", "value": value}
+    # Under the same lock as creating: the answers file is one file, and two tabs
+    # answering at once lost one of the two answers every time.
+    with locking.project_lock(name):
+        answers = onboarding.load_progress(name)
+        sheet = prompter.AnswerSheetPrompter({question.id: raw})
+        try:
+            value = onboarding.ask_one(sheet, question, answers)
+        except prompter.NeedsAnswer:
+            # The library asked again, which is how it says "not that": the
+            # terminal would have re-prompted, and the browser asks again.
+            return {"ok": False, "problem": _refusal(question)}
+        except TallerError as exc:
+            return {"ok": False, "problem": str(exc)}
+        answers[key] = value
+        onboarding.save_progress(name, answers)
+        return {"ok": True, "problem": "", "value": value}
 
 
 def create(name: str) -> dict[str, Any]:
-    """Make the project from the twelve answers - the same two calls the terminal makes."""
-    answers = onboarding.load_progress(name)
-    missing = [q.key for q in onboarding.QUESTIONS if q.key not in answers]
-    if missing:
-        raise ConfigError(f"{len(missing)} of the twelve are still unanswered, so there "
-                          f"is nothing to create yet.")
-    target = _target(name)
-    if not target:
-        raise ConfigError(f"Where {name} should go was not kept - start again from "
-                          f"New project, and your answers will still be there.")
-    report = scaffold.create_project(Path(target), name=name, profile=answers["profile"],
-                                     brand=answers["brand"], answers=answers)
-    onboarding.discard_progress(name)
-    (started_dir() / f"{name}.json").unlink(missing_ok=True)
-    return {"project": name, "target": target, "report": report}
+    """Make the project from the twelve answers - the same two calls the terminal makes.
+
+    Under the project's own lock, and after checking that it is not already
+    there. Two tabs pressing Create at once used to leave NOTHING created: the
+    scaffold builds in one staging folder per name and clears it first, so the
+    second attempt deleted the first's half-built tree.
+    """
+    with locking.project_lock(name, timeout=CREATE_TIMEOUT):
+        _refuse_if_already_there(name)
+        answers = onboarding.load_progress(name)
+        missing = [q.key for q in onboarding.QUESTIONS if q.key not in answers]
+        if missing:
+            raise ConfigError(f"{len(missing)} of the twelve are still unanswered, so "
+                              f"there is nothing to create yet.")
+        target = _target(name)
+        if not target:
+            raise ConfigError(f"Where {name} should go was not kept - start again from "
+                              f"New project, and your answers will still be there.")
+        report = scaffold.create_project(Path(target), name=name,
+                                         profile=answers["profile"],
+                                         brand=answers["brand"], answers=answers)
+        onboarding.discard_progress(name)
+        (started_dir() / f"{name}.json").unlink(missing_ok=True)
+        return {"project": name, "target": target, "report": report}
+
+
+def _refuse_if_already_there(name: str) -> None:
+    """Say it exists, rather than reporting her answers as missing.
+
+    `create` empties the answers file when it succeeds, so a second press used to
+    be told that all twelve were unanswered - about a project that was right there.
+    """
+    known = next((entry for entry in registry.list_projects()
+                  if entry["name"] == name), None)
+    if known:
+        raise ConfigError(f"{name} already exists at {known['path']}, so it was not "
+                          f"created again. Its tickets are on the board.")
 
 
 def _target(name: str) -> str:

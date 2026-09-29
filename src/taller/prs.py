@@ -20,6 +20,9 @@ from typing import Any, Mapping
 from . import discovery, gates, gitio, issues, tickets
 
 COUNTS = ("blocker", "high", "medium", "low", "nit")
+# `state` is asked while a person waits for a page. The batch timeout is a
+# minute, which is a page that never arrives.
+PAGE_TIMEOUT = 10.0
 
 
 def title(ticket: Mapping[str, Any]) -> str:
@@ -93,7 +96,8 @@ def state(project: Path | str, ticket: Mapping[str, Any]) -> dict[str, Any]:
                 "problem": "this project has no GitHub repository, so its number "
                            "cannot be checked"}
     completed = discovery._run_gh(["pr", "view", str(number), "--repo", repo, "--json",
-                                   "state,url,mergeable,statusCheckRollup"])
+                                   "state,url,mergeable,statusCheckRollup"],
+                                  timeout=PAGE_TIMEOUT)
     if completed is None or completed.returncode != 0:
         return {**blank, "number": int(number), "problem": issues._failure(completed)}
     try:

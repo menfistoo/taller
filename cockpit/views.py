@@ -95,12 +95,14 @@ def rules_page():
     """One project's rules. With no project named, the first one she has."""
     wanted = request.args.get("project")
     if not wanted:
-        available = [entry["name"] for entry in reading.projects() if entry["available"]]
+        # Chosen here and used here: a redirect would ask the registry twice.
+        available = [entry["name"] for entry in reading.project_entries()
+                     if entry["available"]]
         if not available:
             return render_template("problem.html", heading="No projects yet",
                                    detail="`taller project new` starts one, and its rules "
                                           "appear here."), 404
-        return redirect(url_for("cockpit.rules_page", project=available[0]))
+        wanted = available[0]
     try:
         page = rules.slices(wanted)
     except TallerError as exc:
@@ -136,6 +138,10 @@ def health_check(project: str):
         flash(f"Checked {project} in {figures['seconds']}s.", "info")
     except TallerError as exc:
         flash(str(exc), "warning")
+    except (RuntimeError, OSError) as exc:
+        # `scan.health` runs the gates, and a gate that cannot read the project
+        # raises git's own words rather than one of ours.
+        flash(f"{project} could not be checked: {exc}", "warning")
     return redirect(url_for("cockpit.health_page"))
 
 

@@ -10,6 +10,7 @@ name and every other project still renders.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any
 
@@ -32,8 +33,13 @@ NOTES_SHOWN = 12
 COLUMNS = tuple(stage for stage in tickets.STAGES if stage != "close")
 
 
-def projects() -> list[dict[str, Any]]:
-    """Every adopted project, with its open tickets, whether or not it is reachable."""
+def project_entries() -> list[dict[str, Any]]:
+    """Every adopted project and whether it can be read - and NOT its tickets.
+
+    Most screens want a name and a path. Reading every ticket of every project to
+    print a name costs two git calls per ticket, which made the pages that show
+    no ticket at all as slow as the board.
+    """
     out: list[dict[str, Any]] = []
     try:
         entries = registry.list_projects()
@@ -51,21 +57,26 @@ def projects() -> list[dict[str, Any]]:
             row.update(available=False,
                        problem=f"its folder is not there any more ({path}). Move it back, or "
                                f"`taller project discover` to sort it out.")
-            out.append(row)
-            continue
-        if not (path / ".git").exists():
+        elif not (path / ".git").exists():
             # Git failing reads as "no tickets", and a project with work in it
             # being shown as empty is worse than being shown as unreadable.
             row.update(available=False,
                        problem=f"its folder is there ({path}) but there is no git repository "
                                f"in it any more, so its tickets cannot be read.")
-            out.append(row)
+        out.append(row)
+    return out
+
+
+def projects() -> list[dict[str, Any]]:
+    """Every adopted project, with its open tickets, whether or not it is reachable."""
+    out = project_entries()
+    for row in out:
+        if not row["available"]:
             continue
         try:
-            row["tickets"] = _tickets_of(entry["name"], path)
+            row["tickets"] = _tickets_of(row["name"], Path(row["path"]))
         except TallerError as exc:
             row.update(available=False, problem=str(exc))
-        out.append(row)
     return out
 
 
@@ -156,7 +167,7 @@ def ticket_page(project_name: str, ticket_id: int) -> dict[str, Any]:
         # request as GitHub has it rather than only the number Taller wrote down.
         "can_change": tickets.stage_number(ticket["stage"]) <= tickets.stage_number("design")
         and not ticket.get("blocked"),
-        "pr_state": prs.state(path, ticket),
+        "pr_state": _pr_state(path, ticket),
         "blocked": (ticket.get("blocked") or {}).get("reason", ""),
         "gone": gone,
     }
@@ -264,6 +275,26 @@ def _notes(path: Path, ticket: dict[str, Any]) -> list[str]:
     raw = tickets.read_main(path, f"{tickets.ticket_dir(ticket)}/notes.md") or b""
     lines = raw.decode("utf-8", errors="replace").strip().splitlines()
     return lines[-NOTES_SHOWN:]
+
+
+# GitHub's answer about one pull request, kept for a few seconds. The ticket page
+# refreshes itself every four seconds while a run is going, and a round-trip to
+# someone else's network on every one of those is a page that blocks on it.
+PR_STATE_SECONDS = 20.0
+_pr_states: dict[tuple[str, int], tuple[float, dict[str, Any]]] = {}
+
+
+def _pr_state(path: Path, ticket: dict[str, Any]) -> dict[str, Any]:
+    number = ticket.get("pr")
+    if not number:
+        return prs.state(path, ticket)          # asks nothing without a number
+    key = (str(path), int(number))
+    asked_at, kept = _pr_states.get(key, (0.0, {}))
+    if kept and time.monotonic() - asked_at < PR_STATE_SECONDS:
+        return kept
+    state = prs.state(path, ticket)
+    _pr_states[key] = (time.monotonic(), state)
+    return state
 
 
 def _waiting_on(ticket: dict[str, Any]) -> str:

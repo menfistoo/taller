@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from taller import constitution, locking, paths
+from taller.errors import ConfigError
 from taller.commands import scan
 
 from . import reading
@@ -33,7 +34,8 @@ def last_dir() -> Path:
 
 def projects() -> list[dict[str, Any]]:
     """Every project, with its last check if it has one."""
-    return [{**entry, "checked": last(entry["name"])} for entry in reading.projects()]
+    return [{**entry, "checked": last(entry["name"])}
+            for entry in reading.project_entries()]
 
 
 def last(project_name: str) -> dict[str, Any] | None:
@@ -52,6 +54,10 @@ def check(project_name: str) -> dict[str, Any]:
     """
     entry = reading.entry_for(project_name)
     path = Path(entry["path"])
+    if not path.is_dir():
+        raise ConfigError(f"{project_name}'s folder is not there any more ({path}), so "
+                          f"there is nothing to check. Move it back, or "
+                          f"`taller project discover` to sort it out.")
     began = time.monotonic()
     figures = scan.health(path, constitution.resolve(path))
     figures.update({

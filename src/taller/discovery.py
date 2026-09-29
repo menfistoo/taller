@@ -182,15 +182,20 @@ def gh_auth_status() -> dict[str, Any]:
             "missing": missing, "message": message}
 
 
-def _run_gh(args: list[str], input: str | None = None) -> subprocess.CompletedProcess | None:
-    """`gh`, resolved to an absolute path (Windows skips `.cmd` otherwise)."""
+def _run_gh(args: list[str], input: str | None = None, *,
+            timeout: float = GH_TIMEOUT) -> subprocess.CompletedProcess | None:
+    """`gh`, resolved to an absolute path (Windows skips `.cmd` otherwise).
+
+    `timeout` is for a caller a person is waiting on: the default is generous
+    because it was written for batch commands, and a page cannot wait a minute.
+    """
     executable = shutil.which("gh")
     if executable is None:
         return None
     env = dict(os.environ, GH_PROMPT_DISABLED="1", NO_COLOR="1")
     try:
         return subprocess.run([executable, *args], capture_output=True, text=True,
-                              encoding="utf-8", errors="replace", timeout=GH_TIMEOUT,
+                              encoding="utf-8", errors="replace", timeout=timeout,
                               env=env, input=input)
     except (OSError, subprocess.TimeoutExpired) as exc:
         return subprocess.CompletedProcess(args, 1, "", str(exc))
