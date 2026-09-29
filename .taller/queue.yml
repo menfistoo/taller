@@ -1,0 +1,8 @@
+# The smallest useful version, in the owner's words (onboarding answer 12).
+# `taller ticket new --from-queue` turns each entry into a ticket.
+proposed:
+- title: Run the test suite on Linux in GitHub Actions, so the POSIX code paths are
+    executed at all
+- title: Give the Settings screen the branch warning the Rules screen has
+- title: Cap what the Rules screen sends to the browser, as the other screens are
+    capped

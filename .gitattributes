@@ -37,3 +37,7 @@
 *.ico           binary
 *.pdf           binary
 *.svg           text eol=lf
+
+# Taller: generated files, regenerated and never merged.
+.taller/resolved.json text eol=lf merge=ours
+.taller/constitution/00-index.md text eol=lf merge=ours

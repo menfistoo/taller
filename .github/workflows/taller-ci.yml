@@ -1,0 +1,76 @@
+# Taller's checks: your rules, your file sizes and your tests, re-run here on
+# every push (spec 9.4). Only the three that need no model, so this costs
+# nothing per push, holds no secret and finishes in about a minute.
+#
+# `taller-ci` is the check to require before merging. It ALWAYS reports, even for
+# a push that changes only ticket files - a required check that stays silent
+# leaves a pull request waiting for ever.
+#
+# Taller is installed from the address in your hub setting `ci.taller_source`:
+#   taller settings set ci.taller_source "taller @ git+https://github.com/<account>/taller@main"
+# Pin a released version rather than a branch when there is one (…@v1.0.0).
+#
+# `push` runs on the default branch only; a branch is covered by its pull
+# request, which is also where the required check has to report.
+name: taller-ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  gates:
+    name: taller-ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # the gates compare against the base commit
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Taller
+        run: |
+          pip install "taller @ git+https://github.com/menfistoo/taller@main"
+      - name: Install this project's own requirements
+        run: |
+          for file in requirements.txt requirements-dev.txt; do
+            if [ -f "$file" ]; then pip install -r "$file"; fi
+          done
+      - name: Run the model-free gates
+        run: |
+          # The commit to measure against. A first push has no parent and no
+          # usable `before`: there is nothing to compare, and `taller ci` says so
+          # rather than checking an empty change.
+          if [ -n "${{ github.event.pull_request.base.sha }}" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+          elif [ -n "${{ github.event.before }}" ] && \
+               git cat-file -e "${{ github.event.before }}^{commit}" 2>/dev/null; then
+            base="${{ github.event.before }}"
+          else
+            base="$(git rev-parse --verify --quiet HEAD~1 || echo NO_PARENT)"
+          fi
+          taller ci --base "$base"
+
+  mode:
+    name: taller-ci-mode
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Taller
+        run: |
+          pip install "taller @ git+https://github.com/menfistoo/taller@main"
+      - name: Say what this push is
+        run: |
+          if [ -n "${{ github.event.pull_request.base.sha }}" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+          else
+            base="$(git rev-parse --verify --quiet HEAD~1 || echo NO_PARENT)"
+          fi
+          taller ci --mode --base "$base"

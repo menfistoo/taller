@@ -1,0 +1,22 @@
+# The onboarding answers. `taller project brief` edits them; hand edits are
+# fine, and are read the next time the brief is opened.
+what_it_does: Runs my projects through an engineering team of Claude agents that I
+  direct, on my own machine and on my subscription.
+what_it_is_not: It will never become a hosted service for other people, and it will
+  never hold an API key or any credential of its own.
+must_never_break: Writing a ticket's state to main. Everything Taller knows about
+  a piece of work lives in git, and a wrong write loses the work.
+reach: this machine
+stores: Tickets with their plans, verdicts and notes inside each project's own git
+  repository, and the hub's rules, profiles and brands.
+users: solo
+phone: false
+sensitive_data: false
+deploy: local
+first_version:
+- Run the test suite on Linux in GitHub Actions, so the POSIX code paths are executed
+  at all
+- Give the Settings screen the branch warning the Rules screen has
+- Cap what the Rules screen sends to the browser, as the other screens are capped
+profile: python-packaged
+brand: none
