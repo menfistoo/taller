@@ -13,6 +13,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from taller import gates, registry, tickets
 from taller.errors import ConfigError, TallerError
 from taller.gates import diff as gate_diff
@@ -22,6 +24,7 @@ from taller.gates import diff as gate_diff
 # has to stay quick and say what it left out.
 PAPER_MAX = 20_000
 DIFF_FILES_MAX = 50
+FINDINGS_SHOWN = 25
 NOTES_SHOWN = 12
 
 # `close` is not a column: a closed ticket is done with (spec 12's board is ① to ⑫,
@@ -48,6 +51,14 @@ def projects() -> list[dict[str, Any]]:
             row.update(available=False,
                        problem=f"its folder is not there any more ({path}). Move it back, or "
                                f"`taller project discover` to sort it out.")
+            out.append(row)
+            continue
+        if not (path / ".git").exists():
+            # Git failing reads as "no tickets", and a project with work in it
+            # being shown as empty is worse than being shown as unreadable.
+            row.update(available=False,
+                       problem=f"its folder is there ({path}) but there is no git repository "
+                               f"in it any more, so its tickets cannot be read.")
             out.append(row)
             continue
         try:
@@ -178,30 +189,70 @@ def _verdicts(path: Path, ticket: dict[str, Any]) -> list[dict[str, Any]]:
     for name in ticket.get("gates") or recorded:
         counts = recorded.get(name) or {}
         text = tickets.on_branch(path, ticket, f"gates/{name}.md")
-        findings = gates.parse_verdict(text)["findings"] if text else []
+        findings, unreadable = _findings(text)
         out.append({
             "gate": name,
             "result": counts.get("result", "?"),
             "counts": {key: counts.get(key, 0) for key in
                        ("blocker", "high", "medium", "low", "nit")},
-            "findings": findings,
+            # Capped like every other panel: the constitution gate reports one
+            # finding per offending line per file, and four hundred of them was a
+            # megabyte of HTML for one ticket.
+            "findings": findings[:FINDINGS_SHOWN],
+            "more": max(0, len(findings) - FINDINGS_SHOWN),
             "missing": text is None,
+            "unreadable": unreadable,
         })
     return out
 
 
+def _findings(text: str | None) -> tuple[list[dict[str, Any]], bool]:
+    """A verdict file's findings, and whether the file could not be read at all.
+
+    A file that is truncated, hand-edited or half-written is a fact about one
+    gate, not a reason for her whole ticket to be a blank 500.
+    """
+    if text is None:
+        return [], False
+    try:
+        return list(gates.parse_verdict(text)["findings"] or []), False
+    except (ValueError, KeyError, TypeError, yaml.YAMLError):
+        return [], True
+
+
 def _diff(path: Path, ticket: dict[str, Any]) -> dict[str, Any]:
+    """Which files changed and by how many lines - one git call, whatever the size.
+
+    Deliberately NOT `gates.diff.build`: that reads every changed file's whole
+    text and its patch, because the constitution gate needs them. A page needs
+    four numbers per file, and asking for the gate's structure made a 200-file
+    ticket take 26 seconds to render - which the four-second refresh then asked
+    for again, for ever.
+    """
     from taller import gitio
 
-    try:
-        built = gate_diff.build(path, gitio.MAIN_BRANCH, str(ticket["branch"]))
-    except RuntimeError:
-        return {"files": [], "cut": False, "total": 0}
-    files = [{"path": f["path"], "status": f["status"],
-              "added": len(f["added"]), "removed": len(f["removed"])}
-             for f in built["files"]]
+    numstat = gitio.git(path, "-c", "core.quotepath=false", "diff", "--numstat",
+                        "--no-renames", f"{gitio.MAIN_BRANCH}...{ticket['branch']}",
+                        check=False)
+    if numstat.returncode != 0:
+        return {"files": [], "cut": False, "total": 0,
+                "problem": "git could not say what changed on the branch"}
+    files = []
+    for line in numstat.stdout.splitlines():
+        added, _, rest = line.partition("\t")
+        removed, _, name = rest.partition("\t")
+        # `.taller/work/` is Taller's own bookkeeping, not her change (spec 10.2).
+        if not name or name.startswith(gate_diff.IGNORED):
+            continue
+        # A binary file's counts are given as `-`, and are not numbers.
+        files.append({"path": name, "added": _count(added), "removed": _count(removed),
+                      "binary": added == "-"})
     return {"files": files[:DIFF_FILES_MAX], "cut": len(files) > DIFF_FILES_MAX,
-            "total": len(files)}
+            "total": len(files), "problem": ""}
+
+
+def _count(field: str) -> int:
+    return int(field) if field.isdigit() else 0
 
 
 def _notes(path: Path, ticket: dict[str, Any]) -> list[str]:

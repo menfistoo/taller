@@ -66,7 +66,7 @@
 ") }}</pre>
     {% if run.running %}
     <div class="text-muted small mt-2">This page refreshes itself every few seconds.</div>
-    {% elif run.code %}
+    {% elif run.code is not none %}
     <div class="text-muted small mt-2">It stopped with code {{ run.code }}.</div>
     {% endif %}
   </div>
@@ -98,6 +98,10 @@
     </div>
     {% endif %}
 
+    {% if page.diff.problem %}
+    <div class="alert alert-warning">{{ page.diff.problem }}</div>
+    {% endif %}
+
     {% if page.diff.files %}
     <div class="card mb-3">
       <div class="card-header">
@@ -111,7 +115,8 @@
         {% for f in page.diff.files %}
         <li class="list-group-item d-flex justify-content-between small">
           <code>{{ f.path }}</code>
-          <span class="text-muted">+{{ f.added }} −{{ f.removed }}</span>
+          <span class="text-muted">
+            {%- if f.binary %}binary{% else %}+{{ f.added }} −{{ f.removed }}{% endif %}</span>
         </li>
         {% endfor %}
       </ul>
@@ -131,6 +136,10 @@
             {%- for key, n in v.counts.items() if n %} {{ n }} {{ key }}{% endfor %}
           </span>
           {% if v.missing %}<span class="small text-muted"> · its verdict file is gone</span>{% endif %}
+          {% if v.unreadable %}
+          <div class="small text-muted">its verdict file could not be read, so its findings
+            are not shown; the counts above are the ones the gate recorded</div>
+          {% endif %}
           {% for f in v.findings %}
           <div class="small mt-1">
             <code>{{ f.rule }}</code> <span class="text-muted">({{ f.severity }})</span>
@@ -138,6 +147,10 @@
             <div>{{ f.message }}</div>
           </div>
           {% endfor %}
+          {% if v.more %}
+          <div class="small text-muted mt-1">and {{ v.more }} more, in
+            <code>gates/{{ v.gate }}.md</code> on the branch</div>
+          {% endif %}
         </div>
         {% else %}
         <p class="text-muted mb-0">No gate has run yet.</p>

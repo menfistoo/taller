@@ -78,10 +78,12 @@ def progress(rid: str) -> dict[str, Any]:
         code = child.poll()
         running = code is None
     else:
-        # A run this server did not start - one from before a restart, or one
-        # started from a terminal - has no exit code to report: only a parent is
-        # told how its child ended. Its process id still says whether it is going.
-        running = pid is not None and _alive(pid)
+        # A run this server did not start - one from before a restart - has no
+        # exit code to report: only a parent is told how its child ended. Its
+        # process id says whether something is alive; what that something IS has
+        # to be asked, because the machine gives the number out again, and a
+        # reused one had the page claiming for ever that Taller was working.
+        running = pid is not None and _alive(pid) and _looks_like_a_run(pid)
         code = None
     return {"running": running, "lines": _tail(log_path(rid)), "code": code}
 
@@ -104,6 +106,38 @@ def _recorded_pid(rid: str) -> int | None:
 
 def _alive(pid: int) -> bool:
     return locking._pid_alive(pid)
+
+
+def _looks_like_a_run(pid: int) -> bool:
+    """Is the process wearing this number still a Python running Taller?
+
+    Asked of the machine, not assumed. When the machine cannot say, the answer is
+    yes: a run that is going and is reported as finished is the worse mistake -
+    she would start a second one on the same ticket.
+    """
+    name = _process_name(pid)
+    if not name:
+        return True
+    return Path(sys.executable).name.lower() in name.lower() or "python" in name.lower()
+
+
+def _process_name(pid: int) -> str:
+    """The program the process is running, or "" when it cannot be asked."""
+    if sys.platform == "win32":
+        asked = ["tasklist", "/FI", f"PID eq {pid}", "/NH", "/FO", "CSV"]
+    else:
+        asked = ["ps", "-p", str(pid), "-o", "comm="]
+    try:
+        out = subprocess.run(asked, capture_output=True, text=True, encoding="utf-8",
+                             errors="replace", timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    first = (out.stdout.strip().splitlines() or [""])[0].strip()
+    if sys.platform == "win32":
+        # A row is CSV, `"image.exe","1234",...`; anything else is tasklist's own
+        # "No tasks are running which match" notice, which names no program.
+        return first.split('","')[0].strip('"') if first.startswith('"') else ""
+    return first
 
 
 def _tail(path: Path) -> list[str]:

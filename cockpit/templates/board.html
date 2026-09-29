@@ -62,10 +62,12 @@
   </div>
   {% endfor %}
 </div>
-{% elif board.projects %}
+{% elif board.projects | selectattr("available") | list %}
 <p class="text-muted">No open tickets. <code>taller ticket new</code>, or
   <code>/taller:new</code> in a chat, starts one.</p>
-{% else %}
+{% elif not board.projects %}
 <p class="text-muted">No projects yet. <code>taller project new</code> starts one.</p>
+{#  Projects that are all unreadable say so in the warnings above: saying "no open
+    tickets" as well would be answering a question nothing could ask. #}
 {% endif %}
 {% endblock %}

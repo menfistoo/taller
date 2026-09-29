@@ -26,14 +26,31 @@ def run(args: Any, prompter: Prompter) -> int:
             f"from whatever is there. Close that, or choose another: "
             f"`taller cockpit --port {port + 1}`.")
 
-    from cockpit import create_app
-
+    app = application()
     url = f"http://{HOST}:{port}/"
     prompter.say(f"The cockpit is at {url} - this machine only. Ctrl-C stops it.")
     if not getattr(args, "no_open", False):
         _open_in_browser(url)
-    _serve(create_app(), HOST, port)
+    _serve(app, HOST, port)
     return 0
+
+
+def application() -> Any:
+    """The cockpit's Flask application.
+
+    `cockpit/` is a second top-level package, so an installation made before it
+    existed does not carry it - and an import error is not a sentence she can act
+    on. Reinstalling Taller is what fixes it.
+    """
+    try:
+        from cockpit import create_app
+    except ImportError as exc:
+        raise ConfigError(
+            "Taller's own pages are not in this installation, so the cockpit cannot "
+            "start. Reinstall Taller from its folder - `pip install -e .` in the taller "
+            f"repository, or `pip install --upgrade taller` - and try again. ({exc})"
+        ) from exc
+    return create_app()
 
 
 def _in_use(port: int) -> bool:
