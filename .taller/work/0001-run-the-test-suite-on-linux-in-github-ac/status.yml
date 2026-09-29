@@ -1,0 +1,30 @@
+id: 1
+slug: run-the-test-suite-on-linux-in-github-ac
+title: Run the test suite on Linux in GitHub Actions
+kind: idea
+named_by: null
+lane: null
+stage: intake
+branch: null
+issue: 3
+created: '2026-09-29T20:06:48'
+outcome: null
+gates: []
+verdicts: {}
+blocked: null
+fix_rounds: 0
+chief_session: null
+sync: ok
+pr: null
+templates: {}
+checkpoints:
+  design: pending
+  review: pending
+  staging: pending
+  release: pending
+spend:
+  partial: false
+  by_model: {}
+  total_tokens: 0
+  weighted_tokens: 0
+  cost: null
