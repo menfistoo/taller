@@ -1,8 +1,8 @@
 id: 1
 slug: run-the-test-suite-on-linux-in-github-ac
-title: Run the test suite on Linux in GitHub Actions
-kind: idea
-named_by: null
+title: Ejecutar la suite de tests en Linux con GitHub Actions
+kind: feature
+named_by: chief
 lane: null
 stage: intake
 branch: null
@@ -13,7 +13,7 @@ gates: []
 verdicts: {}
 blocked: null
 fix_rounds: 0
-chief_session: null
+chief_session: e7965f5d-5dda-4c2e-8d86-6aea8720d563
 sync: ok
 pr: null
 templates: {}
