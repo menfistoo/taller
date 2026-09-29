@@ -9,12 +9,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
-from flask import Blueprint, abort, flash, redirect, render_template, request, url_for
+from flask import (Blueprint, abort, flash, redirect, render_template, request,
+                   url_for)
 
 from taller import tickets
 from taller.errors import LockTimeout, TallerError
 
-from . import check_token, reading, runs, spending
+from . import check_token, configuration, reading, runs, spending
 
 bp = Blueprint("cockpit", __name__)
 
@@ -27,6 +28,26 @@ def board():
 @bp.get("/spend")
 def spend():
     return render_template("spend.html", page=spending.figures())
+
+
+@bp.get("/settings")
+def settings_page():
+    return render_template("settings.html",
+                           page=configuration.rows(request.args.get("project") or None))
+
+
+@bp.post("/settings")
+def settings_write():
+    """One key, written to the layer the library chooses for it."""
+    check_token()
+    project = request.form.get("project") or None
+    try:
+        for line in configuration.save(request.form.get("key", ""),
+                                       request.form.get("value", ""), project):
+            flash(line, "info")
+    except TallerError as exc:
+        flash(str(exc), "warning")
+    return redirect(url_for("cockpit.settings_page", project=project))
 
 
 @bp.get("/ticket/<project>/<int:ticket_id>")
