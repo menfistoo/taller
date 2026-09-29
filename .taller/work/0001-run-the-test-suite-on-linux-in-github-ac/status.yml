@@ -3,8 +3,8 @@ slug: run-the-test-suite-on-linux-in-github-ac
 title: Run the test suite on Linux in GitHub Actions
 kind: feature
 named_by: chief
-lane: null
-stage: triage
+lane: full
+stage: design
 branch: null
 issue: 3
 created: '2026-09-29T20:06:48'

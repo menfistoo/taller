@@ -3,3 +3,4 @@
 - 2026-09-29T20:08:09 — changed what was asked for (was 'Ejecutar la suite de tests en Linux con GitHub Actions')
 - 2026-09-29T20:14:58 — changed what was asked for
 - 2026-09-29T20:15:42 — ① intake → ② triage
+- 2026-09-29T20:17:59 — ② triage → ③ design (lane full); explorer: .github/workflows/test-suite.yml; full because a file is added or deleted
