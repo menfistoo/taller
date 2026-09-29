@@ -15,7 +15,7 @@ from typing import Any
 
 import yaml
 
-from taller import gates, registry, tickets
+from taller import gates, prs, registry, tickets
 from taller.errors import ConfigError, TallerError
 from taller.gates import diff as gate_diff
 
@@ -152,6 +152,11 @@ def ticket_page(project_name: str, ticket_id: int) -> dict[str, Any]:
                                                                  "total": 0},
         "notes": _notes(path, ticket),
         "waiting_on": _waiting_on(ticket),
+        # Spec 12: the ticket screen shows approve / reject / change, and the pull
+        # request as GitHub has it rather than only the number Taller wrote down.
+        "can_change": tickets.stage_number(ticket["stage"]) <= tickets.stage_number("design")
+        and not ticket.get("blocked"),
+        "pr_state": prs.state(path, ticket),
         "blocked": (ticket.get("blocked") or {}).get("reason", ""),
         "gone": gone,
     }

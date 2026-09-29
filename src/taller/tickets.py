@@ -306,6 +306,47 @@ def create(project: Path | str, *, title: str, words: str, kind: str,
 WORDS_HEADING = "## In the owner's words"
 
 
+def reword(project: Path | str, ticket_id: int, *, title: str, words: str) -> Ticket:
+    """Change what was asked for, while changing it still means something (spec 12).
+
+    The third owner action beside approve and reject. Her words are corrected on
+    `main`, exactly where they were written - and only until ③ design: after that
+    there is a branch, a plan and a change built on the old words, and §7.2's
+    rejection is the way to send those back rather than quietly moving the ground
+    under them.
+
+    The slug does not change with the title: the ticket's folder is named from it,
+    and renaming the folder would orphan every path already committed.
+    """
+    project = Path(project)
+    title = flatten(title)[:TITLE_MAX]
+    if not title:
+        raise ConfigError("A ticket needs a title.")
+    if not str(words).strip():
+        raise ConfigError("A ticket needs the owner's words: what should be done.")
+
+    with locking.project_lock(registry.get_project(project)["name"]):
+        ticket = load(project, ticket_id)
+        _refuse_if_blocked(ticket)
+        if stage_number(ticket["stage"]) > stage_number("design"):
+            raise ConfigError(
+                f"Ticket {ticket_id} is at {_label(ticket['stage'])}, and the work is "
+                f"built on what was asked for. Changing the words now would leave the "
+                f"branch answering a question nobody asked: reject it instead "
+                f"(`taller ticket reject {ticket_id}`), and say there what should be "
+                f"different.")
+        was = ticket["title"]
+        ticket["title"] = title
+        body = str(words) if str(words).endswith("\n") else f"{words}\n"
+        ticket_md = (f"# {title}\n\n- Kind: {ticket['kind']}\n"
+                     f"- Created: {ticket['created']}\n\n{WORDS_HEADING}\n\n{body}")
+        note = "changed what was asked for"
+        if title != was:
+            note += f" (was {was!r})"
+        return write(project, ticket, f"ticket {ticket_id:04d}: reworded", note=note,
+                     extra={f"{ticket_dir(ticket)}/ticket.md": ticket_md.encode("utf-8")})
+
+
 def _words(project: Path | str, ticket: Mapping[str, Any]) -> str:
     """The owner's words back out of `ticket.md`, for a retried issue's body."""
     raw = read_main(project, f"{ticket_dir(ticket)}/ticket.md")

@@ -11,6 +11,7 @@ byte for byte and a CRLF fixture would make the comparison platform dependent.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -272,3 +273,11 @@ def new_project(name: str = "toolshed", *, brand: str | None = None,
         subprocess.run(["git", "-C", str(target), "remote", "add", "origin", origin],
                        check=True)
     return target
+
+
+def gh_json(payload: Any) -> subprocess.CompletedProcess:
+    """What `discovery._run_gh` returns when gh answered with JSON."""
+    import json as _json
+
+    return subprocess.CompletedProcess(args=["gh"], returncode=0,
+                                       stdout=_json.dumps(payload), stderr="")

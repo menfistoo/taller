@@ -75,6 +75,53 @@ def create(project: Path | str, ticket: Mapping[str, Any]) -> tuple[int | None, 
     return int(number.group(1)), ""
 
 
+def state(project: Path | str, ticket: Mapping[str, Any]) -> dict[str, Any]:
+    """What GitHub says about this ticket's pull request, now (spec 12).
+
+    `status.yml` keeps the number Taller opened; only GitHub knows whether it was
+    merged, closed, or had its checks turn red since. Asking is never fatal: a
+    missing `gh`, no repository or no network becomes `problem`, because a page
+    that cannot reach GitHub must still show the ticket.
+    """
+    blank = {"number": None, "state": "", "url": "", "checks": "", "problem": ""}
+    number = ticket.get("pr")
+    if not number:
+        return blank
+    repo = issues.repo_of(project)
+    if repo is None:
+        return {**blank, "number": int(number),
+                "problem": "this project has no GitHub repository, so its number "
+                           "cannot be checked"}
+    completed = discovery._run_gh(["pr", "view", str(number), "--repo", repo, "--json",
+                                   "state,url,mergeable,statusCheckRollup"])
+    if completed is None or completed.returncode != 0:
+        return {**blank, "number": int(number), "problem": issues._failure(completed)}
+    try:
+        found = json.loads(completed.stdout or "{}")
+    except ValueError:
+        return {**blank, "number": int(number),
+                "problem": "gh did not answer with a pull request"}
+    return {
+        "number": int(number),
+        "state": str(found.get("state", "")).lower(),
+        "url": str(found.get("url", "")),
+        "mergeable": str(found.get("mergeable", "")).lower(),
+        "checks": _checks(found.get("statusCheckRollup") or []),
+        "problem": "",
+    }
+
+
+def _checks(rollup: list[Any]) -> str:
+    """`3 passed`, `1 failed, 2 passed`, or "" when GitHub reported no checks."""
+    counted: dict[str, int] = {}
+    for check in rollup:
+        if not isinstance(check, Mapping):
+            continue
+        outcome = str(check.get("conclusion") or check.get("status") or "").lower()
+        counted[outcome or "pending"] = counted.get(outcome or "pending", 0) + 1
+    return ", ".join(f"{number} {name}" for name, number in sorted(counted.items()))
+
+
 def _push_branch(project: Path, branch: str) -> str | None:
     """Put the branch on the remote. The reason when it could not."""
     completed = gitio.git(project, "push", "--set-upstream", gitio.REMOTE, branch, check=False)
