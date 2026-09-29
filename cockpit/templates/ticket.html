@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}{{ "%04d"|format(page.ticket.id) }} · {{ page.ticket.title }}{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+  <div>
+    <h1 class="h4 mb-1">{{ "%04d"|format(page.ticket.id) }} · {{ page.ticket.title }}</h1>
+    <div class="text-muted">
+      {{ page.project }} · {{ page.ticket.kind }} · {{ page.label }}
+      {%- if page.ticket.lane %} · {{ page.ticket.lane }} lane{% endif %}
+      {%- if page.ticket.pr %} · pull request #{{ page.ticket.pr }}{% endif %}
+    </div>
+  </div>
+  <a href="{{ url_for('cockpit.board') }}" class="btn btn-sm btn-outline-secondary">All tickets</a>
+</div>
+
+{% if page.blocked %}
+<div class="alert alert-danger mt-3">
+  <div class="fw-semibold">Stopped, and it needs you</div>
+  <pre class="mb-0 small text-wrap">{{ page.blocked }}</pre>
+</div>
+{% endif %}
+
+{% for line in page.gone %}
+<div class="alert alert-warning mt-3">{{ line }}</div>
+{% endfor %}
+
+<div class="row mt-3 g-3">
+  <div class="col-lg-7">
+    <div class="card mb-3">
+      <div class="card-header">What you asked for</div>
+      <div class="card-body"><pre class="mb-0 text-wrap">{{ page.words }}</pre></div>
+    </div>
+
+    {% if page.review %}
+    <div class="card mb-3">
+      <div class="card-header">What changed</div>
+      <div class="card-body"><pre class="mb-0 text-wrap">{{ page.review }}</pre></div>
+    </div>
+    {% endif %}
+
+    {% if page.plan %}
+    <div class="card mb-3">
+      <div class="card-header">The plan it followed</div>
+      <div class="card-body"><pre class="mb-0 small text-wrap">{{ page.plan }}</pre></div>
+    </div>
+    {% endif %}
+
+    {% if page.diff.files %}
+    <div class="card mb-3">
+      <div class="card-header">
+        Files changed
+        {% if page.diff.cut %}
+        <span class="text-muted small">(the first {{ page.diff.files|length }} of
+          {{ page.diff.total }})</span>
+        {% endif %}
+      </div>
+      <ul class="list-group list-group-flush">
+        {% for f in page.diff.files %}
+        <li class="list-group-item d-flex justify-content-between small">
+          <code>{{ f.path }}</code>
+          <span class="text-muted">+{{ f.added }} −{{ f.removed }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="col-lg-5">
+    <div class="card mb-3">
+      <div class="card-header">What the gates found</div>
+      <div class="card-body">
+        {% for v in page.verdicts %}
+        <div class="mb-2">
+          <span class="badge {% if v.result == 'pass' %}text-bg-success{% elif v.result == 'fail' %}text-bg-danger{% else %}text-bg-secondary{% endif %}">{{ v.result }}</span>
+          <strong>{{ v.gate }}</strong>
+          <span class="small text-muted">
+            {%- for key, n in v.counts.items() if n %} {{ n }} {{ key }}{% endfor %}
+          </span>
+          {% if v.missing %}<span class="small text-muted"> · its verdict file is gone</span>{% endif %}
+          {% for f in v.findings %}
+          <div class="small mt-1">
+            <code>{{ f.rule }}</code> <span class="text-muted">({{ f.severity }})</span>
+            {% if f.file %}<span class="text-muted">{{ f.file }}{% if f.line %}:{{ f.line }}{% endif %}</span>{% endif %}
+            <div>{{ f.message }}</div>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <p class="text-muted mb-0">No gate has run yet.</p>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="card mb-3">
+      <div class="card-header">What has happened</div>
+      <div class="card-body">
+        <ul class="list-unstyled small mb-0">
+          {% for line in page.notes %}<li>{{ line }}</li>{% endfor %}
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
