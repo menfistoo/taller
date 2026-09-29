@@ -2,3 +2,4 @@
 - 2026-09-29T20:07:13 — classified by the chief as feature: Done means the test suite runs on Linux in GitHub Actions, with ci.taller_source set in the workflow adoption generated. That first run will probably be red. The failures it turns up in taller.cli's POSIX branches (ps instead of tasklist, start_new_session, the lock's delete-pending handling) are the point of the ticket, and none of those branches has run before. Kind is ambiguous: this could also be filed as a bug if the owner expects those failures to be fixed here. I've taken the words as a CI addition that reports what it finds, so fixing what turns up is not confirmed as in scope.
 - 2026-09-29T20:08:09 — changed what was asked for (was 'Ejecutar la suite de tests en Linux con GitHub Actions')
 - 2026-09-29T20:14:58 — changed what was asked for
+- 2026-09-29T20:15:42 — ① intake → ② triage
