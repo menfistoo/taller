@@ -24,6 +24,46 @@
 </div>
 {% endif %}
 
+{% if page.pr_state.number %}
+<div class="alert alert-secondary mt-3 mb-0 d-flex justify-content-between flex-wrap gap-2">
+  <div>
+    Pull request #{{ page.pr_state.number }}
+    {%- if page.pr_state.state %} is <strong>{{ page.pr_state.state }}</strong>
+      on GitHub{% endif %}
+    {%- if page.pr_state.checks %} · checks: {{ page.pr_state.checks }}{% endif %}
+    {%- if page.pr_state.problem %}
+    <span class="text-muted">— GitHub could not be asked: {{ page.pr_state.problem }}</span>
+    {%- endif %}
+  </div>
+  {% if page.pr_state.url %}
+  <a href="{{ page.pr_state.url }}" rel="noreferrer">{{ page.pr_state.url }}</a>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if page.can_change %}
+<div class="card mt-3">
+  <div class="card-header">Change what you asked for</div>
+  <div class="card-body">
+    <form method="post"
+          action="{{ url_for('cockpit.change', project=page.project, ticket_id=page.ticket.id) }}">
+      <input type="hidden" name="{{ token_field }}" value="{{ token() }}">
+      <div class="mb-2">
+        <label class="form-label small" for="title">Title</label>
+        <input class="form-control" id="title" name="title" value="{{ page.ticket.title }}">
+      </div>
+      <div class="mb-2">
+        <label class="form-label small" for="words">In your own words</label>
+        <textarea class="form-control" id="words" name="words" rows="4">{{ page.words }}</textarea>
+      </div>
+      <button class="btn btn-outline-primary btn-sm" type="submit">Change it</button>
+      <span class="text-muted small ms-2">only until the work starts; after that,
+        reject it and say what should be different</span>
+    </form>
+  </div>
+</div>
+{% endif %}
+
 {% if page.waiting_on %}
 <div class="card border-primary mt-3">
   <div class="card-header bg-primary text-white">

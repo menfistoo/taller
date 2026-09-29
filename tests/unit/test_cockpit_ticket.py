@@ -147,3 +147,77 @@ def test_reading_a_file_from_a_branch_is_one_function_now():
     assert hasattr(tickets, "on_branch")
     assert "_on_branch" not in inspect.getsource(prs)
     assert "def _on_branch" not in inspect.getsource(chief)
+
+
+# --- part two: the third action, and the pull request as GitHub has it -------
+
+def token(client) -> dict:
+    page = client.get("/").get_data(as_text=True)
+    marker = f'name="{cockpit.TOKEN_FIELD}" value="'
+    return {cockpit.TOKEN_FIELD: page.split(marker, 1)[1].split('"', 1)[0]}
+
+
+def test_the_change_form_is_only_offered_while_it_would_mean_something(project, client):
+    tickets.create(project, title="Heading colour", words="The red is wrong.", kind="bug")
+
+    early = client.get("/ticket/toolshed/1").get_data(as_text=True)
+    at_review(project)
+    late = client.get("/ticket/toolshed/2").get_data(as_text=True)
+
+    assert "Change what you asked for" in early
+    assert "Change what you asked for" not in late
+
+
+def test_changing_the_ask_from_the_browser_writes_it(project, client):
+    tickets.create(project, title="Heading colour", words="The red is wrong.", kind="bug")
+
+    client.post("/ticket/toolshed/1/change", follow_redirects=True,
+                data={**token(client), "title": "The heading colour",
+                      "words": "Use the brand's own red."})
+
+    ticket = tickets.load(project, 1)
+    assert ticket["title"] == "The heading colour"
+    assert tickets._words(project, ticket).strip() == "Use the brand's own red."
+
+
+def test_changing_the_ask_after_the_work_started_says_what_to_do_instead(project, client):
+    at_review(project)
+
+    answer = client.post("/ticket/toolshed/1/change", follow_redirects=True,
+                         data={**token(client), "title": "Heading", "words": "Different."})
+
+    page = answer.get_data(as_text=True)
+    assert "reject" in page.lower()
+    assert tickets._words(project, tickets.load(project, 1)).strip() != "Different."
+
+
+def test_the_pull_request_is_shown_as_github_has_it(project, client, monkeypatch):
+    from taller import discovery, issues
+
+    ticket = at_review(project)
+    ticket["pr"] = 7
+    tickets.write(project, ticket, "ticket 0001: a pull request")
+    monkeypatch.setattr(issues, "repo_of", lambda path: "menfistoo/toolshed")
+    monkeypatch.setattr(discovery, "_run_gh", lambda args, **kwargs: support.gh_json(
+        {"state": "MERGED", "url": "https://github.com/menfistoo/toolshed/pull/7",
+         "mergeable": "UNKNOWN", "statusCheckRollup": []}))
+
+    page = client.get("/ticket/toolshed/1").get_data(as_text=True)
+
+    assert "merged" in page.lower()
+    assert "https://github.com/menfistoo/toolshed/pull/7" in page
+
+
+def test_github_being_unreachable_is_one_line_not_a_broken_page(project, client, monkeypatch):
+    from taller import discovery, issues
+
+    ticket = at_review(project)
+    ticket["pr"] = 7
+    tickets.write(project, ticket, "ticket 0001: a pull request")
+    monkeypatch.setattr(issues, "repo_of", lambda path: "menfistoo/toolshed")
+    monkeypatch.setattr(discovery, "_run_gh", lambda args, **kwargs: None)
+
+    answer = client.get("/ticket/toolshed/1")
+
+    assert answer.status_code == 200
+    assert "gh" in answer.get_data(as_text=True)

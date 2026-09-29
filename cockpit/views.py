@@ -127,6 +127,18 @@ def approve(project: str, ticket_id: int):
     return _write(project, ticket_id, act)
 
 
+@bp.post("/ticket/<project>/<int:ticket_id>/change")
+def change(project: str, ticket_id: int):
+    """Spec 12's third action: what she asked for, corrected in her own words."""
+    title = request.form.get("title", "")
+    words = request.form.get("words", "")
+
+    def act(path: Path, name: str) -> None:
+        tickets.reword(path, ticket_id, title=title, words=words)
+
+    return _write(project, ticket_id, act)
+
+
 @bp.post("/ticket/<project>/<int:ticket_id>/reject")
 def reject(project: str, ticket_id: int):
     """Say no, in her own words. The words are the whole point: the next attempt
