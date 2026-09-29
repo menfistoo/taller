@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}New project — {{ page.name }}{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-end flex-wrap gap-2">
+  <div>
+    <h1 class="h4 mb-1">{{ page.name }}</h1>
+    <div class="text-muted small">to be created in <code>{{ page.target }}</code></div>
+  </div>
+  <div class="text-muted small">{{ page.answered }} of {{ page.total }} answered</div>
+</div>
+
+<div class="progress mt-2" style="height: 4px;" role="progressbar">
+  <div class="progress-bar" style="width: {{ (page.answered * 100 / page.total)|round }}%"></div>
+</div>
+
+{% if page.question %}
+<div class="card mt-3">
+  <div class="card-header">
+    Round {{ page.round }} of 4 — {{ page.round_title }}
+  </div>
+  <div class="card-body">
+    <form method="post" action="{{ url_for('cockpit.interview_answer', name=page.name) }}">
+      <input type="hidden" name="{{ token_field }}" value="{{ token() }}">
+      <input type="hidden" name="key" value="{{ page.question.key }}">
+
+      <p class="h6">{{ page.question.number }} {{ page.question.text }}</p>
+      {% if page.question.why %}
+      <p class="text-muted small">{{ page.question.why }}</p>
+      {% endif %}
+      {% if page.question.example %}
+      <p class="text-muted small">For example: {{ page.question.example }}</p>
+      {% endif %}
+
+      {% if page.question.kind == "choice" %}
+      {% for value, label in page.choices %}
+      <div class="form-check">
+        <input class="form-check-input" type="radio" name="value" id="c{{ loop.index }}"
+               value="{{ value }}"
+               {% if page.question.default == value %}checked{% endif %}>
+        <label class="form-check-label" for="c{{ loop.index }}">{{ label }}</label>
+      </div>
+      {% endfor %}
+      {% elif page.question.kind == "yes_no" %}
+      <div class="form-check form-check-inline">
+        <input class="form-check-input" type="radio" name="value" id="yes" value="y"
+               {% if page.question.default is true %}checked{% endif %}>
+        <label class="form-check-label" for="yes">yes</label>
+      </div>
+      <div class="form-check form-check-inline">
+        <input class="form-check-input" type="radio" name="value" id="no" value="n"
+               {% if page.question.default is false %}checked{% endif %}>
+        <label class="form-check-label" for="no">no</label>
+      </div>
+      {% elif page.question.kind == "list" %}
+      <textarea class="form-control" name="value" rows="5"
+                placeholder="One per line. Three to five is about right."></textarea>
+      {% else %}
+      <input class="form-control" name="value" autofocus>
+      {% endif %}
+
+      {% if page.note %}<div class="form-text mt-2">{{ page.note }}</div>{% endif %}
+      <button class="btn btn-primary mt-3" type="submit">Next</button>
+    </form>
+  </div>
+</div>
+
+{% else %}
+<div class="card mt-3">
+  <div class="card-header">The brief — this is what will be created</div>
+  <table class="table table-sm mb-0">
+    <tbody>
+      {% for number, label, given in page.brief %}
+      <tr>
+        <td class="text-muted small" style="width: 2rem;">{{ number }}</td>
+        <td class="text-muted small" style="width: 12rem;">{{ label }}</td>
+        <td>{{ given }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <div class="card-footer d-flex gap-2 align-items-center flex-wrap">
+    <form method="post" action="{{ url_for('cockpit.interview_create', name=page.name) }}">
+      <input type="hidden" name="{{ token_field }}" value="{{ token() }}">
+      <button class="btn btn-primary" type="submit">Create {{ page.name }}</button>
+    </form>
+    <form method="post" action="{{ url_for('cockpit.interview_answer', name=page.name) }}"
+          class="d-flex gap-2 align-items-center">
+      <input type="hidden" name="{{ token_field }}" value="{{ token() }}">
+      <select class="form-select form-select-sm" name="key">
+        {% for question in questions %}
+        <option value="{{ question.key }}">{{ question.number }} {{ question.text|truncate(52) }}</option>
+        {% endfor %}
+      </select>
+      <input type="hidden" name="again" value="1">
+      <button class="btn btn-sm btn-outline-secondary" type="submit">Change an answer</button>
+    </form>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
