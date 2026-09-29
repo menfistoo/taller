@@ -9,6 +9,7 @@ commits them through the only writer.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Sequence
 
 from . import constitution, gitio
 
@@ -65,3 +66,29 @@ def refresh_affected(*, module: str | None = None, brand: str | None = None,
             gitio.ensure_main_worktree(entry["path"])
             touched.append((entry["name"], refresh(entry["path"], message)))
     return touched
+
+
+def refresh_for_hub_paths(changed: Sequence[str]) -> list[tuple[str, str]]:
+    """Every adopted project the changed hub files reach (spec 4.6).
+
+    `taller amend` and the cockpit's Constitution screen both amend hub rules,
+    and both must fan the change out the same way: a profile or `taller.yml`
+    reaches everything, a module reaches the projects whose profile names it, a
+    brand reaches the projects using it.
+    """
+    if any(path.startswith("profiles/") or path == "taller.yml" for path in changed):
+        return refresh_affected(everything=True,
+                                message="taller: resolve after an amendment")
+    touched: dict[str, str] = {}
+    for path in changed:
+        parts = path.split("/")
+        if parts[0] == "modules" and path.endswith(".md"):
+            found = refresh_affected(module=path[len("modules/"):-len(".md")],
+                                     message="taller: resolve after an amendment")
+        elif parts[0] == "brands" and len(parts) > 1:
+            found = refresh_affected(brand=parts[1],
+                                     message="taller: resolve after an amendment")
+        else:
+            continue
+        touched.update(found)
+    return sorted(touched.items())
