@@ -38,7 +38,8 @@ def rows(project_name: str | None = None) -> dict[str, Any]:
     return {
         "rows": listed,
         "project": project_name or "",
-        "projects": [entry["name"] for entry in reading.projects() if entry["available"]],
+        "projects": [entry["name"] for entry in reading.project_entries()
+                     if entry["available"]],
         "mode": mode,
         "show_money": show_money,
         "mismatch": billing.mismatch() or "",

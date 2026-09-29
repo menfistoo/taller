@@ -35,7 +35,8 @@ def slices(project_name: str) -> dict[str, Any]:
         })
     return {
         "project": entry["name"],
-        "projects": [row["name"] for row in reading.projects() if row["available"]],
+        "projects": [row["name"] for row in reading.project_entries()
+                     if row["available"]],
         "profile": entry.get("profile", ""),
         "slices": listed,
         "overrides": list(ruleset.get("overrides") or []),

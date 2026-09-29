@@ -36,7 +36,8 @@ def figures() -> dict[str, Any]:
     by_model: dict[str, dict[str, int]] = {}
     unreadable: list[dict[str, str]] = []
 
-    for entry in reading.projects():
+    # `project_entries`, not `projects`: the tickets are read once, below.
+    for entry in reading.project_entries():
         if not entry["available"]:
             unreadable.append({"name": entry["name"], "problem": entry["problem"]})
             continue

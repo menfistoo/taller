@@ -343,7 +343,11 @@ def reword(project: Path | str, ticket_id: int, *, title: str, words: str) -> Ti
         note = "changed what was asked for"
         if title != was:
             note += f" (was {was!r})"
+        # Not `retry_issue`: a deferred issue is filed from what `main` holds, and
+        # `main` still holds the OLD words here - the issue would carry the new
+        # title and the ask she has just corrected. The next stage files it.
         return write(project, ticket, f"ticket {ticket_id:04d}: reworded", note=note,
+                     retry_issue=False,
                      extra={f"{ticket_dir(ticket)}/ticket.md": ticket_md.encode("utf-8")})
 
 

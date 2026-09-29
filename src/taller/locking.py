@@ -107,8 +107,29 @@ def file_lock(
         yield
     finally:
         depth.pop(key, None)
-        with contextlib.suppress(FileNotFoundError):
+        _release(path)
+
+
+def _release(path: Path) -> None:
+    """Remove the lock file, retrying briefly.
+
+    On Windows an unlink fails with ERROR_SHARING_VIOLATION while another thread
+    or process has the file open - which is exactly what the waiters in the loop
+    above are doing. Letting that escape turned a released lock into a lock held
+    by a live process that nothing would ever reap: two tabs creating a project
+    at once left one of them waiting for the full timeout, and the other
+    reporting a PermissionError instead of what it had just done.
+    """
+    for attempt in range(20):
+        try:
             path.unlink()
+            return
+        except FileNotFoundError:
+            return
+        except OSError:
+            if attempt == 19:
+                return              # a stale file the next caller will reap
+            time.sleep(_POLL)
 
 
 def _busy(path: Path, timeout: float) -> str:
