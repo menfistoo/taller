@@ -24,7 +24,14 @@ checkpoints:
   release: pending
 spend:
   partial: false
-  by_model: {}
-  total_tokens: 0
-  weighted_tokens: 0
+  by_model:
+    claude-sonnet-5-5:
+      input: 2
+      cache_write: 37136
+      cache_read: 0
+      output: 312
+  total_tokens: 37450
+  weighted_tokens: 47982
   cost: null
+  sessions:
+  - e7965f5d-5dda-4c2e-8d86-6aea8720d563
