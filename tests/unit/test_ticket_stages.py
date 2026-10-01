@@ -32,7 +32,7 @@ def new(project: Path, title: str = "Danger colour") -> int:
 
 
 def worktree(project: Path, ticket: dict) -> Path:
-    return paths.ticket_worktree(project.name, tickets.ticket_dir(ticket).split("/")[-1])
+    return paths.ticket_worktree(project.name, ticket["id"])
 
 
 def to_build(project: Path, ticket_id: int, lane: str = "fast") -> dict:

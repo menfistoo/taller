@@ -32,7 +32,7 @@ def git(cwd: Path, *args: str) -> str:
 
 
 def worktree(project: Path, ticket: dict) -> Path:
-    return paths.ticket_worktree(project.name, tickets.ticket_dir(ticket).split("/")[-1])
+    return paths.ticket_worktree(project.name, ticket["id"])
 
 
 def at_review(project: Path) -> dict:

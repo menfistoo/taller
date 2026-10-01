@@ -88,14 +88,23 @@ def doctor_dispatch_cache() -> Path:
     return run_dir() / "doctor-dispatch.json"
 
 
-def ticket_worktree(project_name: str, ticket_dir_name: str) -> Path:
+def ticket_worktree(project_name: str, ticket_id: int) -> Path:
     """A ticket's own worktree, on its branch, from ④ build (spec 8.1).
 
     Deliberately not under `worktrees/`: that root holds the `main` worktrees,
     which no dispatch may ever write (3.6.1), and a ticket worktree is exactly
     where the implementer writes. Separate roots keep that guard a plain
     containment check.
+
+    Named by number only: the ticket's own folder inside it already carries the
+    slug, and carrying it twice pushed the gate verdicts past Windows'
+    260-character limit, which Python's own writes cannot pass.
     """
+    return run_dir() / "ticket-worktrees" / f"{project_name}-{int(ticket_id):04d}"
+
+
+def old_ticket_worktree(project_name: str, ticket_dir_name: str) -> Path:
+    """Where a ticket worktree was opened before it was named by number only."""
     return run_dir() / "ticket-worktrees" / f"{project_name}-{ticket_dir_name}"
 
 

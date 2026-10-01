@@ -405,8 +405,29 @@ def _name(ticket: Mapping[str, Any]) -> str:
 
 
 def _worktree(project: Path, ticket: Mapping[str, Any]) -> Path:
+    """The ticket's worktree: the short name, or the old one while it is still there."""
     from . import paths
-    return paths.ticket_worktree(registry.get_project(project)["name"], _name(ticket))
+    tree = paths.ticket_worktree(registry.get_project(project)["name"], int(ticket["id"]))
+    old = _old_worktree(project, ticket)
+    return old if not tree.is_dir() and old.is_dir() else tree
+
+
+def _old_worktree(project: Path, ticket: Mapping[str, Any]) -> Path:
+    from . import paths
+    return paths.old_ticket_worktree(registry.get_project(project)["name"], _name(ticket))
+
+
+def _move_old_worktree(project: Path, ticket: Mapping[str, Any]) -> None:
+    """Move a worktree opened under the old, longer name to the short one.
+
+    Left where it is when git cannot move it (on Windows, a program with the
+    folder open is enough): `_worktree` still finds it there.
+    """
+    from . import paths
+    old = _old_worktree(project, ticket)
+    tree = paths.ticket_worktree(registry.get_project(project)["name"], int(ticket["id"]))
+    if old.is_dir() and not tree.exists() and gitio._is_worktree(old):
+        gitio.git(project, "worktree", "move", str(old), str(tree), check=False)
 
 
 def _branch_exists(project: Path, branch: str) -> bool:

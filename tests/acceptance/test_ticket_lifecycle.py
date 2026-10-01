@@ -60,7 +60,7 @@ def test_a_queue_becomes_tickets_one_closes_and_a_killed_one_resumes(
     run(["ticket", "transition", "1", *at])
     run(["ticket", "transition", "1", "--lane", "fast", *at])
     one = tickets.load(project, 1)
-    tree = paths.ticket_worktree("toolshed", tickets.ticket_dir(one).split("/")[-1])
+    tree = paths.ticket_worktree("toolshed", 1)
     (tree / "tools.txt").write_text("hammer\n", encoding="utf-8")
     git(tree, "add", "tools.txt")
     git(tree, "commit", "--quiet", "-m", "feat(tools): list the tools")
@@ -80,7 +80,7 @@ def test_a_queue_becomes_tickets_one_closes_and_a_killed_one_resumes(
     run(["ticket", "transition", "2", "--lane", "full", *at])
     run(["ticket", "approve", "2", *at])                   # design -> build
     two = tickets.load(project, 2)
-    shutil.rmtree(paths.ticket_worktree("toolshed", tickets.ticket_dir(two).split("/")[-1]))
+    shutil.rmtree(paths.ticket_worktree("toolshed", 2))
     said = "\n".join(run(["ticket", "resume", "2", *at]).said)
     assert "worktree recreated" in said.lower()
     assert tickets.load(project, 2)["stage"] == "build"

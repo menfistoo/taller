@@ -87,6 +87,7 @@ def from_transcripts(project: Path | str, ticket: Mapping[str, Any], *,
     places = [Path(project)]
     try:
         places.append(tickets._worktree(Path(project), ticket))
+        places.append(tickets._old_worktree(Path(project), ticket))   # chats from before it moved
     except Exception:
         pass                                  # no worktree to look for: the checkout only
     known = set((ticket.get("spend") or {}).get("sessions") or [])

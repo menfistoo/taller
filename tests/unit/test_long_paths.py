@@ -10,6 +10,8 @@ wherever it creates a worktree.
 
 from __future__ import annotations
 
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -25,19 +27,38 @@ def project(tmp_home: Path, identity, stub_claude, monkeypatch) -> Path:
     return support.new_project()
 
 
+def commit_without_a_checkout(project: Path, path: str, data: bytes, message: str) -> None:
+    """A commit on `main` that no working tree writes, through a scratch index.
+
+    The worktree is only a little deeper than the owner's checkout, by less than
+    the temporary-file suffix a write there adds, so a path long enough to pass
+    the limit in the worktree cannot be written in the checkout first.
+    """
+    env = {**os.environ, "GIT_INDEX_FILE": str(project / ".git" / "scratch-index")}
+
+    def run(*args: str, stdin: bytes | None = None) -> str:
+        return subprocess.run(["git", "-C", str(project), *args], input=stdin, env=env,
+                              capture_output=True, check=True).stdout.decode().strip()
+
+    blob = run("hash-object", "-w", "--stdin", stdin=data)
+    run("read-tree", gitio.MAIN_BRANCH)
+    run("update-index", "--add", "--cacheinfo", f"100644,{blob},{path}")
+    commit = run("commit-tree", run("write-tree"), "-p", gitio.MAIN_BRANCH, "-m", message)
+    run("update-ref", f"refs/heads/{gitio.MAIN_BRANCH}", commit)
+    os.remove(env["GIT_INDEX_FILE"])
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="the 260-character limit is Windows'")
 def test_a_worktree_opens_over_a_path_longer_than_windows_allows(project):
     old = tickets.create(project, title="x", words="x", kind="bug")
     ticket = tickets.create(project, title="The heading should be the danger red of the brand",
                             words="x", kind="bug")
     worktree = tickets._worktree(project, ticket)
-    # As in real use: the evidence fits in the owner's checkout (where it is
-    # written) and only the longer worktree path passes the limit.
     folder = f"{tickets.ticket_dir(old)}/rejected/20260928T203221/gates/"
-    room = 225 - len(str(project)) - 1 - len(folder) - len(".md")   # + a temp suffix
+    room = 265 - len(str(worktree)) - 1 - len(folder) - len(".md")
     deep = folder + ("v" * room) + ".md"
-    gitio.commit_to_main(project, {deep: b"kept\n"}, "ticket 0001: keep rejected work")
-    assert len(str(project / deep)) < 260 < len(str(worktree / deep)), "must straddle the limit"
+    commit_without_a_checkout(project, deep, b"kept\n", "ticket 0001: keep rejected work")
+    assert len(str(worktree / deep)) > 260, "must pass the limit"
 
     tickets._open_worktree(project, ticket)
 

@@ -786,6 +786,7 @@ def _main_view(project: Path) -> Path:
 def _worktree(project: Path, ticket_id: int) -> Path:
     """The ticket's worktree, opened (from ③ on the full lane) or reopened if gone."""
     ticket = tickets.load(project, ticket_id)
+    tickets._move_old_worktree(project, ticket)
     tree = tickets._worktree(project, ticket)
     if ticket.get("branch") and tree.is_dir():
         return tree

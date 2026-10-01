@@ -168,9 +168,7 @@ def test_asked_for_worked_on_decided_and_published(project, remote, github, star
     # ① She asks, in her words; the work starts by itself.
     seen(client, "/ask", pages)
     seen(client, "/ask", pages, project="toolshed",
-         # Short: the folder a piece of work is named after has to fit, with this
-         # test's own deep temporary folder, under Windows' 260-character limit.
-         words="Make the heading the danger red.")
+         words="The heading should be the danger red, like the rest of the brand.")
     assert len(started) == 1 and started[0][-4:] == ["run", "1", "--path", str(project)]
     assert "Working" in seen(client, "/", pages)
 
