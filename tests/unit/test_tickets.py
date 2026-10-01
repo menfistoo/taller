@@ -138,7 +138,7 @@ def test_sync_is_local_without_a_remote(project: Path):
     assert status_on_main(project, ticket)["sync"] == "local"
 
 
-def test_sync_is_pending_when_the_push_fails(tmp_home: Path, identity):
+def test_sync_is_pending_when_the_push_fails(tmp_home: Path, identity, publish_automatically):
     project = support.new_project(origin=str(tmp_home / "no-such-remote.git"))
 
     ticket = tickets.create(project, title="Unpushed", words="w", kind="idea")

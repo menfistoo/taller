@@ -1,0 +1,74 @@
+{% extends "plain/base.html" %}
+{% block title %}Taller — {{ home_words.title }}{% endblock %}
+{% block content %}
+
+<h1>{{ home_words.title }}</h1>
+
+{% if page.needs_you %}
+<h2>{{ home_words.needs_you }}</h2>
+<div class="card needs tight">
+  {% for t in page.needs_you %}
+  <a class="thing" href="{{ t.url }}">
+    <span class="dot {{ t.state }}"></span>
+    <span class="thing-text">
+      <span class="thing-title">{{ t.title }}</span>
+      <span class="thing-doing">{{ t.project }} · {{ t.doing[0]|lower }}{{ t.doing[1:] }}</span>
+    </span>
+    <span class="chev">›</span>
+  </a>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if page.projects %}
+{% if page.needs_you %}<h2>{{ home_words.everything }}</h2>{% endif %}
+{% for project in page.projects %}
+<div class="card">
+  <div class="project-head">
+    {% if project.available %}
+    <a class="project-name" href="{{ url_for('cockpit.settings_about', project=project.name) }}">{{ project.name }}</a>
+    {% else %}
+    <span class="project-name">{{ project.name }}</span>
+    {% endif %}
+    {% if project.available %}<span class="project-count">{{ project.count_line }}</span>{% endif %}
+  </div>
+
+  {% if not project.available %}
+  <p class="empty">{{ home_words.cant_find }}</p>
+  {% elif not project.things %}
+  <p class="empty">{{ home_words.nothing_yet }}</p>
+  {% else %}
+  {% for t in project.shown %}
+  <a class="thing" href="{{ t.url }}">
+    <span class="dot {{ t.state }}"></span>
+    <span class="thing-text">
+      <span class="thing-title">{{ t.title }}</span>
+      <span class="thing-doing">
+        {%- if t.state in ("working", "needs_you") %}{{ t.state_words }} — {{ t.doing[0]|lower }}{{ t.doing[1:] }}
+        {%- elif t.state == "stopped" %}{{ t.doing }}
+        {%- else %}{{ t.state_words }}{% endif %}</span>
+    </span>
+    <span class="chev">›</span>
+  </a>
+  {% endfor %}
+  {% if project.done_more %}<div class="more">{{ more_done(project.done_more) }}</div>{% endif %}
+  {% endif %}
+
+  {% if project.available and project.publish.line %}
+  <div class="publish">
+    <span>{{ project.publish.line }}</span>
+    {% if project.publish.remote %}
+    <form method="post" action="{{ url_for('cockpit.publish', project=project.name) }}">
+      <input type="hidden" name="{{ token_field }}" value="{{ token() }}">
+      <button class="btn second small" type="submit">{{ publish_words.button }}</button>
+    </form>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endfor %}
+{% else %}
+<p class="empty">{{ home_words.no_projects }}</p>
+{% endif %}
+
+{% endblock %}

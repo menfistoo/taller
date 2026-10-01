@@ -274,7 +274,7 @@ def apply(project: Path | str, *, name: str, answers: Mapping[str, Any], facts: 
         files[facts["stylesheet"]] = lifted.encode("utf-8")
 
     # Every adopted project gets the same check the scaffolds ship (spec 9.4).
-    files[scaffold.CI_WORKFLOW] = scaffold.ci_workflow(scaffold.configured_taller_source())
+    files[scaffold.CI_WORKFLOW] = scaffold.ci_workflow(scaffold.configured_taller_source(project))
 
     existing = project / ".gitattributes"
     files[".gitattributes"] = merge_gitattributes(

@@ -1,0 +1,20 @@
+{% extends "plain/base.html" %}
+{% block title %}{{ page.project }}{% endblock %}
+{% block top %}
+<a class="back" href="{{ url_for('cockpit.home') }}">‹ {{ thing_words.back }}</a>
+<span></span>
+{% endblock %}
+{% block content %}
+<h1 style="margin-bottom:.9rem">{{ page.project }}</h1>
+<nav class="tabs" aria-label="{{ page.project }}">
+  {% for key, label in tabs %}
+  {% set endpoint = "cockpit.settings_" ~ key %}
+  {% if endpoint in view_functions %}
+  <a class="tab {% if key == current_tab %}on{% endif %}"
+     href="{{ url_for(endpoint, project=page.project) }}"
+     {% if key == current_tab %}aria-current="page"{% endif %}>{{ label }}</a>
+  {% endif %}
+  {% endfor %}
+</nav>
+{% block tab %}{% endblock %}
+{% endblock %}

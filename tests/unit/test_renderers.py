@@ -90,7 +90,14 @@ def test_a_loaded_snapshot_is_the_same_ruleset_in_ci_mode(tmp_home: Path):
     loaded = constitution.load_snapshot(project)
 
     assert loaded["mode"] == "ci"
-    assert loaded == {**ruleset, "mode": "ci"}
+    # Everything the gates read is the same; only where each slice came from is
+    # said without the machine's paths (a snapshot may be committed somewhere public).
+    assert {key: value for key, value in loaded.items() if key != "slices"} == \
+        {key: value for key, value in {**ruleset, "mode": "ci"}.items() if key != "slices"}
+    assert {name: s["text"] for name, s in loaded["slices"].items()} == \
+        {name: s["text"] for name, s in ruleset["slices"].items()}
+    assert all(source.startswith(("hub/", "project/"))
+               for s in loaded["slices"].values() for source in s["sources"])
 
 
 def test_load_snapshot_restores_an_until_as_a_date(tmp_home: Path):

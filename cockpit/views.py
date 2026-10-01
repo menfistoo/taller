@@ -12,16 +12,282 @@ from typing import Any, Callable
 from flask import (Blueprint, abort, flash, redirect, render_template, request,
                    url_for)
 
-from taller import onboarding, paths, tickets
-from taller.errors import LockTimeout, TallerError
+from taller import onboarding, paths, publishing, tickets
+from taller.errors import TallerError
 
-from . import (check_token, configuration, health, interview, reading, rules, runs,
-               spending)
+from . import (check_token, configuration, health, interview, plain, project_settings,
+               reading, rules, runs, spending, words)
 
 bp = Blueprint("cockpit", __name__)
 
 
 @bp.get("/")
+def home():
+    """Her projects and what she asked for, in plain words (the plain front)."""
+    return render_template("plain/home.html", page=plain.home())
+
+
+@bp.post("/publish/<project>")
+def publish(project: str):
+    """Her say-so: send everything of this project's that waited."""
+    check_token()
+    try:
+        path = Path(reading.entry_for(project)["path"])
+        sent = publishing.send(path)
+    except TallerError as exc:
+        flash(plain.problem(exc), "warning")
+        return redirect(url_for("cockpit.home"))
+    if sent["problem"]:
+        flash(sent["problem"], "warning")
+    else:
+        flash(words.PUBLISH["done"], "info")
+    return redirect(url_for("cockpit.home"))
+
+
+@bp.get("/project/<project>/about")
+def settings_about(project: str):
+    try:
+        page = project_settings.about(project)
+    except TallerError as exc:
+        abort(404, str(exc))
+    return render_template("plain/settings/about.html", page=page, current_tab="about")
+
+
+@bp.post("/project/<project>/about")
+def settings_about_change(project: str):
+    """One card's answers, written the way `taller project brief` writes them."""
+    check_token()
+    given = {key: value for key, value in request.form.items()
+             if key in project_settings.EDITABLE}
+    try:
+        done = project_settings.change_answers(project, given)
+    except TallerError as exc:
+        done = {"ok": False, "problem": plain.problem(exc), "lines": []}
+    for line in (done["lines"] if done["ok"] else [done["problem"]]):
+        flash(line, "info" if done["ok"] else "warning")
+    return redirect(url_for("cockpit.settings_about", project=project))
+
+
+@bp.get("/project/<project>/rules")
+def settings_rules(project: str):
+    try:
+        page = project_settings.rules(project)
+    except TallerError as exc:
+        abort(404, str(exc))
+    return render_template("plain/settings/rules.html", page=page, current_tab="rules")
+
+
+@bp.post("/project/<project>/rules/add")
+def settings_rules_add(project: str):
+    check_token()
+    try:
+        for line in project_settings.add_rule(project, request.form.get("kind", ""),
+                                              request.form.get("text", ""),
+                                              request.form.get("why", "")):
+            flash(line, "info")
+    except TallerError as exc:
+        flash(plain.problem(exc), "warning")
+    return redirect(url_for("cockpit.settings_rules", project=project))
+
+
+@bp.post("/project/<project>/rules/remove")
+def settings_rules_remove(project: str):
+    check_token()
+    try:
+        index = int(request.form.get("index", "-1"))
+        for line in project_settings.remove_rule(project, request.form.get("kind", ""), index,
+                                                 request.form.get("why", "")):
+            flash(line, "info")
+    except ValueError:
+        flash("That rule could not be found; the page may be out of date.", "warning")
+    except TallerError as exc:
+        flash(plain.problem(exc), "warning")
+    return redirect(url_for("cockpit.settings_rules", project=project))
+
+
+@bp.get("/project/<project>/choices")
+def settings_choices(project: str):
+    try:
+        page = project_settings.choices(project)
+    except TallerError as exc:
+        abort(404, str(exc))
+    return render_template("plain/settings/choices.html", page=page, current_tab="choices")
+
+
+@bp.post("/project/<project>/choices")
+def settings_choices_change(project: str):
+    """One option, written to the project's own settings the way the terminal does."""
+    check_token()
+    try:
+        for line in project_settings.choose(project, request.form.get("choice", ""),
+                                            request.form.get("option", "")):
+            flash(line, "info")
+    except TallerError as exc:
+        flash(plain.problem(exc), "warning")
+    return redirect(url_for("cockpit.settings_choices", project=project))
+
+
+@bp.get("/project/<project>/look")
+def settings_look(project: str):
+    try:
+        page = project_settings.look(project)
+    except TallerError as exc:
+        abort(404, str(exc))
+    return render_template("plain/settings/look.html", page=page, current_tab="look")
+
+
+@bp.post("/project/<project>/look/guide")
+def settings_look_guide(project: str):
+    """A brand guide, read into a proposal. The size is checked before anything is read."""
+    check_token()
+    if (request.content_length or 0) > project_settings.UPLOAD_MAX:
+        flash(words.LOOK["too_big"], "warning")
+        return redirect(url_for("cockpit.settings_look", project=project))
+    upload = request.files.get("guide")
+    if upload is None or not upload.filename:
+        return redirect(url_for("cockpit.settings_look", project=project))
+    if Path(upload.filename).suffix.lower() not in project_settings.UPLOAD_KINDS:
+        flash(words.LOOK["not_a_guide"], "warning")
+        return redirect(url_for("cockpit.settings_look", project=project))
+    kept = project_settings.keep_upload(upload, upload.filename)
+    proposal = project_settings.propose_from(kept, upload.filename)
+    if proposal["problem"]:
+        flash(proposal["problem"], "warning")
+        return redirect(url_for("cockpit.settings_look", project=project))
+    try:
+        page = project_settings.look(project)
+    except TallerError as exc:
+        abort(404, str(exc))
+    page["proposal"] = proposal
+    return render_template("plain/settings/look.html", page=page, current_tab="look")
+
+
+@bp.post("/project/<project>/look/save")
+def settings_look_save(project: str):
+    check_token()
+    tokens = {key[2:]: value for key, value in request.form.items() if key.startswith("t:")}
+    try:
+        for line in project_settings.save_brand(request.form.get("slug", ""), tokens,
+                                                request.form.get("prose", ""),
+                                                new=bool(request.form.get("new")),
+                                                name=request.form.get("name", "")):
+            flash(line, "info")
+    except TallerError as exc:
+        flash(plain.problem(exc), "warning")
+    return redirect(url_for("cockpit.settings_look", project=project))
+
+
+@bp.post("/project/<project>/look/use")
+def settings_look_use(project: str):
+    """Putting a brand on a project is work: it becomes a thing, and starts."""
+    check_token()
+    try:
+        made = project_settings.use_brand(project, request.form.get("slug", ""))
+    except TallerError as exc:
+        flash(plain.problem(exc), "warning")
+        return redirect(url_for("cockpit.settings_look", project=project))
+    flash(words.LOOK["asked"], "info")
+    return redirect(url_for("cockpit.thing", project=project, ticket_id=made))
+
+
+@bp.get("/ask")
+def ask_page():
+    return _ask_form(chosen=request.args.get("project") or "")
+
+
+@bp.post("/ask")
+def ask():
+    """Her words become a ticket, and the work starts by itself.
+
+    No kind, no lane, no title to invent: her first line stands in as the title
+    until the chief names it at ① - which it does for any ticket nobody has named.
+    """
+    check_token()
+    name = request.form.get("project") or ""
+    said = request.form.get("words") or ""
+    if not said.strip():
+        return _ask_form(chosen=name, words=said, problem=words.ASK["empty"])
+    known = {entry["name"]: entry for entry in reading.project_entries() if entry["available"]}
+    if name not in known:
+        return _ask_form(chosen=name, words=said, problem=words.ASK["no_project"])
+    path = Path(known[name]["path"])
+    first = said.strip().splitlines()[0]
+    title = " ".join(first.split())[:tickets.TITLE_MAX].rstrip()
+    try:
+        made = tickets.create(path, title=title, words=said.strip(), kind="feature",
+                              named_by=None)
+        runs.start(path, name, int(made["id"]))
+    except TallerError as exc:
+        return _ask_form(chosen=name, words=said, problem=plain.problem(exc))
+    return redirect(url_for("cockpit.thing", project=name, ticket_id=int(made["id"])))
+
+
+def _ask_form(*, chosen: str, words: str = "", problem: str = "") -> Any:
+    projects = [entry["name"] for entry in reading.project_entries() if entry["available"]]
+    if chosen not in projects:
+        chosen = projects[0] if projects else ""
+    return render_template("plain/ask.html", projects=projects, chosen=chosen, words=words,
+                           problem=problem)
+
+
+@bp.get("/thing/<project>/<int:ticket_id>")
+def thing(project: str, ticket_id: int):
+    """One thing she asked for, in plain words."""
+    try:
+        page = plain.thing(project, ticket_id)
+    except TallerError as exc:
+        abort(404, str(exc))
+    return render_template("plain/thing.html", page=page)
+
+
+@bp.get("/thing/<project>/<int:ticket_id>/plan")
+def thing_plan(project: str, ticket_id: int):
+    try:
+        page = plain.plan_of(project, ticket_id)
+    except TallerError as exc:
+        abort(404, str(exc))
+    return render_template("plain/plan.html", page=page)
+
+
+@bp.post("/thing/<project>/<int:ticket_id>/yes")
+def thing_yes(project: str, ticket_id: int):
+    """"Yes, carry on": the approval, and the work starts again by itself."""
+    def act(path: Path, name: str) -> None:
+        tickets.approve(path, ticket_id)
+        runs.start(path, name, ticket_id)
+
+    return _write(project, ticket_id, act, back="cockpit.thing")
+
+
+@bp.post("/thing/<project>/<int:ticket_id>/no")
+def thing_no(project: str, ticket_id: int):
+    """"No, change it": her words are what the next attempt reads."""
+    reason = request.form.get("reason", "")
+
+    def act(path: Path, name: str) -> None:
+        stage = tickets.load(path, ticket_id)["stage"]
+        tickets.reject(path, ticket_id, reason)
+        # A new plan, or a new attempt, starts at once with her words. Later
+        # checkpoints stay stopped: what to change there is not the work's to guess.
+        if stage == "design":
+            tickets.resume(path, ticket_id)
+        if stage in ("design", "review"):
+            runs.start(path, name, ticket_id)
+
+    return _write(project, ticket_id, act, back="cockpit.thing")
+
+
+@bp.post("/thing/<project>/<int:ticket_id>/try-again")
+def thing_try_again(project: str, ticket_id: int):
+    """After a stop: pick it up again, and let it carry on by itself."""
+    def act(path: Path, name: str) -> None:
+        tickets.resume(path, ticket_id)
+        runs.start(path, name, ticket_id)
+
+    return _write(project, ticket_id, act, back="cockpit.thing")
+
+
+@bp.get("/board")
 def board():
     return render_template("board.html", board=reading.board())
 
@@ -217,7 +483,8 @@ def reject(project: str, ticket_id: int):
     return _write(project, ticket_id, act)
 
 
-def _write(project: str, ticket_id: int, act: Callable[[Path, str], None]) -> Any:
+def _write(project: str, ticket_id: int, act: Callable[[Path, str], None], *,
+           back: str = "cockpit.ticket") -> Any:
     """Check the token, do the write, and come back to the ticket's page.
 
     Every refusal the library can make - a checkpoint that is not one, a
@@ -229,8 +496,6 @@ def _write(project: str, ticket_id: int, act: Callable[[Path, str], None]) -> An
     try:
         entry = reading.entry_for(project)
         act(Path(entry["path"]), entry["name"])
-    except LockTimeout as exc:
-        flash(f"Taller is busy with this project, so nothing was changed. {exc}", "warning")
     except TallerError as exc:
-        flash(str(exc), "warning")
-    return redirect(url_for("cockpit.ticket", project=project, ticket_id=ticket_id))
+        flash(plain.problem(exc), "warning")
+    return redirect(url_for(back, project=project, ticket_id=ticket_id))

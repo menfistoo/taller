@@ -1,0 +1,35 @@
+{% extends "plain/base.html" %}
+{% block title %}{{ ask_words.title }}{% endblock %}
+{% block top %}
+<a class="back" href="{{ url_for('cockpit.home') }}">‹ {{ thing_words.back }}</a>
+<span></span>
+{% endblock %}
+{% block content %}
+<h1>{{ ask_words.title }}</h1>
+
+{% if problem %}<div class="message warn">{{ problem }}</div>{% endif %}
+
+{% if not projects %}
+<div class="card">
+  <p style="margin-top:0">{{ ask_words.no_projects }}</p>
+  <a class="btn main" href="{{ url_for('cockpit.interview_new') }}">{{ ask_words.new_project }}</a>
+</div>
+{% else %}
+<form method="post" action="{{ url_for('cockpit.ask') }}">
+  <input type="hidden" name="{{ token_field }}" value="{{ token() }}">
+  <p class="label-line">{{ ask_words.for }}</p>
+  <div class="pick">
+    {% for name in projects %}
+    <label class="pill">
+      <input type="radio" name="project" value="{{ name }}" {% if name == chosen %}checked{% endif %}>
+      <span>{{ name }}</span>
+    </label>
+    {% endfor %}
+  </div>
+  <textarea name="words" aria-label="{{ ask_words.title }}" placeholder="{{ ask_words.placeholder }}" autofocus>{{ words }}</textarea>
+  <p class="hint">{{ ask_words.hint }}</p>
+  <button class="btn main wide" type="submit">{{ ask_words.button }}</button>
+</form>
+{% endif %}
+{% endblock %}
+{% block footer %}{% endblock %}

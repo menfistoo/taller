@@ -205,7 +205,7 @@ def test_a_broken_status_yml_fails_the_ticket_check_and_names_it(project: Path):
     assert check.status == doctor.FAIL and "0001-first" in check.detail
 
 
-def test_a_ticket_left_unpushed_fails(tmp_home: Path, identity, stub_claude):
+def test_a_ticket_left_unpushed_fails(tmp_home: Path, identity, stub_claude, publish_automatically):
     from taller import tickets
 
     project = support.new_project(origin=str(tmp_home / "no-such-remote.git"))

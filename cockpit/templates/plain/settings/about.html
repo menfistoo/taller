@@ -1,0 +1,41 @@
+{% extends "plain/settings/base.html" %}
+{% block tab %}
+<p class="intro" style="margin-top:0">{{ about_words.intro }}</p>
+
+{% for card in page.cards %}
+<div class="card">
+  <div class="card-row">
+    <div class="card-text">
+      <div class="q">{{ card.title }}</div>
+      <div class="a">{{ card.said }}</div>
+      {% if card.note %}<div class="q" style="margin-top:.45rem">{{ card.note }}</div>{% endif %}
+    </div>
+  </div>
+  <details class="change">
+    <summary>{{ about_words.change }}</summary>
+    <form method="post" action="{{ url_for('cockpit.settings_about_change', project=page.project) }}">
+      <input type="hidden" name="{{ token_field }}" value="{{ token() }}">
+      {% for f in card.fields %}
+      <label class="field" for="{{ card.card }}-{{ f.key }}">{{ f.label }}</label>
+      {% if f.kind == "choice" %}
+        <div class="pick" id="{{ card.card }}-{{ f.key }}">
+        {% for value, label in f.choices %}
+          <label class="pill"><input type="radio" name="{{ f.key }}" value="{{ value }}"
+            {% if value == f.value %}checked{% endif %}><span>{{ label }}</span></label>
+        {% endfor %}
+        </div>
+      {% elif f.kind == "yes_no" %}
+        <div class="pick" id="{{ card.card }}-{{ f.key }}">
+          <label class="pill"><input type="radio" name="{{ f.key }}" value="y" {% if f.value %}checked{% endif %}><span>{{ about_words.yes }}</span></label>
+          <label class="pill"><input type="radio" name="{{ f.key }}" value="n" {% if not f.value %}checked{% endif %}><span>{{ about_words.no }}</span></label>
+        </div>
+      {% else %}
+        <textarea id="{{ card.card }}-{{ f.key }}" name="{{ f.key }}" rows="3" style="min-height:5.5rem">{{ f.value or "" }}</textarea>
+      {% endif %}
+      {% endfor %}
+      <button class="btn main small" type="submit" style="margin-top:.75rem">{{ about_words.save }}</button>
+    </form>
+  </details>
+</div>
+{% endfor %}
+{% endblock %}

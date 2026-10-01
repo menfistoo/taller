@@ -17,6 +17,11 @@ import support
 from taller import discovery, issues, tickets
 
 
+# The push and issue machinery itself: it runs for anyone who turns
+# `publish.automatic` on, so these tests turn it on (it ships off).
+pytestmark = pytest.mark.usefixtures("publish_automatically")
+
+
 @pytest.fixture
 def project(tmp_home: Path, identity) -> Path:
     return support.new_project()

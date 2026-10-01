@@ -252,10 +252,27 @@ def render_snapshot(ruleset: RuleSet) -> bytes:
     """
     project = {key: value for key, value in (ruleset.get("project") or {}).items()
                if key != "path"}
-    payload = {**ruleset, "project": project, "mode": "local"}
+    # The same goes for where each slice came from: `hub/modules/never.md`, not the
+    # full path, which carries the home directory and so the owner's user name.
+    root = Path((ruleset.get("project") or {}).get("path") or ".")
+    slices = {name: {**resolved, "sources": [_portable(source, root)
+                                             for source in resolved.get("sources") or []]}
+              for name, resolved in (ruleset.get("slices") or {}).items()}
+    payload = {**ruleset, "project": project, "slices": slices, "mode": "local"}
     text = json.dumps(payload, sort_keys=True, indent=2, ensure_ascii=False,
                       default=_json_scalar)
     return (text + "\n").encode("utf-8")
+
+
+def _portable(source: str, project: Path) -> str:
+    """A rule file's place, said without naming this machine."""
+    path = Path(source)
+    for label, root in (("hub", paths.hub()), ("project", project)):
+        try:
+            return f"{label}/{path.resolve().relative_to(root.resolve()).as_posix()}"
+        except ValueError:
+            continue
+    return path.name
 
 
 def load_snapshot(path: Path | str) -> RuleSet:

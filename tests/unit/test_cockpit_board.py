@@ -41,7 +41,7 @@ def test_every_open_ticket_of_every_project_is_on_the_board(two, client):
     a_ticket(two[0], "Heading colour")
     a_ticket(two[1], "Seed labels")
 
-    page = client.get("/").get_data(as_text=True)
+    page = client.get("/board").get_data(as_text=True)
 
     assert "Heading colour" in page and "Seed labels" in page
     assert "toolshed" in page and "seed-bank" in page
@@ -51,7 +51,7 @@ def test_a_closed_ticket_is_not(two, client):
     a_ticket(two[0], "Old work", stage="close", outcome="done")
     a_ticket(two[0], "Live work")
 
-    page = client.get("/").get_data(as_text=True)
+    page = client.get("/board").get_data(as_text=True)
 
     assert "Live work" in page and "Old work" not in page
 
@@ -73,7 +73,7 @@ def test_a_blocked_ticket_shows_its_reason(two, client):
     ticket = a_ticket(two[0], "Heading colour", stage="gates")
     tickets.block(two[0], ticket["id"], "the gates found what needs your decision")
 
-    page = client.get("/").get_data(as_text=True)
+    page = client.get("/board").get_data(as_text=True)
 
     assert "needs your decision" in page
     assert "blocked" in page.lower()
@@ -95,7 +95,7 @@ def test_a_project_whose_folder_is_gone_does_not_break_the_board(two, client):
     # concerned, and Windows will not delete git's read-only objects.
     two[0].rename(two[0].parent / "toolshed-moved-away")
 
-    page = client.get("/").get_data(as_text=True)
+    page = client.get("/board").get_data(as_text=True)
     found = reading.projects()
 
     assert "Seed labels" in page                       # the other project still shows
@@ -115,7 +115,7 @@ def test_the_board_names_the_stage_each_column_is(two, client):
 def test_a_ticket_links_to_its_own_page(two, client):
     a_ticket(two[0], "Heading colour")
 
-    page = client.get("/").get_data(as_text=True)
+    page = client.get("/board").get_data(as_text=True)
 
     assert "/ticket/toolshed/1" in page
 
@@ -125,7 +125,7 @@ def test_what_needs_her_is_visible_without_scrolling(two, client):
     ticket = a_ticket(two[0], "Heading colour", stage="gates")
     tickets.block(two[0], ticket["id"], "the gates found what needs your decision")
 
-    page = client.get("/").get_data(as_text=True)
+    page = client.get("/board").get_data(as_text=True)
     banner = page.split("</h1>" if "</h1>" in page else "<div class=\"d-flex", 1)[0]
 
     assert "Heading colour" in banner
@@ -134,7 +134,7 @@ def test_what_needs_her_is_visible_without_scrolling(two, client):
 def test_a_stage_with_no_tickets_is_not_a_column(two, client):
     a_ticket(two[0], "Heading colour", stage="gates")
 
-    page = client.get("/").get_data(as_text=True)
+    page = client.get("/board").get_data(as_text=True)
 
     assert "⑤ gates" in page
     assert "⑩ merge" not in page          # nothing is there, so it takes no room

@@ -1,0 +1,26 @@
+{% extends "plain/settings/base.html" %}
+{% block tab %}
+<p class="intro" style="margin-top:0">{{ choices_words.intro }}</p>
+<div class="card">
+  {% for c in page.choices %}
+  <div class="choice">
+    <div class="choice-title">{{ c.title }}</div>
+    <div class="choice-help">{{ c.note }}</div>
+    <form class="seg" method="post" action="{{ url_for('cockpit.settings_choices_change', project=page.project) }}"
+          role="group" aria-label="{{ c.title }}">
+      <input type="hidden" name="{{ token_field }}" value="{{ token() }}">
+      <input type="hidden" name="choice" value="{{ c.key }}">
+      {% for value, label in c.options %}
+      <button type="submit" name="option" value="{{ value }}"
+              class="{% if value == c.current %}on{% endif %}"
+              aria-pressed="{{ 'true' if value == c.current else 'false' }}">{{ label }}</button>
+      {% endfor %}
+    </form>
+    {% if c.current is none %}
+    <div class="own-setting"><strong>{{ choices_words.own }}</strong> - {{ choices_words.own_note }}</div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+<p class="quiet-link"><a href="{{ url_for('cockpit.settings_page', project=page.project) }}">{{ choices_words.everything_else }} ›</a></p>
+{% endblock %}

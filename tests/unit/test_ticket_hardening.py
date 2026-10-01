@@ -45,7 +45,7 @@ def at_review(project: Path) -> dict:
 # --- C1 ----------------------------------------------------------------------
 
 def test_a_pending_mark_that_a_later_push_carried_does_not_fail_doctor(tmp_home: Path,
-                                                                       identity):
+                                                                       identity, publish_automatically):
     remote = tmp_home / "remote.git"
     project = support.new_project(origin=str(remote))
     first = tickets.create(project, title="Offline", words="w", kind="idea")

@@ -76,6 +76,9 @@ def test_it_binds_this_machine_only(monkeypatch, tmp_home: Path, identity, stub_
     monkeypatch.setattr(command, "_serve",
                         lambda app, host, port: seen.update(host=host, port=port))
     monkeypatch.setattr(command, "_open_in_browser", lambda url: None)
+    # The real port may be taken on the machine running the tests - by the owner's
+    # own cockpit, say. What is tested here is where it binds, not what is free.
+    monkeypatch.setattr(command, "_in_use", lambda port: False)
 
     code = cli.main(["cockpit"], ScriptedPrompter({}))
 

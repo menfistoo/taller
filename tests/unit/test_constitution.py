@@ -11,6 +11,7 @@ The invariant numbers are the plan's, task 13.
 
 from __future__ import annotations
 
+import json
 from datetime import date
 from pathlib import Path
 
@@ -291,3 +292,33 @@ def test_non_suppressible_is_append_only_through_chain_1(tmp_home: Path):
     assert constitution.resolve(project)["non_suppressible"] == [
         "brand.hardcoded-color", "constitution.layer-violation",
     ]
+
+
+# --- the snapshot names no machine -------------------------------------------
+
+def test_the_snapshot_names_no_machine(tmp_home: Path):
+    """`resolved.json` is committed to the project, and the project may be public.
+
+    It already left the project's own path out for that reason; the paths of the
+    rule files it was built from name the machine - the home directory, and with it
+    the owner's user name - just as much, and made the snapshot differ from one
+    checkout to the next.
+    """
+    project = support.make_project(slices={"product": "> What this does.\n"})
+
+    written = constitution.render_snapshot(constitution.resolve(project)).decode("utf-8")
+    snapshot = json.loads(written)
+
+    assert str(tmp_home) not in written and str(tmp_home).replace("\\", "\\\\") not in written
+    assert snapshot["slices"]["product"]["sources"] == ["project/.taller/constitution/product.md"]
+    hub_sources = [source for slice_ in snapshot["slices"].values()
+                   for source in slice_["sources"] if source.startswith("hub/")]
+    assert hub_sources and all(source.startswith("hub/modules/") for source in hub_sources)
+
+
+def test_resolving_still_gives_real_paths_for_the_screens_that_edit_them(tmp_home: Path):
+    project = support.make_project(slices={"product": "> What this does.\n"})
+
+    live = constitution.resolve(project)
+
+    assert Path(live["slices"]["product"]["sources"][0]).is_file()

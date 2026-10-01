@@ -1,0 +1,76 @@
+{% extends "plain/settings/base.html" %}
+
+{% macro rule_list(kind, rules, mark, add_label, from_about="") %}
+<div class="card">
+  {% if from_about %}
+  <div class="rule">
+    <span class="rule-mark {{ kind }}">{{ mark }}</span>
+    <div class="rule-text">{{ from_about }}
+      <span class="rule-why"><a href="{{ url_for('cockpit.settings_about', project=page.project) }}">{{ rules_words.from_about }}</a></span>
+    </div>
+  </div>
+  {% endif %}
+  {% for rule in rules %}
+  <div class="rule">
+    <span class="rule-mark {{ kind }}">{{ mark }}</span>
+    <div class="rule-text">
+      {{ rule.text }}
+      {% if rule.why or rule.added_words %}
+      <span class="rule-why">{{ rule.why }}{% if rule.why and rule.added_words %} · {% endif %}{% if rule.added_words %}{{ rules_words.added }} {{ rule.added_words }}{% endif %}</span>
+      {% endif %}
+      <details class="change">
+        <summary>{{ rules_words.remove }}</summary>
+        <form method="post" action="{{ url_for('cockpit.settings_rules_remove', project=page.project) }}">
+          <input type="hidden" name="{{ token_field }}" value="{{ token() }}">
+          <input type="hidden" name="kind" value="{{ kind }}">
+          <input type="hidden" name="index" value="{{ loop.index0 }}">
+          <label class="field">{{ rules_words.remove_why }}</label>
+          <input type="text" name="why">
+          <button class="btn second small" type="submit" style="margin-top:.6rem">{{ rules_words.remove_send }}</button>
+        </form>
+      </details>
+    </div>
+  </div>
+  {% else %}
+  {% if not from_about %}<p class="empty" style="margin-top:0">{{ rules_words.none_always }}</p>{% endif %}
+  {% endfor %}
+  <form class="add" method="post" action="{{ url_for('cockpit.settings_rules_add', project=page.project) }}">
+    <input type="hidden" name="{{ token_field }}" value="{{ token() }}">
+    <input type="hidden" name="kind" value="{{ kind }}">
+    <input type="text" name="text" placeholder="{{ add_label }}" aria-label="{{ add_label }}">
+    <input type="text" name="why" placeholder="{{ rules_words.why }}" aria-label="{{ rules_words.why }}">
+    <button class="btn second" type="submit">{{ rules_words.add }}</button>
+  </form>
+</div>
+{% endmacro %}
+
+{% block tab %}
+<p class="intro" style="margin-top:0">{{ rules_words.intro }}</p>
+
+<h2 class="section">{{ rules_words.always }}</h2>
+{{ rule_list("always", page.always, "✓", rules_words.add_always) }}
+
+<h2 class="section">{{ rules_words.never }}</h2>
+{{ rule_list("never", page.never, "✕", rules_words.add_never, page.never_from_about) }}
+
+{% if page.exceptions %}
+<h2 class="section">{{ rules_words.exceptions }}</h2>
+{% for ex in page.exceptions %}
+<div class="card">
+  <div>{{ ex.what }}</div>
+  {% if ex.why %}<div class="rule-why">{{ ex.why }}</div>{% endif %}
+  {% if ex.until %}<div class="until {% if ex.ran_out %}ran-out{% endif %}">{{ ex.until }}</div>{% endif %}
+</div>
+{% endfor %}
+{% endif %}
+
+{% if page.practice %}
+<h2 class="section">{{ rules_words.taller }}</h2>
+<p class="intro" style="margin-top:-.3rem">{{ rules_words.taller_note }}</p>
+<div class="card">
+  <ul class="practice">
+    {% for line in page.practice %}<li>{{ line }}</li>{% endfor %}
+  </ul>
+</div>
+{% endif %}
+{% endblock %}

@@ -265,7 +265,7 @@ def _github(label: str, repo: Path) -> list[Check]:
     rule = github.protection(remote)
     status = {"green": PASS, "failed": FAIL}.get(ci["state"], SKIP)
     protected = {True: PASS, False: FAIL, None: SKIP}[rule["ok"]]
-    source = scaffold.configured_taller_source()
+    source = scaffold.configured_taller_source(repo)
     return [
         Check(names[0], status, ci["detail"], phase="F",
               fix="Open the run on GitHub and read the annotations on the diff."
@@ -343,7 +343,9 @@ def _tickets(label: str, repo: Path) -> Check:
         return Check(name, FAIL, f"not pushed: {', '.join(unpushed)}", phase="D",
                      fix="Check the remote is reachable; the next ticket command pushes "
                          "everything waiting, and this check then passes.")
-    return Check(name, PASS, f"{len(found)} tickets", phase="D")
+    held = sum(1 for t in found if tickets.effective_sync(repo, t) == "held")
+    detail = f"{len(found)} tickets" + (f"; {held} waiting for you to publish" if held else "")
+    return Check(name, PASS, detail, phase="D")
 
 
 def _on_main(repo: Path, relative: str) -> bytes | None:

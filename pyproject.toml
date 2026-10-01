@@ -22,7 +22,7 @@ include = ["taller*", "cockpit*"]
 
 [tool.setuptools.package-data]
 "taller" = ["catalogue/**/*", "agents/*.md"]
-"cockpit" = ["templates/*.html"]
+"cockpit" = ["templates/**/*.html", "static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

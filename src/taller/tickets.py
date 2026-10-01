@@ -22,7 +22,7 @@ from typing import Any, Mapping
 
 import yaml
 
-from . import gitio, issues, locking, registry
+from . import gitio, issues, locking, publishing, registry
 from .errors import ConfigError
 from .scaffold import flatten
 
@@ -152,7 +152,7 @@ def _parse(raw: bytes | None, where: str, folder: str) -> Ticket:
                                 or not {"reason", "at_stage", "since"} <= set(blocked)):
         problems.append("`blocked` must be empty or give reason, at_stage and since")
     if data.get("sync") not in (None, *gitio.SYNC_STATES):
-        problems.append(f"`sync: {data.get('sync')}` is not ok, local or pending")
+        problems.append(f"`sync: {data.get('sync')}` is not ok, local, pending or held")
     if problems:
         raise ConfigError(f"{where}: " + "; ".join(problems) + ".")
     return data
@@ -192,12 +192,12 @@ def effective_sync(project: Path | str, ticket: Mapping[str, Any]) -> str | None
     ticket's push carries every commit before it. Once `main` is contained in
     what the remote has (the tracking ref a push updates), the mark is stale.
     """
-    if ticket.get("sync") != gitio.SYNC_PENDING:
+    if ticket.get("sync") not in (gitio.SYNC_PENDING, gitio.SYNC_HELD):
         return ticket.get("sync")
     remote_main = f"refs/remotes/{gitio.REMOTE}/{gitio.MAIN_BRANCH}"
     pushed = gitio.git(project, "merge-base", "--is-ancestor", gitio.MAIN_BRANCH,
                        remote_main, check=False).returncode == 0
-    return gitio.SYNC_OK if pushed else gitio.SYNC_PENDING
+    return gitio.SYNC_OK if pushed else ticket["sync"]
 
 
 def _next_id(project: Path | str) -> int:
@@ -215,6 +215,15 @@ def render_status(ticket: Mapping[str, Any]) -> bytes:
 
 def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
+
+
+def _expected_sync(project: Path | str) -> str:
+    """What `sync` will be once this write lands, since status.yml cannot hold the
+    result of its own push: `local` with no remote, `held` while publishing waits
+    for the owner, else `ok` (corrected to `pending` if the push fails)."""
+    if not _has_origin(project):
+        return gitio.SYNC_LOCAL
+    return gitio.SYNC_OK if publishing.automatic(project) else gitio.SYNC_HELD
 
 
 def _has_origin(project: Path | str) -> bool:
@@ -238,7 +247,8 @@ def write(project: Path | str, ticket: Ticket, message: str, *,
     entry = registry.get_project(project)
     with locking.project_lock(entry["name"]):
         folder = ticket_dir(ticket)
-        if retry_issue and ticket.get("issue") is None and ticket["stage"] != "close":
+        if retry_issue and ticket.get("issue") is None and ticket["stage"] != "close" \
+                and publishing.automatic(project):
             number, _ = issues.open_issue(project, {**ticket, "words": _words(project, ticket)})
             if number:
                 ticket["issue"] = number
@@ -249,7 +259,7 @@ def write(project: Path | str, ticket: Ticket, message: str, *,
             notes_path = f"{folder}/notes.md"
             existing = files.get(notes_path) or read_main(project, notes_path) or b""
             files[notes_path] = existing + f"- {_now()} — {note}\n".encode("utf-8")
-        ticket["sync"] = "ok" if _has_origin(project) else "local"
+        ticket["sync"] = _expected_sync(project)
         files[f"{folder}/status.yml"] = render_status(ticket)
         state = gitio.commit_to_main(project, files, message)
         if state == gitio.SYNC_PENDING:
@@ -291,13 +301,16 @@ def create(project: Path | str, *, title: str, words: str, kind: str,
         ticket_md = (f"# {title}\n\n- Kind: {kind}\n- Created: {created}\n\n"
                      f"{WORDS_HEADING}\n\n{body}")
         folder = ticket_dir(ticket)
-        number, reason = issues.open_issue(project, {**ticket, "words": words})
-        ticket["issue"] = number
         note = "created at ① intake"
-        if number:
-            note += f"; GitHub issue #{number}"
-        elif reason:
-            note += f"; GitHub issue not opened ({reason}) - retried at the next move"
+        if publishing.automatic(project):
+            number, reason = issues.open_issue(project, {**ticket, "words": words})
+            ticket["issue"] = number
+            if number:
+                note += f"; GitHub issue #{number}"
+            elif reason:
+                note += f"; GitHub issue not opened ({reason}) - retried at the next move"
+        # Otherwise her words stay here: an issue is publishing, and `taller publish`
+        # opens it along with everything else that waited.
         return write(project, ticket, f"ticket {ticket['id']:04d}: {title}", note=note,
                      extra={f"{folder}/ticket.md": ticket_md.encode("utf-8")},
                      retry_issue=False)
@@ -361,6 +374,8 @@ def _words(project: Path | str, ticket: Mapping[str, Any]) -> str:
 def _close_issue_note(project: Path | str, ticket: Mapping[str, Any]) -> str:
     if not ticket.get("issue"):
         return ""
+    if not publishing.automatic(project):
+        return f"; GitHub issue #{ticket['issue']} is closed when you publish"
     failure = issues.close_issue(project, ticket)
     return (f"; GitHub issue #{ticket['issue']} not closed ({failure})" if failure
             else f"; GitHub issue #{ticket['issue']} closed")

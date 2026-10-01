@@ -121,7 +121,7 @@ def test_a_ticket_is_read_approved_and_carried_on_from_the_browser(at_design, br
     before = head(project)
 
     # ① Reading changes nothing: the board and the page are reads (spec 12).
-    board = client.get("/").get_data(as_text=True)
+    board = client.get("/board").get_data(as_text=True)
     assert "The heading needs the danger colour" in board
     assert "waiting for you at design" in board
     plan_page = client.get("/ticket/toolshed/1").get_data(as_text=True)
@@ -150,7 +150,7 @@ def test_a_ticket_is_read_approved_and_carried_on_from_the_browser(at_design, br
     decide(client, "approve")
     assert tickets.load(project, 1)["stage"] == "pr"
     assert asked[-1][-4:] == ["run", "1", "--path", str(project)]
-    assert tickets._label("pr") in client.get("/").get_data(as_text=True)
+    assert tickets._label("pr") in client.get("/board").get_data(as_text=True)
 
     # Everything the cockpit wrote, the library wrote: the working tree is clean,
     # and the cockpit's own files are the run's output, outside the project.

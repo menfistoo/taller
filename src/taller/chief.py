@@ -24,7 +24,8 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from . import (config, constitution, gates, generated, gitio, globs, inference, locking,
-               models, overrides, prs, registry, roles, spend, tickets)
+               issues, models, overrides, prs, publishing, registry, roles, spend,
+               tickets)
 from .gates import constitution as constitution_gate
 from .gates import diff as gate_diff
 from .gates import llm
@@ -219,7 +220,7 @@ def classify(project: Path | str, ticket_id: int) -> Ticket:
     """① intake: the chief reads the owner's words and names the work (7.6)."""
     project = Path(project)
     cfg = config.load_hub_config()
-    with locking.project_lock(registry.get_project(project)["name"]):
+    with locking.ticket_lock(registry.get_project(project)["name"], ticket_id):
         ticket = tickets.load(project, ticket_id)
         value, result = _ask(
             project, ticket_id, "chief",
@@ -241,7 +242,9 @@ def run(project: Path | str, ticket_id: int, *, lane: str | None = None,
     """Advance until a checkpoint, an unmerged branch, a block, or close."""
     project = Path(project)
     cfg = config.load_hub_config()
-    with locking.project_lock(registry.get_project(project)["name"]):
+    # This ticket's lock, not the project's: every write below takes the project
+    # lock for as long as the write, so she can ask for more meanwhile (7.6).
+    with locking.ticket_lock(registry.get_project(project)["name"], ticket_id):
         while True:
             ticket = tickets.load(project, ticket_id)
             if ticket.get("blocked") or ticket["stage"] == "close":
@@ -333,6 +336,11 @@ def _step(project: Path, ticket: Ticket, lane: str | None, cfg: Mapping[str, Any
                            cfg=cfg, ruleset=ruleset, cwd=tree)
             _commit_ticket_file(tree, ticket, "plan.md", plan["plan_md"],
                                 f"docs(plan): ticket {ticket_id:04d}")
+            # The same plan in the owner's words, for the page where she approves it.
+            # Optional: an older-style answer still stops here, with the full plan.
+            if str(plan.get("summary_md") or "").strip():
+                _commit_ticket_file(tree, ticket, "plan-summary.md", plan["summary_md"],
+                                    f"docs(plan): ticket {ticket_id:04d}, in plain words")
             ticket = tickets.load(project, ticket_id)
             ticket["checkpoints"]["design"] = "pending"
             tickets.write(project, ticket, f"ticket {ticket_id:04d}: plan written",
@@ -389,14 +397,23 @@ def _step(project: Path, ticket: Ticket, lane: str | None, cfg: Mapping[str, Any
                                 summary["summary_md"].rstrip() + "\n"
                                 + _findings_section(project, ticket),
                                 f"docs(review): ticket {ticket_id:04d}")
-            tickets.write(project, tickets.load(project, ticket_id),
-                          f"ticket {ticket_id:04d}: review written",
+            reviewed = tickets.load(project, ticket_id)
+            # Each changed file in the owner's words, for the plain page: "The page's
+            # colours" rather than a path. Optional - a summariser that names none
+            # leaves the page to fall back on each file's own short name.
+            names = summary.get("files")
+            if isinstance(names, dict) and names:
+                reviewed["file_names"] = {str(path): str(words) for path, words in names.items()
+                                          if str(words).strip()}
+            tickets.write(project, reviewed, f"ticket {ticket_id:04d}: review written",
                           note="⑦ summary written; waiting for your review")
         say(f"  Waiting for you: `taller ticket show {ticket_id}`, then approve or reject.")
         return True
 
     if stage == "pr":
         ticket = _pull_request(project, ticket_id, say)
+        if not ticket.get("pr") and _publishing_waits(project):
+            return True                     # pressing Publish opens it
         try:
             tickets.advance(project, ticket_id, note=_MERGE_NOTE)
         except ConfigError as exc:
@@ -618,6 +635,12 @@ def _pull_request(project: Path, ticket_id: int, say: Say) -> Ticket:
     if ticket.get("pr"):
         say(f"  Pull request #{ticket['pr']} is open; waiting for it to be merged.")
         return ticket
+    if _publishing_waits(project):
+        # A pull request pushes the branch and carries her words, the plan and
+        # the verdicts to GitHub: publishing. It opens when she presses Publish.
+        say(f"  Ready to publish. The pull request opens when you publish "
+            f"(`taller publish`, or the Publish button); nothing has left this computer.")
+        return ticket
     number, reason = prs.create(project, ticket)
     if number:
         ticket["pr"] = number
@@ -631,6 +654,12 @@ def _pull_request(project: Path, ticket_id: int, say: Say) -> Ticket:
     say(f"  This project has no GitHub remote, so there is no pull request to open. "
         f"Merge {ticket['branch']} into {gitio.MAIN_BRANCH} yourself, then run this again.")
     return ticket
+
+
+def _publishing_waits(project: Path) -> bool:
+    """True when there is a GitHub repository and the owner has not let Taller
+    publish on its own - so ⑧ must wait for her rather than push the branch."""
+    return issues.repo_of(project) is not None and not publishing.automatic(project)
 
 
 def _dirty(tree: Path) -> set[str]:

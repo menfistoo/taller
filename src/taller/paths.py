@@ -70,6 +70,10 @@ def project_lock(project_name: str) -> Path:
     return run_dir() / "locks" / f"{project_name}.lock"
 
 
+def ticket_lock(project_name: str, ticket_id: int) -> Path:
+    return run_dir() / "locks" / f"{project_name}-{int(ticket_id):04d}.lock"
+
+
 def onboarding(name: str) -> Path:
     return run_dir() / "onboarding" / f"{name}.yml"
 

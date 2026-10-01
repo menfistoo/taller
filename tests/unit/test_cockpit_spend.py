@@ -51,7 +51,7 @@ def spent(project: Path, ticket_id: int, *, weighted: int, model: str = "claude-
     tickets.write(project, ticket, f"ticket {ticket_id:04d}: spend")
 
 
-def two_tickets(project: Path, *, over: int = 500_000, under: int = 1_000) -> None:
+def two_tickets(project: Path, *, over: int = 1_500_000, under: int = 1_000) -> None:
     tickets.create(project, title="A small one", words="Change the heading.", kind="bug")
     tickets.create(project, title="A long one", words="Rework the loans page.",
                    kind="feature")
@@ -67,8 +67,8 @@ def test_each_ticket_shows_its_weighted_tokens_and_where_it_stands(project, clie
 
     assert [row["id"] for row in found["tickets"]] == [2, 1]      # the biggest first
     assert [row["budget"] for row in found["tickets"]] == ["warn", "ok"]
-    assert found["warn_at"] == 400_000 and found["stop_at"] == 1_200_000
-    assert "400,000" in page or "400000" in page
+    assert found["warn_at"] == 1_200_000 and found["stop_at"] == 4_000_000
+    assert "1,200,000" in page or "1200000" in page
     assert "A long one" in page
 
 
@@ -117,7 +117,7 @@ def test_weeks_are_by_the_week_the_ticket_was_opened(project, client):
     found = spending.figures()
 
     assert [week["week"] for week in found["weeks"]] == ["2026-W40", "2026-W39"]
-    assert [week["weighted"] for week in found["weeks"]] == [500_000, 1_000]
+    assert [week["weighted"] for week in found["weeks"]] == [1_500_000, 1_000]
     assert [week["tickets"] for week in found["weeks"]] == [1, 1]
 
 
@@ -131,7 +131,7 @@ def test_every_model_is_totalled_on_its_own(project, client):
 
     assert [row["model"] for row in found["models"]] == ["claude-opus-5",
                                                          "claude-haiku-4-5-20251001"]
-    assert [row["weighted"] for row in found["models"]] == [500_000, 1_000]
+    assert [row["weighted"] for row in found["models"]] == [1_500_000, 1_000]
     assert "claude-haiku-4-5-20251001" in page
 
 
@@ -144,7 +144,7 @@ def test_a_project_that_cannot_be_read_does_not_empty_the_page(project, client, 
     page = client.get("/spend").get_data(as_text=True)
 
     assert [row["id"] for row in found["tickets"]] == [2, 1]
-    assert found["totals"]["weighted"] == 501_000
+    assert found["totals"]["weighted"] == 1_501_000
     assert "boathouse" in page and "cannot be read" in page
 
 
@@ -157,4 +157,4 @@ def test_a_closed_ticket_still_counts(project, client):
     found = spending.figures()
 
     assert [row["id"] for row in found["tickets"]] == [2, 1]
-    assert found["totals"]["weighted"] == 501_000
+    assert found["totals"]["weighted"] == 1_501_000

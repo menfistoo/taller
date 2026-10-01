@@ -62,7 +62,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Mapping
 
 from . import catalogue, config, locking, paths, registry
-from .errors import ConfigError, GitError
+from .errors import ConfigError, GitError, NotOnMain, UncommittedWork
 
 Project = dict[str, Any]
 
@@ -72,7 +72,10 @@ SyncState = str
 SYNC_OK = "ok"
 SYNC_LOCAL = "local"
 SYNC_PENDING = "pending"
-SYNC_STATES = (SYNC_OK, SYNC_LOCAL, SYNC_PENDING)
+# A remote exists and the work is committed here, but the owner has not published
+# it: nothing leaves this machine until she says so (`publish.automatic`, off).
+SYNC_HELD = "held"
+SYNC_STATES = (SYNC_OK, SYNC_LOCAL, SYNC_PENDING, SYNC_HELD)
 
 MAIN_BRANCH = "main"
 REMOTE = "origin"
@@ -170,11 +173,11 @@ def require_clean_main(repo: Path | str, doing: str) -> None:
         raise GitError(f"{repo} is not a git repository, so {doing} has nowhere to commit.")
     branch = _current_branch(repo)
     if branch != MAIN_BRANCH:
-        raise GitError(f"{doing} commits to `{MAIN_BRANCH}`, and {repo} is on "
+        raise NotOnMain(f"{doing} commits to `{MAIN_BRANCH}`, and {repo} is on "
                        f"{branch or 'a detached HEAD'}. Switch to `{MAIN_BRANCH}` first.")
     dirty = _git(repo, "status", "--porcelain", "--untracked-files=no").stdout.strip()
     if dirty:
-        raise GitError(f"{repo} has uncommitted changes. Commit or stash them first, so "
+        raise UncommittedWork(f"{repo} has uncommitted changes. Commit or stash them first, so "
                        f"{doing} is one commit you can review on its own:\n{dirty}")
 
 
@@ -405,6 +408,8 @@ def _commit_in_worktree(entry: Project, payload: Mapping[str, bytes],
 
     if not has_remote:
         return SYNC_LOCAL
+    if not _publishing_on(repo):
+        return SYNC_HELD
     if _push(worktree, "HEAD"):
         return SYNC_OK
     # The remote moved between the fetch and the push. Rebase and retry once.
@@ -454,6 +459,8 @@ def _commit_in_owner_checkout(repo: Path, payload: Mapping[str, bytes],
 
     if not _has_remote(repo):
         return SYNC_LOCAL
+    if not _publishing_on(repo):
+        return SYNC_HELD
     if not _ok(repo, "fetch", "--quiet", REMOTE):
         return SYNC_PENDING
     if _remote_main_exists(repo) and not _ok(
@@ -465,7 +472,60 @@ def _commit_in_owner_checkout(repo: Path, payload: Mapping[str, bytes],
     return SYNC_OK if _push(repo, MAIN_BRANCH) else SYNC_PENDING
 
 
+# --- catching up before publishing -------------------------------------------
+
+CAUGHT_UP, OFFLINE, DIVERGED = "caught up", "offline", "diverged"
+
+
+def catch_up(project: Project | Path | str) -> str:
+    """Bring in what the remote has that `main` lacks, before a held `main` is sent.
+
+    With publishing held, `main` gathers commits that never left; a pull request
+    merged on GitHub meanwhile leaves the two sides apart, and no push will ever
+    be accepted again. Taller replays its own held commits onto the remote's -
+    only its own: if any commit here touches the owner's files, or her checkout
+    is mid-operation or has uncommitted work, it is left for her (DIVERGED).
+    """
+    entry = _project_entry(project)
+    repo = Path(entry["path"])
+    with locking.project_lock(entry["name"]):
+        if not _has_remote(repo):
+            return CAUGHT_UP
+        if not _ok(repo, "fetch", "--quiet", REMOTE):
+            return OFFLINE
+        remote_main = f"{REMOTE}/{MAIN_BRANCH}"
+        if not _remote_main_exists(repo) or _ok(
+                repo, "merge-base", "--is-ancestor", remote_main, f"refs/heads/{MAIN_BRANCH}"):
+            return CAUGHT_UP
+        ours = _git(repo, "diff", "--name-only", f"{remote_main}...refs/heads/{MAIN_BRANCH}",
+                    check=False).stdout.split()
+        if any(not (path.startswith(f"{TALLER_DIR}/") or _on_fixed_list(path))
+               for path in ours):
+            return DIVERGED
+        if _current_branch(repo) == MAIN_BRANCH:
+            if _operation_in_progress(repo) or _git(
+                    repo, "status", "--porcelain", "--untracked-files=no").stdout.strip():
+                return DIVERGED
+            if _ok(repo, "rebase", "--quiet", remote_main):
+                return CAUGHT_UP
+            _git(repo, "rebase", "--abort", check=False)
+            return DIVERGED
+        worktree = ensure_main_worktree(entry)
+        _git(worktree, "checkout", "--quiet", "--detach", "--force", MAIN_BRANCH)
+        start = _rev(repo, f"refs/heads/{MAIN_BRANCH}")
+        if _rebase_onto_remote(worktree, {}) and _ok(
+                repo, "update-ref", f"refs/heads/{MAIN_BRANCH}", _rev(worktree, "HEAD"), start):
+            return CAUGHT_UP
+        return DIVERGED
+
+
 # --- helpers for the two paths ------------------------------------------------
+
+def _publishing_on(repo: Path) -> bool:
+    """`publish.automatic` for this project. Imported here: `publishing` uses gitio."""
+    from . import publishing
+
+    return publishing.automatic(repo)
 
 def _current_branch(repo: Path) -> str | None:
     """The branch the owner's checkout is on, or None when detached."""

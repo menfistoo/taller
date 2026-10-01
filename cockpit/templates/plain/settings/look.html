@@ -1,0 +1,106 @@
+{% extends "plain/settings/base.html" %}
+
+{% macro brand_form(view, new=False) %}
+<form method="post" action="{{ url_for('cockpit.settings_look_save', project=page.project) }}">
+  <input type="hidden" name="{{ token_field }}" value="{{ token() }}">
+  {% if new %}
+  <input type="hidden" name="new" value="1">
+  <label class="field" for="brand-name">{{ look_words.name }}</label>
+  <input type="text" id="brand-name" name="name">
+  {% else %}
+  <input type="hidden" name="slug" value="{{ view.slug }}">
+  {% endif %}
+  <div class="swatch-edit">
+    {% for s in view.swatches %}
+    <label class="swatch-field">
+      {% if s.hex %}<input type="color" name="t:{{ s.field }}" value="{{ s.value }}">
+      {% else %}<input type="text" name="t:{{ s.field }}" value="{{ s.value }}">{% endif %}
+      <span>{{ s.label }}</span>
+    </label>
+    {% endfor %}
+  </div>
+  {% for f in view.fonts %}
+  <label class="field">{{ f.label }}</label>
+  <input type="text" name="t:{{ f.field }}" value="{{ f.family }}">
+  {% endfor %}
+  {% for o in view.other %}<input type="hidden" name="t:{{ o.field }}" value="{{ o.value }}">{% endfor %}
+  <label class="field" for="prose-{{ 'new' if new else view.slug }}">{{ look_words.prose_label }}</label>
+  <textarea id="prose-{{ 'new' if new else view.slug }}" name="prose" rows="3" style="min-height:5.5rem">{{ view.prose or "" }}</textarea>
+  <button class="btn main small" type="submit" style="margin-top:.75rem">{{ look_words.save }}</button>
+</form>
+{% endmacro %}
+
+{% block tab %}
+<p class="intro" style="margin-top:0">{{ look_words.intro }}</p>
+
+{% if page.brand %}
+<div class="card">
+  <div class="project-head"><span class="project-name">{{ page.brand.slug }}</span></div>
+  <div class="swatches">
+    {% for s in page.brand.swatches %}
+    <div class="sw"><i style="background: {{ s.value }}"></i>{{ s.label }}<small>{{ s.value }}</small></div>
+    {% endfor %}
+  </div>
+  {% for f in page.brand.fonts %}
+  <div class="font-sample">
+    <div class="big" style="font-family: {{ f.family }}">{{ page.project }}</div>
+    <div class="font-name">{{ f.label }} — {{ f.name }}</div>
+  </div>
+  {% endfor %}
+  {% if page.brand.prose %}
+  <h3 class="small-title">{{ look_words.in_words }}</h3>
+  <div class="prose">{{ page.brand.prose|prose }}</div>
+  {% endif %}
+  {% if page.shared_with %}
+  <div class="message warn" style="margin:1rem 0 0">
+    {{ look_words.shared.format(others=page.shared_with|join(", "), them="all of them" if page.shared_with|length > 1 else "both") }}
+  </div>
+  {% endif %}
+  <details class="change">
+    <summary>{{ look_words.change }}</summary>
+    {{ brand_form(page.brand) }}
+  </details>
+</div>
+{% else %}
+<div class="card"><p class="empty" style="margin:0">{{ look_words.none }}</p></div>
+{% endif %}
+
+{% if page.choices %}
+<h2 class="section">{{ look_words.use_title }}</h2>
+<p class="intro" style="margin-top:-.3rem">{{ look_words.use_note }}</p>
+<div class="card">
+  {% for slug in page.choices %}
+  {% set view = brand_view(slug) %}
+  <div class="use-row">
+    <div class="mini-swatches">{% for s in view.swatches %}<i style="background: {{ s.value }}"></i>{% endfor %}</div>
+    <form method="post" action="{{ url_for('cockpit.settings_look_use', project=page.project) }}">
+      <input type="hidden" name="{{ token_field }}" value="{{ token() }}">
+      <input type="hidden" name="slug" value="{{ slug }}">
+      <button class="btn second small" type="submit">{{ look_words.use.format(brand=slug) }}</button>
+    </form>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<h2 class="section">{{ look_words.guide_title }}</h2>
+{% if page.proposal %}
+<div class="card needs">
+  <p style="margin-top:0">{{ look_words.proposal }}</p>
+  <div class="swatches">
+    {% for s in page.proposal.swatches %}
+    <div class="sw"><i style="background: {{ s.value }}"></i>{{ s.label }}<small>{{ s.value }}</small></div>
+    {% endfor %}
+  </div>
+  {{ brand_form(page.proposal, new=True) }}
+</div>
+{% else %}
+<form class="drop" method="post" enctype="multipart/form-data"
+      action="{{ url_for('cockpit.settings_look_guide', project=page.project) }}">
+  <input type="hidden" name="{{ token_field }}" value="{{ token() }}">
+  <p style="margin-top:0">{{ look_words.guide }}</p>
+  <input type="file" name="guide" accept=".pdf,.png,.jpg,.jpeg,.css" required>
+  <button class="btn second small" type="submit">{{ look_words.guide_button }}</button>
+</form>
+{% endif %}
+{% endblock %}

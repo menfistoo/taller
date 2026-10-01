@@ -1,0 +1,104 @@
+{% extends "plain/base.html" %}
+{% block title %}{{ page.title }}{% endblock %}
+{% block head %}
+{%- if page.state == "working" %}<meta http-equiv="refresh" content="4">{% endif %}
+{% endblock %}
+{% block top %}
+<a class="back" href="{{ url_for('cockpit.home') }}">‹ {{ thing_words.back }}</a>
+<span class="state {{ page.state }}"><span class="dot {{ page.state }}"></span>{{ page.state_words }}</span>
+{% endblock %}
+{% block content %}
+
+<h1>{{ page.title }}</h1>
+
+<h2>{{ thing_words.asked }}</h2>
+<p class="asked">{{ page.asked }}</p>
+
+{% if page.state == "working" %}
+<div class="card">
+  <span class="state working"><span class="dot working"></span>{{ page.doing }}</span>
+  <p class="hint" style="margin-bottom:0">{{ thing_words.working_note }}</p>
+</div>
+{% endif %}
+
+{% if page.plan_text %}
+<h2>{{ thing_words.its_plan }}</h2>
+<p class="hint" style="margin-top:0">{{ thing_words.plan_intro }}</p>
+<div class="card">
+  <div class="prose">{{ page.plan_text|prose }}</div>
+  {% if page.full_plan %}
+  <p class="link-line"><a href="{{ url_for('cockpit.thing_plan', project=page.project, ticket_id=page.id) }}">{{ thing_words.full_plan }}</a></p>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if page.did %}
+<h2>{{ thing_words.did }}</h2>
+<div class="card">
+  {% if page.did.summary %}<div class="prose">{{ page.did.summary|prose }}</div>{% endif %}
+  {% if page.did.files %}
+  <ul class="files">
+    {% for f in page.did.files %}
+    <li><span>{{ f.name }}</span><span class="counts">
+      {%- if f.added %}+{{ f.added }}{% endif %}{% if f.added and f.removed %} {% endif %}
+      {%- if f.removed %}−{{ f.removed }}{% endif %}</span></li>
+    {% endfor %}
+    {% if page.did.more %}<li class="muted">{{ more_files(page.did.more) }}</li>{% endif %}
+  </ul>
+  {% endif %}
+  {% if page.has_plan %}
+  <p class="link-line"><a href="{{ url_for('cockpit.thing_plan', project=page.project, ticket_id=page.id) }}">{{ thing_words.plan }}</a></p>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if page.look %}
+<h2>{{ group_words.look_stopped if page.state == "stopped" else group_words.look }}</h2>
+{% for said in page.look %}<p class="note"><span class="note-mark">!</span><span>{{ said }}</span></p>{% endfor %}
+{% endif %}
+
+{% if page.small %}
+<h2>{{ group_words.small }}</h2>
+{% for said in page.small %}<p class="note"><span class="note-mark small">·</span><span>{{ said }}</span></p>{% endfor %}
+{% endif %}
+
+{% if page.state == "stopped" %}
+<div class="card stopped-card">
+  <p style="margin-top:0">{{ page.stopped }}</p>
+  <form method="post" action="{{ url_for('cockpit.thing_try_again', project=page.project, ticket_id=page.id) }}">
+    <input type="hidden" name="{{ token_field }}" value="{{ token() }}">
+    <button class="btn main" type="submit">{{ thing_words.try_again }}</button>
+  </form>
+</div>
+{% elif page.decide %}
+<div class="decide">
+  <form method="post" action="{{ url_for('cockpit.thing_yes', project=page.project, ticket_id=page.id) }}">
+    <input type="hidden" name="{{ token_field }}" value="{{ token() }}">
+    <button class="btn main wide" type="submit">{{ thing_words.yes }}</button>
+  </form>
+  <details class="no">
+    <summary class="btn second wide">{{ thing_words.no }}</summary>
+    <form method="post" action="{{ url_for('cockpit.thing_no', project=page.project, ticket_id=page.id) }}">
+      <input type="hidden" name="{{ token_field }}" value="{{ token() }}">
+      <label class="field" for="reason">{{ thing_words.no_label }}</label>
+      <textarea id="reason" name="reason" rows="3" style="min-height:6rem"></textarea>
+      <button class="btn second" type="submit" style="margin-top:.6rem">{{ thing_words.no_send }}</button>
+    </form>
+  </details>
+</div>
+{% elif page.publish %}
+<div class="card needs">
+  <p style="margin:0">{{ thing_words.publish_note }}</p>
+</div>
+{% elif page.after_publish %}
+<div class="card needs">
+  <p style="margin:0">{{ page.after_publish.note }}</p>
+  {% if page.after_publish.url %}
+  <p style="margin:.75rem 0 0"><a class="btn second small" href="{{ page.after_publish.url }}"
+     target="_blank" rel="noopener noreferrer">{{ thing_words.open_on_github }} ›</a></p>
+  {% endif %}
+</div>
+{% endif %}
+
+{% endblock %}
+{% block footer %}<a href="{{ page.detail_url }}">{{ home_words.detail }}</a>{% endblock %}

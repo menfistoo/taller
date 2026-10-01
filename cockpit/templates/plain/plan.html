@@ -1,0 +1,22 @@
+{% extends "plain/base.html" %}
+{% block title %}{{ thing_words.plan_title }} — {{ page.title }}{% endblock %}
+{% block top %}
+<a class="back" href="{{ url_for('cockpit.thing', project=page.project, ticket_id=page.id) }}">‹ {{ page.title }}</a>
+<span></span>
+{% endblock %}
+{% block content %}
+<h1>{{ thing_words.plan_title }}</h1>
+{% if page.summary %}
+<div class="card"><div class="prose">{{ page.summary|prose }}</div></div>
+{% endif %}
+{% if page.plan and page.summary %}
+<details class="builder">
+  <summary>{{ thing_words.builder_plan }}</summary>
+  <div class="card"><div class="prose">{{ page.plan|prose }}</div></div>
+</details>
+{% elif page.plan %}
+<div class="card"><div class="prose">{{ page.plan|prose }}</div></div>
+{% else %}
+<p class="empty">{{ thing_words.no_plan }}</p>
+{% endif %}
+{% endblock %}

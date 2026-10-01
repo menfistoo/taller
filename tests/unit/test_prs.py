@@ -147,7 +147,7 @@ def test_a_created_pull_request_returns_its_number(project, monkeypatch):
 
 # --- the chief at ⑧ -----------------------------------------------------------------
 
-def test_the_chief_opens_it_once_and_then_waits(project, monkeypatch):
+def test_the_chief_opens_it_once_and_then_waits(project, monkeypatch, publish_automatically):
     import subprocess
 
     from taller import chief

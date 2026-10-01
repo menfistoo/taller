@@ -85,3 +85,15 @@ def test_a_new_project_has_the_workflow(home):
     text = (project / WORKFLOW).read_text(encoding="utf-8")
     assert loaded(text)["jobs"]["gates"]["name"] == "taller-ci"
     assert support.git(project, "ls-files", "--", WORKFLOW).strip() == WORKFLOW
+
+
+def test_a_project_can_install_taller_from_its_own_checkout(tmp_home: Path):
+    """Taller managing Taller: its CI should test the Taller being changed, and an
+    install line naming a GitHub account is a line that names someone."""
+    project = support.make_project()
+    support.write(paths.hub_config(), "ci:\n  taller_source: taller @ git+file:///t\n")
+    support.write(project / ".taller" / "taller.yml", "ci:\n  taller_source: \".\"\n")
+
+    assert scaffold.configured_taller_source() == "taller @ git+file:///t"
+    assert scaffold.configured_taller_source(project) == "."
+    assert b'pip install "."' in scaffold.ci_workflow(scaffold.configured_taller_source(project))

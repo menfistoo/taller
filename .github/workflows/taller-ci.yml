@@ -32,7 +32,7 @@ jobs:
           python-version: "3.11"
       - name: Install Taller
         run: |
-          pip install "taller @ git+https://github.com/menfistoo/taller@main"
+          pip install "."
       - name: Install this project's own requirements
         run: |
           for file in requirements.txt requirements-dev.txt; do
@@ -65,7 +65,7 @@ jobs:
           python-version: "3.11"
       - name: Install Taller
         run: |
-          pip install "taller @ git+https://github.com/menfistoo/taller@main"
+          pip install "."
       - name: Say what this push is
         run: |
           if [ -n "${{ github.event.pull_request.base.sha }}" ]; then

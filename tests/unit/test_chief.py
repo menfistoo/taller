@@ -260,3 +260,60 @@ def test_a_stage_that_makes_no_progress_blocks_instead_of_spinning(project: Path
 
     assert ticket["blocked"] and "no progress" in ticket["blocked"]["reason"]
     assert ticket["stage"] == "intake"
+
+
+def test_the_summariser_names_each_changed_file_for_her(project: Path, script):
+    """The plain page says "The page's colours", not `static/css/app.css`: the
+    summariser writes those words, and they are kept on the ticket."""
+    named = {"value": {"summary_md": "The heading now uses the danger token.",
+                       "files": {"static/css/app.css": "The page's colours"}}}
+    script(chief=[CLASSIFY], explorer=[EXPLORE_ONE_STYLE], implementer=[BUILD_ONE_FILE],
+           summariser=[named])
+
+    ticket = chief.run(project, new_ticket(project), say=lambda text: None)
+
+    assert ticket["stage"] == "review"
+    assert ticket["file_names"] == {"static/css/app.css": "The page's colours"}
+
+
+def test_a_summariser_that_names_no_files_is_not_a_failure(project: Path, script):
+    script(chief=[CLASSIFY], explorer=[EXPLORE_ONE_STYLE], implementer=[BUILD_ONE_FILE],
+           summariser=[SUMMARY])
+
+    ticket = chief.run(project, new_ticket(project), say=lambda text: None)
+
+    assert ticket["stage"] == "review" and not ticket["blocked"]
+    assert not ticket.get("file_names")
+
+
+def test_the_plan_comes_with_a_version_for_her(project: Path, script):
+    """Two readers: the part of Taller that builds it, and the owner, who approves
+    it and is not an engineer. One answer carries both."""
+    full = {"value": {**BASE_FACTS, "change_kind": "other"}}
+    both = {"value": {"plan_md": "1. Change app.css.\n2. Check the page renders.",
+                      "summary_md": "The heading will use your brand's red. Nothing else "
+                                    "on the page changes."}}
+    script(chief=[CLASSIFY], explorer=[full], architect=[both])
+
+    ticket = chief.run(project, new_ticket(project), say=lambda text: None)
+
+    assert "Change app.css" in on_branch(project, ticket, "plan.md")
+    assert "your brand's red" in on_branch(project, ticket, "plan-summary.md")
+
+
+def test_a_plan_without_a_version_for_her_still_stops_for_her(project: Path, script):
+    full = {"value": {**BASE_FACTS, "change_kind": "other"}}
+    script(chief=[CLASSIFY], explorer=[full], architect=[PLAN])
+
+    ticket = chief.run(project, new_ticket(project), say=lambda text: None)
+
+    assert ticket["stage"] == "design" and not ticket["blocked"]
+    assert on_branch(project, ticket, "plan-summary.md") is None
+
+
+def test_the_architect_is_told_who_reads_what():
+    from pathlib import Path as _Path
+
+    text = " ".join(_Path("src/taller/agents/architect.md").read_text(encoding="utf-8").split())
+
+    assert "summary_md" in text and "not an engineer" in text

@@ -21,6 +21,10 @@ def tmp_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
     monkeypatch.delenv("CLAUDE_CODE_USE_BEDROCK", raising=False)
     monkeypatch.delenv("CLAUDE_CODE_USE_VERTEX", raising=False)
+    # No runs carried over: the cockpit remembers the processes it started in
+    # memory, and a pretend one from an earlier test would still look alive.
+    from cockpit import runs
+    monkeypatch.setattr(runs, "_children", {})
     return home
 
 
@@ -82,3 +86,17 @@ def identity(monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv(f"GIT_{role}_NAME", "Taller Test")
         monkeypatch.setenv(f"GIT_{role}_EMAIL", "test@example.invalid")
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+
+
+@pytest.fixture
+def publish_automatically(monkeypatch: pytest.MonkeyPatch):
+    """The old behaviour, on purpose: push `main` and open issues on every write.
+
+    Publishing waits for the owner by default (`publish.automatic` is off). The
+    tests of the push and issue machinery itself - spec 7.3's sync states, the
+    retries, `pending` - ask for it this way, because that machinery still runs
+    for anyone who turns the setting on.
+    """
+    from taller import publishing
+
+    monkeypatch.setattr(publishing, "automatic", lambda project=None: True)

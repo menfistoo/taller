@@ -82,8 +82,8 @@ def test_fold_on_api_with_an_unpriced_model_is_partial(project: Path):
     assert block["partial"] is True and block["cost"] == 0.0
 
 
-@pytest.mark.parametrize("weighted, verdict", [(399_999, "ok"), (400_000, "warn"),
-                                               (1_199_999, "warn"), (1_200_000, "stop")])
+@pytest.mark.parametrize("weighted, verdict", [(1_199_999, "ok"), (1_200_000, "warn"),
+                                               (3_999_999, "warn"), (4_000_000, "stop")])
 def test_budget_thresholds(tmp_home: Path, weighted: int, verdict: str):
     ticket = {"spend": {"weighted_tokens": weighted}}
 

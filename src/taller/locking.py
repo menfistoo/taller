@@ -217,6 +217,23 @@ def project_lock(project_name: str, timeout: float = DEFAULT_TIMEOUT):
     return file_lock(paths.project_lock(project_name), timeout)
 
 
+def ticket_lock(project_name: str, ticket_id: int, timeout: float = DEFAULT_TIMEOUT):
+    """One ticket, for the whole of a chief run (spec 7.6): two processes must not
+    drive the same chief conversation. Only that ticket - asking for something
+    else, or changing the project, waits for the project lock's short writes."""
+    return file_lock(paths.ticket_lock(project_name, ticket_id), timeout)
+
+
+def driven(project_name: str, ticket_id: int) -> bool:
+    """True while some live process holds this ticket's lock. Reads only."""
+    lock = paths.ticket_lock(project_name, ticket_id)
+    try:
+        raw = lock.read_text(encoding="ascii").strip()
+    except (OSError, UnicodeDecodeError):
+        return False
+    return raw.isdigit() and _pid_alive(int(raw))
+
+
 def atomic_write(target: Path | str, data: bytes) -> None:
     """Write via a temporary file in the same directory, then os.replace.
 

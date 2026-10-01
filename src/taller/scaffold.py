@@ -25,7 +25,8 @@ from typing import Any, Mapping
 
 import yaml
 
-from . import brands, catalogue, config, generated, gitio, hub, paths, registry
+from . import (brands, catalogue, config, generated, gitio, hub, locking, own_rules, paths,
+               registry)
 from .errors import ConfigError
 
 # The facts a manifest may test, with their values. Closed on purpose: a typo in
@@ -80,9 +81,16 @@ class CreateReport:
 
 # --- render ------------------------------------------------------------------
 
-def configured_taller_source() -> str:
-    """`ci.taller_source` from the hub. Empty when she has not set it (spec 9.4)."""
+def configured_taller_source(project: Path | str | None = None) -> str:
+    """`ci.taller_source`: the hub's, unless the project sets its own. Empty when
+    neither does (spec 9.4).
+
+    A project's own value is for the one project whose CI should install the
+    Taller in its checkout - Taller itself - rather than one fetched by name.
+    """
     ci = config.load_hub_config().get("ci") or {}
+    if project is not None:
+        ci = {**ci, **(config.read_project_config(Path(project)).get("ci") or {})}
     return str(ci.get("taller_source") or "")
 
 
@@ -396,9 +404,13 @@ BRIEF_YML = ".taller/brief.yml"
 PROJECT_CONFIG = ".taller/taller.yml"
 
 
-def product_md(name: str, answers: Mapping[str, Any]) -> bytes:
-    """The product slice, from answers 1, 3-8 and 11. Validated answers only."""
-    return "\n".join([
+def product_md(name: str, answers: Mapping[str, Any], existing: str | None = None) -> bytes:
+    """The product slice, from answers 1, 3-8 and 11. Validated answers only.
+
+    `existing` is the file as it stands: her own rules in it are carried over,
+    because the answers write everything else and must never write over those.
+    """
+    return ("\n".join([
         f"> {_cap(answers['what_it_does'], SUMMARY_MAX)}",
         "",
         f"# {name}",
@@ -425,12 +437,13 @@ def product_md(name: str, answers: Mapping[str, Any]) -> bytes:
         "",
         DEPLOY_LABEL[answers["deploy"]],
         "",
-    ]).encode("utf-8")
+    ]) + own_rules.carry_over(existing)).encode("utf-8")
 
 
-def never_md(answers: Mapping[str, Any]) -> bytes:
-    """The project's own prohibitions, appended to the hub's (answer 2)."""
-    return "\n".join([
+def never_md(answers: Mapping[str, Any], existing: str | None = None) -> bytes:
+    """The project's own prohibitions, appended to the hub's (answer 2) - with her own
+    `never` rules carried over from `existing`."""
+    return ("\n".join([
         "## This project",
         "",
         "It deliberately does not do the following. Work that would make it do so",
@@ -438,7 +451,53 @@ def never_md(answers: Mapping[str, Any]) -> bytes:
         "",
         f"- {answers['what_it_is_not']}",
         "",
-    ]).encode("utf-8")
+    ]) + own_rules.carry_over(existing)).encode("utf-8")
+
+
+def amend_brief(project: Path | str, name: str, answers: Mapping[str, Any],
+                changed: list[str]) -> str:
+    """Write changed answers as one amendment, and refresh what they reach.
+
+    The one path for `taller project brief` and the cockpit's About page alike:
+    `brief.yml`, then the product and never files written from the answers with
+    the owner's own rules carried over, one commit, the snapshot refreshed.
+    Returns the sync state.
+    """
+    project = Path(project)
+    clean = validate_answers(answers)
+    numbers = " ".join(q.number for q in _questions() if q.key in changed)
+    # The whole amendment under the project lock: its commit is in her checkout,
+    # where the chief also commits, and a refresh after a refused lock would leave
+    # the answers changed and the snapshot not.
+    with locking.project_lock(registry.get_project(project)["name"]):
+        gitio.require_clean_main(project, "changing what the project is")
+        return _amend(project, name, answers, clean, numbers, changed)
+
+
+def _amend(project: Path, name: str, answers: Mapping[str, Any], clean: Mapping[str, Any],
+           numbers: str, changed: list[str]) -> str:
+    files = {
+        PRODUCT_MD: product_md(name, clean, existing=_text(project / PRODUCT_MD)),
+        NEVER_MD: never_md(clean, existing=_text(project / NEVER_MD)),
+        BRIEF_YML: brief_yml(clean, profile=answers["profile"], brand=answers.get("brand")),
+    }
+    if "first_version" in changed:
+        files[QUEUE_YML] = queue_yml(clean)
+    for relative, data in files.items():
+        (project / relative).write_bytes(data)
+    gitio.git(project, "add", "--", *files)
+    gitio.git(project, "commit", "--quiet", "-m", f"amend: brief ({numbers})")
+    return generated.refresh(project)
+
+
+def _text(path: Path) -> str | None:
+    return path.read_text(encoding="utf-8") if path.is_file() else None
+
+
+def _questions() -> tuple:
+    from . import onboarding                  # onboarding imports this module
+
+    return onboarding.QUESTIONS
 
 
 def queue_yml(answers: Mapping[str, Any]) -> bytes:

@@ -194,20 +194,7 @@ def brief(args: Any, prompter: Prompter) -> int:
         prompter.say("Nothing was written.")
         return 1
 
-    clean = scaffold.validate_answers(answers)
-    files = {
-        scaffold.PRODUCT_MD: scaffold.product_md(name, clean),
-        scaffold.NEVER_MD: scaffold.never_md(clean),
-        scaffold.BRIEF_YML: scaffold.brief_yml(clean, profile=answers["profile"],
-                                               brand=answers.get("brand")),
-    }
-    if any(q.key == "first_version" for q in changed):
-        files[scaffold.QUEUE_YML] = scaffold.queue_yml(clean)
-    for relative, data in files.items():
-        (project / relative).write_bytes(data)
-    gitio.git(project, "add", "--", *files)
-    gitio.git(project, "commit", "--quiet", "-m", f"amend: brief ({marks})")
-    sync = generated.refresh(project)
+    sync = scaffold.amend_brief(project, name, answers, [q.key for q in changed])
     prompter.say(f"Amended {name} ({marks}); the constitution is current (sync: {sync}).")
     return 0
 

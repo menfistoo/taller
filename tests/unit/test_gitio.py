@@ -23,6 +23,11 @@ import support
 from taller import gitio, locking, paths
 from taller.errors import GitError
 
+
+# The push and issue machinery itself: it runs for anyone who turns
+# `publish.automatic` on, so these tests turn it on (it ships off).
+pytestmark = pytest.mark.usefixtures("publish_automatically")
+
 IDENTITY = [
     "-c", "user.name=Taller Test",
     "-c", "user.email=test@example.invalid",

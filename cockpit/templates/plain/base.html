@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Taller{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='plain.css') }}">
+  {% block head %}{% endblock %}
+</head>
+<body>
+<header class="top">
+  {% block top %}
+  <a class="wordmark" href="{{ url_for('cockpit.home') }}">Taller</a>
+  <a class="btn main small" href="{{ url_for('cockpit.ask_page') }}">{{ home_words.ask }}</a>
+  {% endblock %}
+</header>
+<main>
+  {% for message in get_flashed_messages() %}
+  <div class="message warn">{{ message }}</div>
+  {% endfor %}
+  {% block content %}{% endblock %}
+</main>
+<footer>
+  {% block footer %}<a href="{{ url_for('cockpit.board') }}">{{ home_words.detail }}</a>{% endblock %}
+</footer>
+<!-- Every form carries this, and every write checks it: a page on another site
+     must not be able to make this one act. -->
+<form hidden><input type="hidden" name="{{ token_field }}" value="{{ token() }}"></form>
+</body>
+</html>

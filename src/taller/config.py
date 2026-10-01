@@ -70,7 +70,13 @@ SHIPPED_DEFAULTS: HubConfig = {
         "claude-haiku-4-5": {"input": 1.00, "output": 5.00},
         "claude-fable-5-1": {"input": 10.00, "output": 50.00},
     },
-    "budget": {"per_ticket_warn": 400_000, "per_ticket_stop": 1_200_000},
+    # Provisional: "Normal" on the Choices page. 400k was set before any real ticket
+    # ran, and Taller's own first ticket crossed it just writing a plan. Revisit
+    # once ten real tickets are recorded.
+    "budget": {"per_ticket_warn": 1_200_000, "per_ticket_stop": 4_000_000},
+    # Nothing of the owner's leaves this machine until she says so: no push of
+    # `main`, no GitHub issue. `taller publish` sends what waited.
+    "publish": {"automatic": False},
     "thresholds": {
         "max_file_lines": 800,
         "max_function_lines": 80,

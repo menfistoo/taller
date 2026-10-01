@@ -126,6 +126,10 @@ def build_parser() -> argparse.ArgumentParser:
     cockpit_parser.add_argument("--no-open", action="store_true",
                                 help="do not open a browser window")
 
+    publish_parser = verbs.add_parser("publish", help="send what waited: nothing leaves this "
+                                                      "machine until you do this")
+    publish_parser.add_argument("--path", help="the project (default: the one you are in)")
+
     stage_parser = verbs.add_parser("stage", help="bring a full ticket up on staging, on a "
                                                   "copy of the data")
     stage_parser.add_argument("id", type=int, help="the ticket's number")
@@ -190,6 +194,7 @@ def _handler(args: argparse.Namespace) -> Handler:
     from .commands import github as github_command
     from .commands import cockpit as cockpit_command
     from .commands import stage as stage_command
+    from .commands import publish as publish_command
 
     table: dict[tuple[str, str | None], Handler] = {
         ("setup", None): setup.run,
@@ -216,6 +221,7 @@ def _handler(args: argparse.Namespace) -> Handler:
         ("models", "probe"): models.probe,
         ("ci", None): lambda args, prompter: (ci.mode if args.mode else ci.run)(args, prompter),
         ("stage", None): stage_command.run,
+        ("publish", None): publish_command.run,
         ("cockpit", None): cockpit_command.run,
         ("github", "status"): github_command.status,
         ("github", "protect"): github_command.protect,

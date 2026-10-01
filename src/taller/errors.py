@@ -21,5 +21,13 @@ class GitError(TallerError):
     """A git operation failed."""
 
 
+class NotOnMain(GitError):
+    """The owner's checkout is on another branch, so `main` is not Taller's to write."""
+
+
+class UncommittedWork(GitError):
+    """The owner's checkout has changes nobody has committed; Taller leaves them be."""
+
+
 class DoctorFailure(TallerError):
     """A doctor check failed."""
