@@ -5,7 +5,9 @@ store: `fold` merges a dispatch's records into `spend.by_model` at completion,
 under the project lock, so there is no separate log for records to be lost from.
 
 `by_model` is keyed by the model id the run reported, never an alias, so the
-record stays truthful when an alias is remapped or a fallback fires. A resumed
+record stays truthful when an alias is remapped or a fallback fires. `by_role`
+beside it says which job used it; a ticket recorded before it existed has none,
+and never gets one partway. A resumed
 session's `cost_usd` is the whole conversation's running total - summing it
 across the chief's stages would multiply the chief's spend - so it is ignored;
 cost, when there is one, is computed from usage. Spend is never estimated: a
@@ -36,16 +38,31 @@ def weighted(by_model: Mapping[str, Mapping[str, int]], weights: Mapping[str, fl
 
 
 def fold(project: Path | str, ticket_id: int, result: inference.Result,
-         cfg: Mapping[str, Any]) -> dict[str, Any]:
-    """Add one dispatch's usage to the ticket and return the new spend block."""
+         cfg: Mapping[str, Any], *, role: str | None = None) -> dict[str, Any]:
+    """Add one dispatch's usage to the ticket and return the new spend block.
+
+    `role` - the job that dispatched - also counts the usage under `by_role`,
+    unless the ticket already had usage recorded without one.
+    """
     with locking.project_lock(registry.get_project(project)["name"]):
         ticket = tickets.load(project, ticket_id)
         block = dict(ticket.get("spend") or {})
         by_model = {model: dict(tokens) for model, tokens in (block.get("by_model") or {}).items()}
+        counted_by_role = "by_role" in block or not by_model
+        by_role = {name: dict(tokens) for name, tokens in (block.get("by_role") or {}).items()}
         for record in result.usage:
             tokens = by_model.setdefault(record.model, {field: 0 for field in FIELDS})
             for field in FIELDS:
                 tokens[field] = tokens.get(field, 0) + int(getattr(record, field, 0) or 0)
+            if role and counted_by_role:
+                job = by_role.setdefault(role, {field: 0 for field in FIELDS})
+                for field in FIELDS:
+                    job[field] = job.get(field, 0) + int(getattr(record, field, 0) or 0)
+        if role and counted_by_role and result.usage:
+            block["by_role"] = by_role
+        if role and result.usage:
+            # The model that did this job most recently, as the run reported it.
+            block["ran"] = {**(block.get("ran") or {}), role: result.usage[-1].model}
         partial = bool(block.get("partial")) or (result.ok and not result.usage)
         # Taller's own dispatches: their transcripts must not be counted again.
         sessions = list(block.get("sessions") or [])

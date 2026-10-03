@@ -59,7 +59,8 @@ def create_app(*, testing: bool = False) -> Flask:
                                  ask_words=words.ASK, publish_words=words.PUBLISH,
                                  about_words=words.ABOUT, tabs=words.TABS,
                                  rules_words=words.RULES, look_words=words.LOOK,
-                                 choices_words=words.CHOICES,
+                                 choices_words=words.CHOICES, usage_words=words.USAGE,
+                                 services_words=words.SERVICES,
                                  view_functions=app.view_functions,
                                  more_files=words.more_files)
     return app

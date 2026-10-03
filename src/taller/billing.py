@@ -8,6 +8,7 @@ price table ships dated, and its age is reported rather than trusted.
 
 from __future__ import annotations
 
+import re
 from datetime import date
 from typing import Any, Mapping
 
@@ -48,17 +49,31 @@ def cost(by_model: Mapping[str, Mapping[str, int]], cfg: Mapping[str, Any]
     weights = cfg.get("weights") or {}
     total, partial = 0.0, False
     for model, tokens in by_model.items():
-        price = pricing.get(model)
-        if not isinstance(price, Mapping):
+        price = price_of(model, pricing)
+        if price is None:
             partial = True
             continue
         per_input = float(price.get("input", 0)) / 1_000_000
         per_output = float(price.get("output", 0)) / 1_000_000
+        per_read = float(price["cache_read"]) / 1_000_000 if "cache_read" in price \
+            else per_input * float(weights.get("cache_read", 0.1))
         total += tokens.get("input", 0) * per_input
         total += tokens.get("cache_write", 0) * per_input * float(weights.get("cache_write", 1.25))
-        total += tokens.get("cache_read", 0) * per_input * float(weights.get("cache_read", 0.1))
+        total += tokens.get("cache_read", 0) * per_read
         total += tokens.get("output", 0) * per_output
     return round(total, 4), partial
+
+
+_DATED = re.compile(r"-\d{8}$")
+
+
+def price_of(model: str, pricing: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    """A model's price, or None. A dated id (`claude-haiku-4-5-20251001`) is the
+    same model as its undated name, which is how the table lists it."""
+    price = pricing.get(model)
+    if not isinstance(price, Mapping):
+        price = pricing.get(_DATED.sub("", model))
+    return price if isinstance(price, Mapping) else None
 
 
 def pricing_age_days(cfg: Mapping[str, Any], today: date) -> int | None:

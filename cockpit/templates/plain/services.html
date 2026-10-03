@@ -1,0 +1,119 @@
+{% extends "plain/base.html" %}
+{% block title %}{{ services_words.title }}{% endblock %}
+{% block top %}
+<a class="back" href="{{ url_for('cockpit.home') }}">‹ {{ thing_words.back }}</a>
+<span></span>
+{% endblock %}
+{% block content %}
+<h1>{{ services_words.title }}</h1>
+<p class="intro">{{ services_words.intro }}</p>
+
+{% if page.projects %}
+<form class="for-project" method="get" action="{{ url_for('cockpit.services_page') }}">
+  <label for="for-project">{{ services_words.for_project }}</label>
+  <select id="for-project" name="project" onchange="this.form.submit()">
+    {% for name in page.projects %}<option value="{{ name }}" {% if name == page.project %}selected{% endif %}>{{ name }}</option>{% endfor %}
+  </select>
+  <noscript><button class="btn second small" type="submit">{{ services_words.show }}</button></noscript>
+</form>
+{% if page.ready %}<p class="help">{{ services_words.learn_note }}</p>{% endif %}
+{% endif %}
+{% if not page.ready %}<div class="message warn">{{ services_words.not_ready }}</div>{% endif %}
+
+{% if page.problem %}<div class="message warn">{{ page.problem }}</div>{% endif %}
+
+{% for group in page.groups %}
+{% if group.shown or group.sign_in or group.folded %}
+<h2 class="section">{{ group.title }}</h2>
+<div class="card">
+  {% for service in group.shown %}
+  <div class="service">
+    <div class="service-head"><span class="job-name">{{ service.name }}</span>
+      <span class="state ok">{{ service.state_words }}</span></div>
+    {% if page.project and page.ready %}
+    <form class="seg" method="post" action="{{ url_for('cockpit.services_level') }}"
+          role="group" aria-label="{{ service.name }}">
+      <input type="hidden" name="{{ token_field }}" value="{{ token() }}">
+      <input type="hidden" name="project" value="{{ page.project }}">
+      <input type="hidden" name="service" value="{{ service.prefix }}">
+      {% for value, label in services_words.levels.items() %}
+      <button type="submit" name="level" value="{{ value }}" class="{% if value == service.level %}on{% endif %}"
+              aria-pressed="{{ 'true' if value == service.level else 'false' }}">{{ label }}</button>
+      {% endfor %}
+    </form>
+    {% if service.level != "off" %}<div class="help">{{ services_words.level_notes[service.level] }}</div>{% endif %}
+    {% endif %}
+  </div>
+  {% endfor %}
+  {% if group.sign_in %}
+  <div class="service folded"><a href="https://claude.ai/settings/connectors" target="_blank" rel="noopener noreferrer">{{ group.sign_in }} — {{ services_words.needs_sign_in }} ›</a></div>
+  {% endif %}
+  {% if group.folded %}
+  <details class="service folded">
+    <summary>{{ services_words.more.format(count=group.folded|length) }}</summary>
+    {% for service in group.folded %}<div class="folded-row">{{ service.name }} <span class="state">{{ service.state_words }}</span></div>{% endfor %}
+  </details>
+  {% endif %}
+</div>
+{% endif %}
+{% endfor %}
+
+<h2 class="section">{{ services_words.notify_title }}</h2>
+<div class="card">
+  {% if page.notify.problem %}<div class="message warn" style="margin-top:0">{{ services_words.notify_problem }} {{ page.notify.problem }}</div>{% endif %}
+  {% if not page.ready %}
+  <p class="help" style="margin:0">{{ services_words.not_ready }}</p>
+  {% else %}
+  <form method="post" action="{{ url_for('cockpit.services_notify') }}" class="notify">
+    <input type="hidden" name="{{ token_field }}" value="{{ token() }}">
+    <label class="pick"><input type="radio" name="channel" value="" {% if not page.notify.channel %}checked{% endif %}> {{ services_words.notify_off }}</label>
+    {% for value, label in services_words.notify_channels.items() %}
+    <label class="pick"><input type="radio" name="channel" value="{{ value }}" {% if page.notify.channel == value %}checked{% endif %}> {{ label }}</label>
+    {% endfor %}
+    <div class="ticks">
+      {% for value, label in services_words.notify_when.items() %}
+      <label class="pick small"><input type="checkbox" name="when" value="{{ value }}" {% if value in page.notify.when %}checked{% endif %}> {{ label }}</label>
+      {% endfor %}
+    </div>
+    <div class="help">{{ services_words.notify_preview }}: {{ page.notify.example }}</div>
+    <div class="help">{{ services_words.notify_never }}</div>
+    <button class="btn second small" type="submit" style="margin-top:.75rem">{{ services_words.notify_save }}</button>
+  </form>
+  {% endif %}
+</div>
+
+<h2 class="section">{{ services_words.add_title }}</h2>
+<div class="card">
+  <form class="search" method="get" action="{{ url_for('cockpit.services_search') }}">
+    <input type="hidden" name="project" value="{{ page.project }}">
+    <label class="field" for="q">{{ services_words.search_label }}</label>
+    <div class="search-row">
+      <input id="q" type="search" name="q" value="{{ page.query }}">
+      <button class="btn second small" type="submit">{{ services_words.search }}</button>
+    </div>
+  </form>
+  {% if page.search %}
+    {% if page.search.problem %}<p class="empty">{{ page.search.problem }}</p>{% endif %}
+    {% if page.search.known %}<h3 class="small-title">{{ services_words.known }}</h3>{% endif %}
+    {% for entry in page.search.known %}{{ found(entry) }}{% endfor %}
+    {% if page.search.others %}<h3 class="small-title">{{ services_words.others }}</h3>{% endif %}
+    {% for entry in page.search.others %}{{ found(entry) }}{% endfor %}
+    {% if not page.search.problem and not page.search.known and not page.search.others %}
+    <p class="empty">{{ services_words.nothing_found }}</p>{% endif %}
+  {% endif %}
+  <p class="help" style="margin-top:1rem">{{ services_words.account_add }}
+    <a href="https://claude.ai/settings/connectors" target="_blank" rel="noopener noreferrer">{{ services_words.open_claude }} ›</a></p>
+</div>
+{% endblock %}
+
+{% macro found(entry) %}
+<div class="use-row">
+  <div><div class="job-name">{{ entry.title }}</div>
+    <div class="help">{{ services_words.by.format(maker=entry.maker) }}</div></div>
+  <form method="post" action="{{ url_for('cockpit.services_add') }}">
+    <input type="hidden" name="{{ token_field }}" value="{{ token() }}">
+    <input type="hidden" name="name" value="{{ entry.name }}">
+    <button class="btn second small" type="submit">{{ services_words.add }}</button>
+  </form>
+</div>
+{% endmacro %}

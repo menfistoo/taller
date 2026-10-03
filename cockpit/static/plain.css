@@ -277,3 +277,46 @@ form.seg button.on { background: var(--ink); color: var(--paper); font-weight: 6
 .own-setting { font-size: .875rem; color: var(--muted); margin-top: .45rem; }
 .quiet-link { font-size: .9375rem; margin-top: 1.2rem; }
 .quiet-link a { color: var(--muted); }
+
+/* --- what it uses --- */
+footer { display: flex; flex-wrap: wrap; gap: 1.25rem; }
+.job { display: grid; grid-template-columns: 1fr auto; column-gap: 1rem; align-items: baseline; padding: .65rem 0; border-top: 1px solid var(--line); }
+.job:first-child { border-top: 0; padding-top: .1rem; }
+.job-name { font-weight: 560; }
+.model { text-align: right; font-size: .9375rem; white-space: nowrap; }
+.model small { display: block; color: var(--muted); font-size: .8125rem; }
+.help { color: var(--muted); font-size: .875rem; }
+.choice-row { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: .7rem 0; border-top: 1px solid var(--line); }
+.choice-row:first-child { border-top: 0; padding-top: .1rem; }
+.switch-form { margin: 0; flex: none; }
+button.switch { width: 46px; height: 28px; min-height: 0; border-radius: 999px; border: 0; background: var(--line); position: relative; cursor: pointer; padding: 0; }
+button.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.2); transition: left .15s; }
+button.switch.on { background: var(--ink); }
+button.switch.on::after { left: 21px; }
+button.switch:focus-visible { outline: 2px solid var(--working); outline-offset: 2px; }
+.thing-use { padding: .7rem 0; border-top: 1px solid var(--line); }
+.thing-use:first-child { border-top: 0; padding-top: .1rem; }
+.thing-head { display: flex; justify-content: space-between; gap: 1rem; align-items: baseline; }
+.thing-title { font-weight: 560; }
+.flag { font-size: .8125rem; color: var(--needs-you); white-space: nowrap; }
+.bar { height: 8px; border-radius: 999px; background: var(--line); margin: .45rem 0 .3rem; overflow: hidden; }
+.bar i { display: block; height: 100%; border-radius: 999px; background: var(--muted); }
+.bar.more i { background: var(--needs-you); }
+.where { font-size: .875rem; color: var(--muted); }
+
+/* --- connected services --- */
+.for-project { display: flex; align-items: center; gap: .6rem; margin: 0 0 .4rem; }
+.for-project select { font: inherit; padding: .35rem .6rem; border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: var(--ink); }
+.service { padding: .75rem 0; border-top: 1px solid var(--line); }
+.service:first-child { border-top: 0; padding-top: .1rem; }
+.service-head { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; }
+.state { font-size: .8125rem; color: var(--muted); white-space: nowrap; }
+.state.ok { color: var(--ink); }
+.service.folded a, .service.folded summary { color: var(--muted); font-size: .9375rem; cursor: pointer; }
+.folded-row { display: flex; justify-content: space-between; gap: 1rem; padding: .35rem 0 0; font-size: .9375rem; }
+.search-row { display: flex; gap: .5rem; }
+.search-row input { flex: 1; min-width: 0; }
+
+.notify .pick { display: flex; align-items: center; gap: .5rem; padding: .35rem 0; }
+.notify .pick.small { font-size: .9375rem; color: var(--muted); }
+.notify .ticks { display: flex; flex-wrap: wrap; gap: 1rem; margin: .4rem 0 .6rem 1.6rem; }

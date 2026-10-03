@@ -1,0 +1,23 @@
+{% extends "plain/base.html" %}
+{% block title %}{{ services_words.title }}{% endblock %}
+{% block top %}
+<a class="back" href="{{ url_for('cockpit.services_page') }}">‹ {{ services_words.title }}</a>
+<span></span>
+{% endblock %}
+{% block content %}
+<h1>{{ services_words.confirm_title.format(title=entry.title) }}</h1>
+<div class="card needs">
+  <p style="margin-top:0">{{ services_words.by.format(maker=entry.maker) }}{% if not entry.known %} — {{ services_words.unknown_maker }}{% endif %}</p>
+  {% if entry.description %}<p class="help">{{ entry.description }}</p>{% endif %}
+  <p>{{ services_words.confirm }}</p>
+  <p>{{ services_words.reaches_all }}</p>
+  {% if entry.package and not entry.url %}<p>{{ services_words.will_run.format(package=entry.package) }}</p>{% endif %}
+  <form method="post" action="{{ url_for('cockpit.services_add') }}">
+    <input type="hidden" name="{{ token_field }}" value="{{ token() }}">
+    <input type="hidden" name="name" value="{{ entry.name }}">
+    <input type="hidden" name="confirmed" value="1">
+    <button class="btn main" type="submit">{{ services_words.confirm_add }}</button>
+    <a class="btn second" href="{{ url_for('cockpit.services_page') }}">{{ services_words.cancel }}</a>
+  </form>
+</div>
+{% endblock %}

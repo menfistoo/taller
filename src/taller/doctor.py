@@ -41,8 +41,8 @@ class Check:
 
 
 def run_checks(*, live: bool = False) -> list[Check]:
-    checks = [_cli(), _dispatch(live), _models(), _billing(), *_profiles(), _locks(),
-              _registry()]
+    checks = [_cli(), _dispatch(live), _models(), _billing(), _priced(), *_profiles(),
+              _locks(), _registry()]
     try:
         projects = registry.list_projects()
     except TallerError:
@@ -149,6 +149,30 @@ def _billing() -> Check:
     if billing.mode(cfg) == "api" and age is not None and age > 90:
         detail += f"; the price table is {age} days old (advisory: costs use it anyway)"
     return Check(name, PASS, detail, phase="B")
+
+
+def _priced() -> Check:
+    """Every model that has run is in the price list. Advisory: on a subscription
+    nothing is priced, and on API billing an unpriced model makes a cost partial."""
+    from . import billing, tickets
+
+    name = "every model that has run is in the price list"
+    pricing = config.load_hub_config().get("pricing") or {}
+    missing: set[str] = set()
+    for entry in registry.list_projects():
+        try:
+            found, _ = tickets.list_tickets(Path(entry["path"]))
+        except (TallerError, OSError):
+            continue
+        for ticket in found:
+            for model in ((ticket.get("spend") or {}).get("by_model") or {}):
+                if billing.price_of(model, pricing) is None:
+                    missing.add(model)
+    if not missing:
+        return Check(name, PASS, "", phase="B")
+    return Check(name, PASS, f"not priced: {', '.join(sorted(missing))} - this only matters "
+                             f"on API billing, where their cost is left out of the figures",
+                 phase="B")
 
 
 def _profiles() -> list[Check]:

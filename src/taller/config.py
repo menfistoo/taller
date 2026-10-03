@@ -22,6 +22,10 @@ from .errors import ConfigError
 
 HubConfig = dict[str, Any]
 
+# Maps whose keys are hers to name - a service per project - so a key no layer
+# has yet is a new entry, not a typo.
+OPEN_MAPS = {"services"}
+
 # Lists normally replace on merge. This one appends, at every level.
 APPEND_ONLY_LIST_PATHS = {
     ("paths", "security_sensitive"),
@@ -47,6 +51,7 @@ SHIPPED_DEFAULTS: HubConfig = {
         "explorer": "cheap",
         "scribe": "cheap",
         "summariser": "cheap",
+        "notifier": "cheap",
     },
     "effort": {
         "chief": "low",
@@ -63,12 +68,17 @@ SHIPPED_DEFAULTS: HubConfig = {
     "billing": {"mode": None}, # detected; see billing.detect()
     "concurrency": {"max_parallel_gates": 3, "max_parallel_thinker": 1},
     "weights": {"input": 1.0, "cache_write": 1.25, "cache_read": 0.1, "output": 5.0},
+    # USD per million tokens, from Anthropic's published pricing page on `as_of`.
+    # `cache_read`, where present, is the model's own price for reading its cache;
+    # without it a read costs `weights.cache_read` of the input price (a tenth).
     "pricing": {
-        "as_of": "2026-06-24",
+        "as_of": "2026-10-01",
+        "claude-opus-5-5": {"input": 4.00, "output": 20.00, "cache_read": 0.20},
         "claude-opus-5": {"input": 5.00, "output": 25.00},
+        "claude-sonnet-5-5": {"input": 2.00, "output": 10.00},
         "claude-sonnet-5": {"input": 2.00, "output": 10.00},
         "claude-haiku-4-5": {"input": 1.00, "output": 5.00},
-        "claude-fable-5-1": {"input": 10.00, "output": 50.00},
+        "claude-fable-5-1": {"input": 10.00, "output": 50.00, "cache_read": 0.25},
     },
     # Provisional: "Normal" on the Choices page. 400k was set before any real ticket
     # ran, and Taller's own first ticket crossed it just writing a plan. Revisit
@@ -77,6 +87,11 @@ SHIPPED_DEFAULTS: HubConfig = {
     # Nothing of the owner's leaves this machine until she says so: no push of
     # `main`, no GitHub issue. `taller publish` sends what waited.
     "publish": {"automatic": False},
+    # Her connected services and her own plugins are not needed for Taller's work:
+    # left out, they are out of every job's reach and every request is lighter.
+    "dispatch": {"leave_out_my_setup": True},
+    # Telling her when something needs her: off until she chooses a channel.
+    "notify": {"channel": None, "when": ["needs_you", "stopped"]},
     "thresholds": {
         "max_file_lines": 800,
         "max_function_lines": 80,

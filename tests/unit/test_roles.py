@@ -11,7 +11,7 @@ from taller import config, inference, roles
 
 def test_the_ten_roles_match_the_tool_table():
     assert set(roles.ROLES) == set(inference.ROLE_TOOLS)
-    assert len(roles.ROLES) == 10
+    assert len(roles.ROLES) == 11
 
 
 @pytest.mark.parametrize("role", sorted(inference.ROLE_TOOLS))

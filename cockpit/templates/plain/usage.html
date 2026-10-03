@@ -1,0 +1,69 @@
+{% extends "plain/base.html" %}
+{% block title %}{{ usage_words.title }}{% endblock %}
+{% block top %}
+<a class="back" href="{{ url_for('cockpit.home') }}">‹ {{ thing_words.back }}</a>
+<span></span>
+{% endblock %}
+
+{% macro switch(action, on, label, fields={}) %}
+<form method="post" action="{{ action }}" class="switch-form">
+  <input type="hidden" name="{{ token_field }}" value="{{ token() }}">
+  {% for name, value in fields.items() %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor %}
+  <input type="hidden" name="on" value="{{ '0' if on else '1' }}">
+  <button type="submit" class="switch {% if on %}on{% endif %}" role="switch"
+          aria-checked="{{ 'true' if on else 'false' }}" aria-label="{{ label }}"></button>
+</form>
+{% endmacro %}
+
+{% block content %}
+<h1>{{ usage_words.title }}</h1>
+<p class="intro">{{ usage_words.intro }}</p>
+
+<h2 class="section">{{ usage_words.who }}</h2>
+<div class="card">
+  {% for job in page.jobs %}
+  <div class="job">
+    <span class="job-name">{{ job.name }}</span>
+    <span class="model">{{ job.model }}
+      {% if job.note %}<small>{{ job.note }}</small>{% endif %}
+      {% if job.extra %}<small>{{ job.extra }}</small>{% endif %}</span>
+  </div>
+  {% endfor %}
+</div>
+<div class="card">
+  {% for key, label in usage_words.strongest.items() %}
+  <div class="choice-row">
+    <div>
+      <div class="job-name">{{ label }}</div>
+      {% if loop.first %}<div class="help">{{ page.strongest_name }} — {{ usage_words.strongest_note }}</div>{% endif %}
+    </div>
+    {{ switch(url_for('cockpit.usage_strongest'), page.strongest[key], label, {"job": key}) }}
+  </div>
+  {% endfor %}
+</div>
+
+<h2 class="section">{{ usage_words.things }}</h2>
+<div class="card">
+  {% for thing in page.things %}
+  <div class="thing-use">
+    <div class="thing-head"><span class="thing-title">{{ thing.title }}</span>
+      {% if thing.more %}<span class="flag">{{ usage_words.more }}</span>{% endif %}</div>
+    <div class="bar {% if thing.more %}more{% endif %}"><i style="width: {{ thing.width }}%"></i></div>
+    <div class="where">{{ thing.project }}{% if thing.where %} · {{ thing.where }}{% endif %}</div>
+  </div>
+  {% else %}
+  <p class="empty" style="margin:0">{{ usage_words.nothing }}</p>
+  {% endfor %}
+</div>
+
+<h2 class="section">{{ usage_words.every_request }}</h2>
+<div class="card">
+  <div class="choice-row">
+    <div>
+      <div class="job-name">{{ usage_words.leave_out }}</div>
+      <div class="help">{{ usage_words.leave_out_note }}</div>
+    </div>
+    {{ switch(url_for('cockpit.usage_leave_out'), page.leave_out, usage_words.leave_out) }}
+  </div>
+</div>
+{% endblock %}

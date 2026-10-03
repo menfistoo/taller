@@ -88,7 +88,8 @@ def set_value(key: str, raw: str, project: Path | None = None) -> list[tuple[str
     except yaml.YAMLError as exc:
         raise ConfigError(f"{raw!r} is not a value: {exc}") from exc
     known = {row[0] for row in effective(project)}
-    if key not in known and not any(k.startswith(key + ".") for k in known):
+    if key not in known and not any(k.startswith(key + ".") for k in known) \
+            and key.split(".")[0] not in config.OPEN_MAPS:
         raise ConfigError(f"There is no setting {key!r}. `taller settings` lists them all.")
 
     parts = key.split(".")

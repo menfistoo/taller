@@ -16,7 +16,7 @@ from taller import onboarding, paths, publishing, tickets
 from taller.errors import TallerError
 
 from . import (check_token, configuration, health, interview, plain, project_settings,
-               reading, rules, runs, spending, words)
+               reading, rules, runs, services, spending, usage, words)
 
 bp = Blueprint("cockpit", __name__)
 
@@ -103,6 +103,105 @@ def settings_rules_remove(project: str):
     except TallerError as exc:
         flash(plain.problem(exc), "warning")
     return redirect(url_for("cockpit.settings_rules", project=project))
+
+
+@bp.get("/usage")
+def usage_page():
+    return render_template("plain/usage.html", page=usage.usage())
+
+
+@bp.post("/usage/strongest")
+def usage_strongest():
+    check_token()
+    try:
+        for line in usage.choose_strongest(request.form.get("job", ""),
+                                           request.form.get("on") == "1"):
+            flash(line, "info")
+    except TallerError as exc:
+        flash(plain.problem(exc), "warning")
+    return redirect(url_for("cockpit.usage_page"))
+
+
+@bp.post("/usage/leave-out")
+def usage_leave_out():
+    check_token()
+    try:
+        for line in usage.leave_out(request.form.get("on") == "1"):
+            flash(line, "info")
+    except TallerError as exc:
+        flash(plain.problem(exc), "warning")
+    return redirect(url_for("cockpit.usage_page"))
+
+
+@bp.get("/services")
+def services_page():
+    return render_template("plain/services.html",
+                           page=services.page(request.args.get("project") or None))
+
+
+@bp.get("/services/search")
+def services_search():
+    from taller import connections
+
+    query = request.args.get("q", "")
+    found = connections.search(query)
+    if found["problem"]:
+        found["problem"] = words.SERVICES["search_failed"]
+    return render_template("plain/services.html",
+                           page=services.page(request.args.get("project") or None,
+                                              search=found, query=query))
+
+
+@bp.post("/services/level")
+def services_level():
+    """One service's level for one project; the first time, Taller learns what
+    the service can do - one small request, said on the page beforehand."""
+    from taller import connections
+
+    check_token()
+    project = request.form.get("project", "")
+    try:
+        path = Path(reading.entry_for(project)["path"])
+        connections.allow(path, request.form.get("service", ""), request.form.get("level", ""))
+        flash(words.SERVICES["saved"], "info")
+    except TallerError as exc:
+        flash(plain.problem(exc), "warning")
+    return redirect(url_for("cockpit.services_page", project=project))
+
+
+@bp.post("/services/notify")
+def services_notify():
+    from taller import notify
+
+    check_token()
+    try:
+        notify.choose(request.form.get("channel") or None, request.form.getlist("when"))
+        flash(words.SERVICES["saved"], "info")
+    except TallerError as exc:
+        flash(plain.problem(exc), "warning")
+    return redirect(url_for("cockpit.services_page"))
+
+
+@bp.post("/services/add")
+def services_add():
+    """Adding asks first: a page naming the maker. Only the second press adds -
+    and what is added is read again from the catalogue, never from the form."""
+    from taller import connections
+
+    check_token()
+    name = request.form.get("name", "")
+    if request.form.get("confirmed") != "1":
+        entry = connections.entry_named(name)
+        if entry is None:
+            flash(words.SERVICES["search_failed"], "warning")
+            return redirect(url_for("cockpit.services_page"))
+        return render_template("plain/services_confirm.html", entry=entry)
+    try:
+        for line in connections.add(name):
+            flash(line, "info")
+    except TallerError as exc:
+        flash(plain.problem(exc), "warning")
+    return redirect(url_for("cockpit.services_page"))
 
 
 @bp.get("/project/<project>/choices")

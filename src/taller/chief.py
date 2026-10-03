@@ -142,7 +142,7 @@ def _ask(project: Path, ticket_id: int, role: str, prompt: str, *, cfg: Mapping[
             cwd=str(cwd) if cwd else None, writable=list(writable or []),
             schema=roles.SCHEMAS.get(role), resume=resume))
         if result.usage or result.ok:
-            spend.fold(project, ticket_id, result, cfg)
+            spend.fold(project, ticket_id, result, cfg, role=role)
         if not result.ok and not fell_back and UNAVAILABLE.search(result.error or ""):
             fallback = models.fallback_for(role, cfg)
             if fallback:
@@ -239,7 +239,29 @@ def classify(project: Path | str, ticket_id: int) -> Ticket:
 
 def run(project: Path | str, ticket_id: int, *, lane: str | None = None,
         say: Say = print) -> Ticket:
-    """Advance until a checkpoint, an unmerged branch, a block, or close."""
+    """Advance until a checkpoint, an unmerged branch, a block, or close - and,
+    when it stopped for her, tell her if she asked to be told."""
+    ticket = _run(project, ticket_id, lane=lane, say=say)
+    _tell_her(Path(project), ticket)
+    return ticket
+
+
+def _tell_her(project: Path, ticket: Ticket) -> None:
+    from . import notify
+
+    pending = tickets.CHECKPOINT_AT.get(ticket.get("stage", ""))
+    why = "stopped" if ticket.get("blocked") else \
+        "needs_you" if pending and ticket["checkpoints"].get(pending) == "pending" else None
+    if why is None:
+        return
+    try:
+        notify.tell(registry.get_project(project)["name"], ticket, why)
+    except Exception:                         # a notice never stops the work
+        pass
+
+
+def _run(project: Path | str, ticket_id: int, *, lane: str | None = None,
+         say: Say = print) -> Ticket:
     project = Path(project)
     cfg = config.load_hub_config()
     # This ticket's lock, not the project's: every write below takes the project
@@ -458,16 +480,16 @@ def _gates(project: Path, ticket_id: int, cfg: Mapping[str, Any],
     for name in llm.GATES:
         runners[name] = (lambda name=name: llm.run(
             name, project, ticket, diff_text, ruleset, cfg, cwd=tree,
-            on_result=results.append)[0])
+            on_result=lambda result, name=name: results.append((llm.role_of(name), result)))[0])
     workers = max(1, int((cfg.get("concurrency") or {}).get("max_parallel_gates") or 1))
     clean = _dirty(tree)
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {name: pool.submit(_safely, name, runners[name]) for name in selected}
     verdicts = [futures[name].result() for name in selected]
     _restore(tree, _dirty(tree) - clean)     # a gate leaves nothing for a fixer to sweep
-    for result in results:                  # folded here, one writer at a time
+    for role, result in results:            # folded here, one writer at a time
         if result.usage or result.ok:
-            spend.fold(project, ticket_id, result, cfg)
+            spend.fold(project, ticket_id, result, cfg, role=role)
     _known_failures(project, verdicts, ruleset)
     findings = _record(project, ticket_id, tree, verdicts, ruleset, "⑤ gates")
     return _route(project, ticket_id, findings, cfg, ruleset, say, stage="gates",

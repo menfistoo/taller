@@ -387,3 +387,110 @@ CHOICES = {
         "language": {"es": "Español", "en": "English"},
     },
 }
+
+# --- what it uses ------------------------------------------------------------------
+
+USAGE = {
+    "title": "What it uses",
+    "link": "What it uses",
+    "intro": "Which Claude does each job, and how much of your plan your work has taken.",
+    "who": "Who does what",
+    "strongest": {"plans": "Use the strongest for writing plans",
+                  "safety": "Use the strongest for checking safety"},
+    "strongest_note": "the strongest, and the heaviest on your plan.",
+    "for_safety": "{model} for safety",
+    "things": "How much each thing used",
+    "more": "more than usual",
+    "nothing": "Nothing has used any of your plan yet.",
+    "every_request": "What goes with every request",
+    "leave_out": "Leave my connected services and plugins out",
+    "leave_out_note": "Your Gmail, Drive, Calendar and plugins aren't needed for this work. "
+                      "Leaving them out keeps them out of its reach, and makes every request "
+                      "a little lighter.",
+    "saved": "Saved. It applies from the next piece of work.",
+    "not_offered": "That is not one of the choices; the page may be out of date.",
+}
+
+# Each job, as she would name it.
+JOBS = {
+    "understanding": "Understanding what you asked for",
+    "reading": "Reading your project",
+    "planning": "Writing plans",
+    "changing": "Making changes",
+    "checking": "Checking the work",
+    "summarising": "Writing summaries",
+}
+
+# Where most of a thing's usage went, by job.
+WHERE = {
+    "understanding": "mostly understanding what you asked for",
+    "reading": "mostly reading your project",
+    "planning": "mostly writing the plan",
+    "changing": "mostly making the change",
+    "checking": "mostly checking the work",
+    "summarising": "mostly writing the summary",
+}
+
+# What each Claude CLI alias runs today, and a word about the models that need one.
+MODEL_FOR_ALIAS = {"opus": "Claude Opus 5.5", "sonnet": "Claude Sonnet 5.5",
+                   "haiku": "Claude Haiku 4.5", "fable": "Claude Fable 5.1"}
+MODEL_NOTES = {"Claude Haiku 4.5": "quick and light", "Claude Opus 5.5": "the most careful",
+               "Claude Fable 5.1": "the strongest"}
+
+# --- connected services ------------------------------------------------------------
+
+SERVICES = {
+    "title": "Connected services",
+    "link": "Connected services",
+    "intro": "Everything Claude is connected to on this computer - and what Taller's work on "
+             "each project may use. Nothing is used unless you say so.",
+    "for_project": "For",
+    "show": "Show",
+    "learn_note": "The first time you let a project use a service, Taller asks Claude once "
+                  "what that service can do - one small request on your plan. Work that "
+                  "uses a service also brings your own settings along, because that is "
+                  "where your sign-in lives.",
+    "not_ready": "Letting Taller's work use your services isn't ready yet, so for now none "
+                 "of them is used. You can see them all here, and add more.",
+    "groups": {"account": "Through your Claude account", "plugin": "Came with your plugins",
+               "yours": "Added by you"},
+    "levels": {"off": "Not used", "look": "May look", "look_and_add": "May look and add"},
+    "level_notes": {"look": "It can find and read. It can't change, send or delete anything.",
+                    "look_and_add": "It can also add new things of your own. It is not "
+                                    "given tools that send, share, invite or delete."},
+    "needs_sign_in": "needs you to sign in",
+    "more": "{count} more that aren't signed in or aren't working",
+    "saved": "Saved. It applies from the next piece of work.",
+    "add_title": "Add a service",
+    "search_label": "What should it connect to?",
+    "search": "Search",
+    "known": "From makers you know",
+    "others": "From other makers - check who made it before adding",
+    "nothing_found": "Nothing in the catalogue matches that.",
+    "search_failed": "The catalogue could not be searched just now. Try again in a minute.",
+    "by": "by {maker}",
+    "add": "Add",
+    "account_add": "Gmail, Drive and the other Google services are added on claude.ai, "
+                   "where you sign in to them.",
+    "open_claude": "Open claude.ai",
+    "confirm_title": "Add {title}?",
+    "unknown_maker": "not a maker Taller knows; check who made it before adding",
+    "confirm": "It will be able to act inside Taller's work on the projects you allow. "
+               "Until you allow one, no project uses it.",
+    "reaches_all": "It is added to Claude on this computer - for all your Claude work, not "
+                   "only Taller's.",
+    "will_run": "It runs a program called {package} on your computer.",
+    "confirm_add": "Add it",
+    "cancel": "Not now",
+    "notify_title": "Tell me when something needs me",
+    "notify_off": "Don't tell me",
+    "notify_channels": {"todoist": "Add a task to my Todoist",
+                        "calendar": "Put a note on my calendar"},
+    "notify_when": {"needs_you": "When it needs me", "stopped": "When it stops"},
+    "notify_preview": "What it will say",
+    "notify_example": '{project}: "{title}" is ready for you to look at.',
+    "notify_never": "Taller never sends an email or a message for you - only notes to "
+                    "yourself.",
+    "notify_save": "Save",
+    "notify_problem": "The last notice did not arrive:",
+}

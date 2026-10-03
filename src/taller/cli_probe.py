@@ -29,6 +29,8 @@ REQUIRED_FLAGS = [
     "--agents",
     "--model",
     "--permission-mode",
+    "--strict-mcp-config",    # with no --mcp-config: no connected service loads
+    "--setting-sources",      # project,local: her user settings and plugins stay out
 ]
 
 # Used when present, omitted when not (spec 3.4).

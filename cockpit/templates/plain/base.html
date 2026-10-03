@@ -21,6 +21,8 @@
   {% block content %}{% endblock %}
 </main>
 <footer>
+  <a href="{{ url_for('cockpit.usage_page') }}">{{ usage_words.link }}</a>
+  <a href="{{ url_for('cockpit.services_page') }}">{{ services_words.link }}</a>
   {% block footer %}<a href="{{ url_for('cockpit.board') }}">{{ home_words.detail }}</a>{% endblock %}
 </footer>
 <!-- Every form carries this, and every write checks it: a page on another site

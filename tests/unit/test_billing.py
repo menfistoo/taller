@@ -53,6 +53,7 @@ def test_an_unpriced_model_makes_cost_partial(tmp_home: Path):
 
 
 def test_pricing_age(tmp_home: Path):
-    cfg = config.load_hub_config()                        # as_of 2026-06-24
+    cfg = config.load_hub_config()
+    cfg["pricing"] = {**cfg["pricing"], "as_of": "2026-06-24"}
 
     assert billing.pricing_age_days(cfg, date(2026, 9, 28)) == 96

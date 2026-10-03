@@ -51,6 +51,8 @@ ROLE_TOOLS: dict[str, list[str]] = {
     "explorer": READ_ONLY,
     "scribe": ["Read"],
     "summariser": ["Read"],
+    # Only the one tool of her chosen service, given per dispatch (notify.py).
+    "notifier": [],
     # The gates are shown the change, capped; `git diff` lets them read the rest.
     "gate_security": READ_ONLY + ["Bash(git diff*)", "Bash(git log*)"],
     "gate_quality": READ_ONLY + ["Bash(git diff*)", "Bash(git log*)"],
@@ -145,6 +147,9 @@ class Dispatch:
     # Seconds before the dispatch is abandoned. Real work gets half an hour; a
     # health check that waits that long just looks frozen.
     timeout: float = DISPATCH_TIMEOUT
+    # (an --mcp-config, the tools of it allowed): given in place of the project's
+    # own services - the notifier's one tool of her chosen service.
+    services: tuple[dict[str, Any], list[str]] | None = None
 
 
 @dataclass
@@ -384,12 +389,26 @@ def _build(dispatch: Dispatch, executable: str) -> tuple[list[str], Path]:
     # argv WITHOUT the executable; infer() prepends the resolved absolute path.
     argv = ["-p", "--output-format", "json", "--model", model, "--effort", effort]
 
+    leave_out = (cfg.get("dispatch") or {}).get("leave_out_my_setup", True)
+    services, service_tools, service_refused = None, [], []
+    if dispatch.services is not None:
+        services, service_tools = dispatch.services
+    elif leave_out:
+        from . import connections            # it reads HOST_SESSION from here
+        services, service_tools, service_refused = connections.for_dispatch(cfg)
+
+    if services and not any(tool.startswith(BARE_BASH) for tool in dispatch.tools):
+        # A job given a service keeps her settings (its sign-in lives there), and
+        # with them her own allowances; a role with no command of its own gets none.
+        service_refused = [*service_refused, BARE_BASH]
+
     if dispatch.resume:
         argv += ["--resume", dispatch.resume]
-    if dispatch.tools:
-        argv += ["--allowedTools", ",".join(dispatch.tools)]
-    if dispatch.forbidden:
-        argv += ["--disallowedTools", ",".join(_expand_forbidden(dispatch.forbidden))]
+    if dispatch.tools or service_tools:
+        argv += ["--allowedTools", ",".join([*dispatch.tools, *service_tools])]
+    if dispatch.forbidden or service_refused:
+        argv += ["--disallowedTools", ",".join([*_expand_forbidden(dispatch.forbidden),
+                                                *service_refused])]
     worktrees_root = (paths.run_dir() / "worktrees").resolve()
     for directory in dispatch.writable:
         candidate = Path(directory).resolve()
@@ -406,6 +425,18 @@ def _build(dispatch: Dispatch, executable: str) -> tuple[list[str], Path]:
         argv += ["--json-schema", json.dumps(dispatch.schema)]
     if dispatch.agents is not None:
         argv += ["--agents", json.dumps(dispatch.agents)]
+    if leave_out or dispatch.services is not None:
+        # No connected service and none of her own plugins in a job's reach. Not
+        # --safe-mode: that also drops the project's CLAUDE.md, skills and hooks.
+        argv += ["--strict-mcp-config"]
+        if services:
+            # Only what this project allows (Task 5's measurement: under strict,
+            # a service named here is loaded, and nothing else is). Her own
+            # settings stay in: measured live, a claude.ai service reports that it
+            # needs sign-in when they are left out.
+            argv += ["--mcp-config", json.dumps(services)]
+        else:
+            argv += ["--setting-sources", "project,local"]
     if dispatch.unattended:
         argv += ["--permission-mode", "dontAsk"]
         if dispatch.supports_permission_prompts:
@@ -604,6 +635,7 @@ ROLE_SLICES: dict[str, tuple[str, ...]] = {
     "gate_quality": ("conventions", "architecture", "never", "overrides"),
     "gate_ux": ("ux", "brand", "conventions", "never", "overrides"),
     "summariser": ("product",),
+    "notifier": (),                 # it writes one fixed note, about no project's rules
 }
 
 

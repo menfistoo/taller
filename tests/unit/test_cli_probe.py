@@ -16,6 +16,8 @@ HELP_WITH_EVERYTHING = """
   --agents <json>
   --model <model>
   --permission-mode <mode>
+  --strict-mcp-config
+  --setting-sources <sources>
   --permission-prompts <mode>
   --bare
 """

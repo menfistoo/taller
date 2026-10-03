@@ -21,7 +21,7 @@ from . import inference
 
 ROLES: tuple[str, ...] = (
     "chief", "architect", "implementer", "fixer", "gate_security", "gate_quality",
-    "gate_ux", "explorer", "scribe", "summariser",
+    "gate_ux", "explorer", "scribe", "summariser", "notifier",
 )
 KINDS = ("bug", "feature", "refactor", "question", "idea")
 CHANGE_KINDS = ("literal", "string", "style", "threshold", "other")
