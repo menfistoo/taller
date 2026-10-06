@@ -65,7 +65,18 @@ def text_of(answer) -> str:
 
 # --- I6: not ready, and said so ------------------------------------------------------
 
-def test_letting_work_use_a_service_is_switched_off_and_says_so(project):
+def test_letting_work_use_a_service_is_switched_on_once_proved_live(project):
+    """Proved on her accounts (2026-10-03): Drive 'May look', and a Todoist notice."""
+    client = cockpit.create_app(testing=True).test_client()
+    page = text_of(client.get("/services"))
+
+    assert connections.WORK_USE_READY is True
+    assert words.SERVICES["not_ready"] not in page
+    assert "May look and add" in page and "Add a task to my Todoist" in page
+
+
+def test_switched_off_again_it_says_so_and_uses_nothing(project, monkeypatch):
+    monkeypatch.setattr(connections, "WORK_USE_READY", False)
     client = cockpit.create_app(testing=True).test_client()
     page = text_of(client.get("/services"))
 
@@ -80,7 +91,7 @@ def test_letting_work_use_a_service_is_switched_off_and_says_so(project):
 def test_with_nothing_allowed_no_job_gets_a_service_even_from_a_hand_set_value(project):
     hub.update_config({"services": {"gmail": "look"}})          # set by hand, at hub level
 
-    assert "--mcp-config" not in argv_for(project)
+    assert "--strict-mcp-config" in argv_for(project)
 
 
 # --- C1: nothing that sends, shares or invites --------------------------------------
@@ -112,14 +123,14 @@ def test_an_unconfigured_repeat_does_not_hide_the_real_service(project, ready):
     connections.allow(project, "gmail", "look")
 
     given = argv_for(project)
-    assert json.loads(given[given.index("--mcp-config") + 1])["mcpServers"] == {
-        "gmail": {"type": "http", "url": "https://mail.example.test/mcp"}}
+    allowed = given[given.index("--allowedTools") + 1].split(",")
+    assert "mcp__claude_ai_Gmail__search_threads" in allowed
 
 
 def test_a_signed_out_service_is_left_out_of_the_work(project, ready):
     connections.allow(project, "google_calendar", "look")
 
-    assert "--mcp-config" not in argv_for(project)
+    assert "--strict-mcp-config" in argv_for(project)
 
 
 # --- I3: names with hyphens ------------------------------------------------------------
@@ -129,8 +140,9 @@ def test_tool_names_with_hyphens_are_judged_by_their_words(project, ready):
 
     given = argv_for(project)
     allowed = given[given.index("--allowedTools") + 1].split(",")
-    assert "mcp__todoist__add-tasks" in allowed and "mcp__todoist__find-tasks" in allowed
-    assert "mcp__todoist__delete-object" not in allowed
+    assert "mcp__claude_ai_Todoist__add-tasks" in allowed
+    assert "mcp__claude_ai_Todoist__find-tasks" in allowed
+    assert "mcp__claude_ai_Todoist__delete-object" not in allowed
 
 
 # --- I4 / I9: a notice counted only when it arrived, said plainly ----------------------

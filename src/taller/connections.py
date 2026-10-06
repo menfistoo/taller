@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import json
 import re
-import shlex
 import shutil
 import subprocess
 import time
@@ -69,11 +68,11 @@ def forget() -> None:
 
 # --- what each project's work may use ------------------------------------------
 
-# Letting Taller's work use her services is built but not yet proven on her own
-# accounts: a service's sign-in inside a job failed in the live check
-# (2026-10-01), and she chose to prove it as its own step. Until then nothing is
-# handed to any job, and the page says so. Turned on in code once proven.
-WORK_USE_READY = False
+# Letting Taller's work use her services. Proved on her own accounts on
+# 2026-10-03 - Drive 'May look' reached through her setup, a Todoist notice
+# added - and switched on with her say-so. Turning it off hands nothing to any
+# job, and the page says so.
+WORK_USE_READY = True
 NOT_READY = ("Letting Taller's work use your services isn't ready yet, so for now none "
              "of them is used.")
 
@@ -98,9 +97,36 @@ LEARN_TIMEOUT = 120
 _PREFIX = re.compile(r"^[a-z0-9_]+$")
 
 
+def tool_prefix(listed_name: str) -> str:
+    """What a service's tools are called inside a job, from its name in her list:
+    `claude.ai Google Drive` -> `claude_ai_Google_Drive` (its tools are
+    `mcp__claude_ai_Google_Drive__<tool>`)."""
+    return re.sub(r"[^A-Za-z0-9_-]", "_", listed_name)
+
+
 def allowed(project: Path | str) -> dict[str, str]:
     """service prefix -> level, for the services this project's work may use."""
-    return _levels(config.read_project_config(Path(project)).get("services"))
+    return _levels(_choices().get(_name_of(project)))
+
+
+def choices_file() -> Path:
+    """Each project's service levels - on this computer only, never in a project's
+    own files, which are published with it (her choice, 2026-10-03)."""
+    return paths.run_dir() / "services" / "projects.json"
+
+
+def _choices() -> dict[str, Any]:
+    try:
+        found = json.loads(choices_file().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return found if isinstance(found, dict) else {}
+
+
+def _name_of(project: Path | str) -> str:
+    from . import registry
+
+    return str(registry.get_project(Path(project))["name"])
 
 
 def _levels(given: Any) -> dict[str, str]:
@@ -116,9 +142,7 @@ def name_words(name: str) -> list[str]:
 
 
 def allow(project: Path | str, service: str, level: str) -> list[str]:
-    """Set one service's level for this project, in its own settings."""
-    from . import settings
-
+    """Set one service's level for this project, on this computer."""
     if level not in LEVELS:
         raise ConfigError(f"{level!r} is not a level; the levels are {', '.join(LEVELS)}.")
     if not _PREFIX.match(service):
@@ -126,16 +150,37 @@ def allow(project: Path | str, service: str, level: str) -> list[str]:
     if level != "off" and not WORK_USE_READY:
         raise ConfigError(NOT_READY)
     if level != "off" and known_tools(service) is None:
-        found = present().get(service)
-        learned = _learn_run(service, _server(found["target"])) \
-            if found and found["target"] else None
+        learned = _learn_run(service) if service in present() else None
         if not learned:
             raise ConfigError(LEARN_FAILED)
-        names = [tool.split("__", 2)[2] for tool in learned
-                 if tool.startswith(f"mcp__{service}__")]
-        locking.atomic_write_text(tools_file(service), json.dumps({"tools": sorted(names)}))
-    settings.set_value(f"services.{service}", json.dumps(level), Path(project))
+        locking.atomic_write_text(tools_file(service), json.dumps({"tools": sorted(learned)}))
+    name = _name_of(project)
+    with locking.file_lock(choices_file().with_suffix(".lock")):
+        everything = _choices()
+        mine = {k: v for k, v in _levels(everything.get(name)).items() if k != service}
+        if level != "off":
+            mine[service] = level
+        everything[name] = mine
+        locking.atomic_write_text(choices_file(), json.dumps(everything, indent=1,
+                                                             sort_keys=True))
     return [f"{service}: {level}"]
+
+
+# A job with her setup loaded may always load a tool and give its answer: these
+# two are Claude Code's own plumbing, never refused.
+KEEP_TOOLS = ("ToolSearch", "StructuredOutput")
+
+
+def setup_tools_file() -> Path:
+    """The tools her setup offers besides services, as last seen while learning."""
+    return paths.run_dir() / "services" / "_setup.json"
+
+
+def setup_tools() -> list[str]:
+    try:
+        return list(json.loads(setup_tools_file().read_text(encoding="utf-8"))["tools"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return []
 
 
 LEARN_FAILED = ("Taller could not reach that service just now, so it is still off. "
@@ -180,17 +225,19 @@ def present() -> dict[str, dict[str, Any]]:
     return found
 
 
-def _learn_run(service: str, server: dict[str, Any]) -> list[str] | None:
-    """One small request with only this service loaded, to read the tools it
-    offers from the CLI's start-up event. None when it could not be read."""
+def _learn_run(service: str) -> list[str] | None:
+    """One small request with her setup loaded as a job with services loads it, to
+    read the names of the tools this service offers from the CLI's start-up event.
+    None when it could not be read."""
     import os
 
+    found = present().get(service)
+    if found is None:
+        return None
     claude = shutil.which("claude") or "claude"
     env = {k: v for k, v in os.environ.items() if k not in set(inference.HOST_SESSION)}
     argv = [claude, "-p", "--model", "haiku", "--effort", "low", "--output-format",
-            "stream-json", "--verbose", "--permission-mode", "dontAsk", "--strict-mcp-config",
-            "--mcp-config",
-            json.dumps({"mcpServers": {service: server}})]
+            "stream-json", "--verbose", "--permission-mode", "dontAsk"]
     cwd = paths.scratch_cwd()
     cwd.mkdir(parents=True, exist_ok=True)
     try:
@@ -205,40 +252,47 @@ def _learn_run(service: str, server: dict[str, Any]) -> list[str] | None:
         except ValueError:
             continue
         if event.get("type") == "system" and event.get("subtype") == "init":
-            tools = [t for t in event.get("tools") or [] if t.startswith(f"mcp__{service}__")]
+            own = f"mcp__{tool_prefix(found['raw'])}__"
+            offered = event.get("tools") or []
+            locking.atomic_write_text(setup_tools_file(), json.dumps(
+                {"tools": sorted(t for t in offered if not t.startswith("mcp__"))}))
+            tools = [t[len(own):] for t in event.get("tools") or [] if t.startswith(own)]
             return tools or None
     return None
 
 
-def for_dispatch(cfg: Mapping[str, Any]) -> tuple[dict[str, Any] | None, list[str], list[str]]:
-    """(the --mcp-config, tools to allow, tools to refuse) for a job whose project
-    allows services. A service gone from her list is left out; the work goes on."""
-    wanted = _levels(cfg.get("services")) if WORK_USE_READY else {}
+def for_dispatch(cfg: Mapping[str, Any]) -> tuple[list[str], list[str]]:
+    """(tools to allow, tools to refuse) for a job whose project allows services.
+    Empty when it allows none that is connected and learned here - a service gone
+    from her list, or signed out, is left out and the work goes on."""
+    project = (cfg.get("project") or {}).get("name")
+    wanted = _levels(_choices().get(project)) if WORK_USE_READY and project else {}
     if not wanted:
-        return None, [], []
+        return [], []
     connected = present()
-    servers: dict[str, Any] = {}
     allow_tools: list[str] = []
     deny_tools: list[str] = []
-    for prefix, level in sorted(wanted.items()):
-        service = connected.get(prefix)
-        names = known_tools(prefix)
-        if not service or not names:
-            continue                         # gone, signed out, or not learned: left out
-        servers[prefix] = _server(service["target"])
+    for service, level in sorted(wanted.items()):
+        found = connected.get(service)
+        names = known_tools(service)
+        if not found or not names:
+            continue
+        own = tool_prefix(found["raw"])
         allowed_names, refused_names = _judged(names, level)
-        allow_tools += [f"mcp__{prefix}__{name}" for name in allowed_names]
-        deny_tools += [f"mcp__{prefix}__{name}" for name in refused_names]
-    if not servers:
-        return None, [], []
-    return {"mcpServers": servers}, allow_tools, deny_tools
+        allow_tools += [f"mcp__{own}__{name}" for name in allowed_names]
+        deny_tools += [f"mcp__{own}__{name}" for name in refused_names]
+    if not allow_tools:
+        return [], []
+    return allow_tools, deny_tools + refuse_others(allow_tools)
 
 
-def _server(target: str) -> dict[str, Any]:
-    if target.startswith(("http://", "https://")):
-        return {"type": "http", "url": target}
-    parts = [part.strip('"') for part in shlex.split(target, posix=False)]
-    return {"command": parts[0], "args": parts[1:]}
+def refuse_others(allowed_tools: list[str]) -> list[str]:
+    """Every other service in her list, refused whole by name: her setup loads in
+    a job with services, and only what was allowed may be used."""
+    keep = {tool.split("__")[1] for tool in allowed_tools if tool.count("__") >= 2}
+    return [f"mcp__{prefix}__*" for prefix in
+            dict.fromkeys(tool_prefix(service["raw"]) for service in listed())
+            if prefix not in keep]
 
 
 def prefix_of(name: str) -> str:
@@ -271,7 +325,8 @@ def _parse(text: str) -> list[dict[str, Any]]:
             group = "plugin"
         else:
             group, name, made_by = "yours", raw, "you"
-        found.append({"name": name, "group": group, "state": _state(match["status"]),
+        found.append({"name": name, "raw": raw, "group": group,
+                      "state": _state(match["status"]),
                       "made_by": made_by, "prefix": prefix_of(name),
                       "target": match["target"].strip(), "duplicate_of": None})
     connected = {s["name"].lower(): s["name"] for s in found if s["state"] == "ok"}

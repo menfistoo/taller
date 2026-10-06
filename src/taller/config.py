@@ -22,10 +22,6 @@ from .errors import ConfigError
 
 HubConfig = dict[str, Any]
 
-# Maps whose keys are hers to name - a service per project - so a key no layer
-# has yet is a new entry, not a typo.
-OPEN_MAPS = {"services"}
-
 # Lists normally replace on merge. This one appends, at every level.
 APPEND_ONLY_LIST_PATHS = {
     ("paths", "security_sensitive"),
@@ -90,8 +86,6 @@ SHIPPED_DEFAULTS: HubConfig = {
     # Her connected services and her own plugins are not needed for Taller's work:
     # left out, they are out of every job's reach and every request is lighter.
     "dispatch": {"leave_out_my_setup": True},
-    # Telling her when something needs her: off until she chooses a channel.
-    "notify": {"channel": None, "when": ["needs_you", "stopped"]},
     "thresholds": {
         "max_file_lines": 800,
         "max_function_lines": 80,

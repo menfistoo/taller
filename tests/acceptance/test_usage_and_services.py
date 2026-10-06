@@ -60,9 +60,9 @@ def two_projects(tmp_home: Path, identity, stub_claude, monkeypatch, tmp_path):
     monkeypatch.setattr(discovery, "_run_gh", lambda args, **kwargs: None)
     monkeypatch.setattr(connections, "_run_list",
                         lambda: subprocess.CompletedProcess(["claude"], 0, LISTING, ""))
-    monkeypatch.setattr(connections, "_learn_run", lambda prefix, server: [
-        f"mcp__{prefix}__{name}" for name in {"google_drive": ["search_files", "share_file"],
-                                              "todoist": ["add_tasks", "delete_object"]}[prefix]])
+    monkeypatch.setattr(connections, "_learn_run", lambda service: {
+        "google_drive": ["search_files", "share_file"],
+        "todoist": ["add_tasks", "delete_object"]}[service])
     connections.forget()
     toolshed, allotment = support.new_project("toolshed"), support.new_project("allotment")
     assert cli.main(["models", "probe"], ScriptedPrompter({})) == 0
@@ -110,7 +110,7 @@ def test_what_it_uses_and_what_it_may_reach(two_projects, stub_claude):
     ticket = tickets.load(toolshed, 1)
     assert ticket["stage"] == "review" and ticket["blocked"] is None
     work = [call for call in requests(stub_claude)[before:]
-            if "mcp__todoist__add_tasks" not in ",".join(call)]
+            if "mcp__claude_ai_Todoist__add_tasks" not in ",".join(call)]
     assert work and all("--strict-mcp-config" in call and "--mcp-config" not in call
                         for call in work), "no service while none is allowed"
 
@@ -123,11 +123,11 @@ def test_what_it_uses_and_what_it_may_reach(two_projects, stub_claude):
     assert "Heading uses the danger colour" in page and "toolshed · mostly" in page
 
     # ③ The moment it stopped for her was told once, through her Todoist - and only once.
-    notices = [call for call in requests(stub_claude) if "mcp__todoist__add_tasks" in call]
+    notices = [call for call in requests(stub_claude) if "mcp__claude_ai_Todoist__add_tasks" in call]
     assert len(notices) == 1
-    assert notices[0][notices[0].index("--allowedTools") + 1] == "mcp__todoist__add_tasks"
+    assert notices[0][notices[0].index("--allowedTools") + 1] == "mcp__claude_ai_Todoist__add_tasks"
     assert notify.tell("toolshed", tickets.load(toolshed, 1), "needs_you")["sent"] is False
-    assert len([c for c in requests(stub_claude) if "mcp__todoist__add_tasks" in c]) == 1
+    assert len([c for c in requests(stub_claude) if "mcp__claude_ai_Todoist__add_tasks" in c]) == 1
 
     # ④ A service allowed on one project reaches that project's jobs, and no other.
     connections.allow(toolshed, "google_drive", "look")
@@ -140,11 +140,10 @@ def test_what_it_uses_and_what_it_may_reach(two_projects, stub_claude):
         return inference._build(dispatch, "claude")[0]
 
     given = argv_for(toolshed)
-    assert json.loads(given[given.index("--mcp-config") + 1])["mcpServers"].keys() == \
-        {"google_drive"}
-    assert "mcp__google_drive__search_files" in given[given.index("--allowedTools") + 1]
-    assert "mcp__google_drive__share_file" not in given[given.index("--allowedTools") + 1]
-    assert "--mcp-config" not in argv_for(allotment)
+    assert "mcp__claude_ai_Todoist__*" in given[given.index("--disallowedTools") + 1]
+    assert "mcp__claude_ai_Google_Drive__search_files" in given[given.index("--allowedTools") + 1]
+    assert "mcp__claude_ai_Google_Drive__share_file" not in given[given.index("--allowedTools") + 1]
+    assert "--strict-mcp-config" in argv_for(allotment)
 
     # Throughout: her words, and nothing new wrong.
     for where in ("/", "/usage", "/services", "/thing/toolshed/1"):

@@ -1,9 +1,10 @@
 """What each project's work may use (phase G2, Task 6).
 
 Every service is off for Taller's work until she turns it on, per project, at one
-of two levels: May look, or May look and add. Task 5's measurement settled how a
-job gets a service: an `--mcp-config` naming only the services its project allows,
-under `--strict-mcp-config`, so nothing else loads.
+of two levels: May look, or May look and add. A job whose project allows one
+loads her setup as usual - proved live, a claude.ai service's sign-in reaches a
+job no other way - and every service other than the ones allowed is refused by
+name (test_service_names.py).
 
 Which of a service's tools it may call is said by their exact names: the live
 check showed an allowance by the start of a name ("list_*") is not honoured, so
@@ -58,9 +59,9 @@ def learned(monkeypatch) -> list[str]:
     """Learning a service's tools, as the CLI's start-up event would list them."""
     asked: list[str] = []
 
-    def fake(prefix: str, server: dict) -> list[str] | None:
-        asked.append(prefix)
-        return [f"mcp__{prefix}__{name}" for name in TOOLS[prefix]]
+    def fake(service: str) -> list[str] | None:
+        asked.append(service)
+        return list(TOOLS[service])
 
     monkeypatch.setattr(connections, "_learn_run", fake)
     return asked
@@ -103,14 +104,14 @@ def test_nothing_allowed_is_task_1_unchanged(two_projects):
     assert service_tools(argv, "--allowedTools") == []
 
 
-def test_allowing_writes_the_project_layer(two_projects, learned):
-    toolshed, _ = two_projects
+def test_allowing_is_kept_for_that_project_on_this_computer(two_projects, learned):
+    toolshed, allotment = two_projects
 
     connections.allow(toolshed, "google_drive", "look")
 
-    found = {key: (value, source) for key, value, source in settings.effective(toolshed)}
-    assert found["services.google_drive"] == ("look", "project")
     assert connections.allowed(toolshed) == {"google_drive": "look"}
+    assert connections.allowed(allotment) == {}
+    assert "services" not in {key.split(".")[0] for key, _, _ in settings.effective(toolshed)}
 
 
 def test_a_level_that_does_not_exist_is_refused(two_projects, learned):
@@ -132,7 +133,7 @@ def test_turning_a_service_on_learns_its_tools_once(two_projects, learned):
 
 def test_a_service_that_cannot_be_learned_changes_nothing(two_projects, monkeypatch):
     toolshed, _ = two_projects
-    monkeypatch.setattr(connections, "_learn_run", lambda prefix, server: None)
+    monkeypatch.setattr(connections, "_learn_run", lambda service: None)
 
     with pytest.raises(ConfigError):
         connections.allow(toolshed, "google_drive", "look")
@@ -146,15 +147,15 @@ def test_look_passes_only_the_read_tools(two_projects, learned):
 
     argv = argv_for(toolshed)
 
-    config_given = json.loads(argv[argv.index("--mcp-config") + 1])
-    assert config_given == {"mcpServers": {"google_drive": {
-        "type": "http", "url": "https://drive.example.test/mcp"}}}
     assert service_tools(argv, "--allowedTools") == [
-        "mcp__google_drive__get_file_metadata", "mcp__google_drive__list_recent_files",
-        "mcp__google_drive__read_file_content", "mcp__google_drive__search_files"]
+        "mcp__claude_ai_Google_Drive__get_file_metadata",
+        "mcp__claude_ai_Google_Drive__list_recent_files",
+        "mcp__claude_ai_Google_Drive__read_file_content",
+        "mcp__claude_ai_Google_Drive__search_files"]
     refused = service_tools(argv, "--disallowedTools")
-    assert "mcp__google_drive__create_file" in refused
-    assert "mcp__google_drive__share_file" in refused and "mcp__google_drive__trash_file" in refused
+    assert "mcp__claude_ai_Google_Drive__create_file" in refused
+    assert "mcp__claude_ai_Google_Drive__share_file" in refused
+    assert "mcp__claude_ai_Google_Drive__trash_file" in refused
 
 
 def test_look_and_add_never_passes_send_or_delete(two_projects, learned):
@@ -164,28 +165,31 @@ def test_look_and_add_never_passes_send_or_delete(two_projects, learned):
     argv = argv_for(toolshed)
 
     assert service_tools(argv, "--allowedTools") == [
-        "mcp__todoist__add_tasks", "mcp__todoist__find_tasks", "mcp__todoist__get_overview"]
+        "mcp__claude_ai_Todoist__add_tasks", "mcp__claude_ai_Todoist__find_tasks",
+        "mcp__claude_ai_Todoist__get_overview"]
     refused = service_tools(argv, "--disallowedTools")
-    assert "mcp__todoist__delete_object" in refused and "mcp__todoist__update_tasks" in refused
-    assert "mcp__todoist__complete_tasks" not in flag(argv, "--allowedTools")
+    assert "mcp__claude_ai_Todoist__delete_object" in refused
+    assert "mcp__claude_ai_Todoist__update_tasks" in refused
+    assert "mcp__claude_ai_Todoist__complete_tasks" not in flag(argv, "--allowedTools")
 
 
 def test_one_project_allowing_drive_does_not_give_it_to_another(two_projects, learned):
     toolshed, allotment = two_projects
     connections.allow(toolshed, "google_drive", "look")
 
-    assert "--mcp-config" in argv_for(toolshed)
-    assert "--mcp-config" not in argv_for(allotment)
+    assert service_tools(argv_for(toolshed), "--allowedTools")
+    assert service_tools(argv_for(allotment), "--allowedTools") == []
+    assert "--strict-mcp-config" in argv_for(allotment)
 
 
-def test_a_plugin_service_runs_its_own_command(two_projects, learned):
+def test_a_plugin_service_is_allowed_by_its_own_name(two_projects, learned):
     toolshed, _ = two_projects
     connections.allow(toolshed, "notes_search", "look")
 
     argv = argv_for(toolshed)
 
-    given = json.loads(argv[argv.index("--mcp-config") + 1])["mcpServers"]["notes_search"]
-    assert given == {"command": "node", "args": ["C:/plugins/notes/server.js", "--stdio"]}
+    assert service_tools(argv, "--allowedTools") == [
+        "mcp__plugin_notes_notes-search__search_notes"]
 
 
 def test_a_service_that_is_gone_is_left_out_and_the_work_carries_on(two_projects, learned,
@@ -198,7 +202,7 @@ def test_a_service_that_is_gone_is_left_out_and_the_work_carries_on(two_projects
 
     argv = argv_for(toolshed)
 
-    assert "--strict-mcp-config" in argv and "--mcp-config" not in argv
+    assert "--strict-mcp-config" in argv and service_tools(argv, "--allowedTools") == []
 
 
 def test_a_service_whose_tools_are_not_known_here_is_left_out(two_projects, learned):
@@ -206,7 +210,7 @@ def test_a_service_whose_tools_are_not_known_here_is_left_out(two_projects, lear
     connections.allow(toolshed, "google_drive", "look")
     connections.tools_file("google_drive").unlink()        # another machine, say
 
-    assert "--mcp-config" not in argv_for(toolshed)
+    assert "--strict-mcp-config" in argv_for(toolshed)
 
 
 def test_turning_it_off_again_takes_it_away(two_projects, learned):
@@ -216,16 +220,17 @@ def test_turning_it_off_again_takes_it_away(two_projects, learned):
     connections.allow(toolshed, "google_drive", "off")
 
     assert connections.allowed(toolshed) == {}
-    assert "--mcp-config" not in argv_for(toolshed)
+    assert "--strict-mcp-config" in argv_for(toolshed)
 
 
-def test_a_job_with_a_service_keeps_her_settings_for_its_sign_in(two_projects, learned):
-    """Measured live: with her user settings left out, a service she signed into on
-    claude.ai reports that it needs sign-in. Still only her allowed services load."""
+def test_a_job_with_a_service_loads_her_setup_for_its_sign_in(two_projects, learned):
+    """Proved live: a claude.ai service's sign-in reaches a job only through her
+    own setup. Everything else in it is refused by name (test_service_names.py)."""
     toolshed, allotment = two_projects
     connections.allow(toolshed, "google_drive", "look")
 
     with_service, without = argv_for(toolshed), argv_for(allotment)
 
-    assert "--strict-mcp-config" in with_service and "--setting-sources" not in with_service
+    assert "--strict-mcp-config" not in with_service
+    assert "--setting-sources" not in with_service
     assert "--setting-sources" in without

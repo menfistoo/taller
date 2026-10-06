@@ -52,7 +52,7 @@ def project(tmp_home: Path, identity, stub_claude, monkeypatch) -> Path:
     monkeypatch.setattr(connections, "_run_list",
                         lambda: subprocess.CompletedProcess(["claude"], 0, LISTING, ""))
     monkeypatch.setattr(connections, "_learn_run",
-                        lambda prefix, server: [f"mcp__{prefix}__search_files"])
+                        lambda service: ["search_files"])
     monkeypatch.setattr(connections, "_fetch_catalogue", lambda query: CATALOGUE)
     connections.forget()
     return support.new_project()
@@ -126,7 +126,7 @@ def test_turning_a_service_on_says_it_asks_claude_once(project, client):
 
 
 def test_a_service_that_cannot_be_reached_says_so(project, client, monkeypatch):
-    monkeypatch.setattr(connections, "_learn_run", lambda prefix, server: None)
+    monkeypatch.setattr(connections, "_learn_run", lambda service: None)
 
     answer = client.post("/services/level", follow_redirects=True,
                          data={**token(client), "project": "toolshed",

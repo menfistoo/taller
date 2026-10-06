@@ -27,6 +27,17 @@ from .errors import InferenceError
 WRITE_TOOLS = ("Write", "Edit", "NotebookEdit")
 
 BARE_BASH = "Bash"
+# Claude Code's own tools that act or reach out, for refusing what a role lacks
+# when a job runs with her setup loaded (a job given a service).
+# When her setup has not been seen yet, these - including tools that ask no
+# permission, like PushNotification (proved live, 2026-10-03) - are refused.
+BUILT_IN_TOOLS = ("Agent", "Task", BARE_BASH, "PowerShell", "Write", "Edit", "MultiEdit",
+                  "NotebookEdit", "WebFetch", "WebSearch", "Skill", "SlashCommand",
+                  "KillShell", "BashOutput", "Monitor", "PushNotification", "SendUserFile",
+                  "SendMessage", "CronCreate", "CronDelete", "RemoteTrigger",
+                  "ScheduleWakeup", "TodoWrite", "EnterWorktree", "ExitWorktree",
+                  "AskUserQuestion", "EnterPlanMode", "ExitPlanMode", "Artifact", "Workflow",
+                  "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TaskOutput", "TaskStop")
 
 # Generous, but finite. locking._reap_if_stale only reclaims a lock whose process
 # is GONE, so a live-but-wedged dispatch is invisible to it and would hold its
@@ -147,9 +158,9 @@ class Dispatch:
     # Seconds before the dispatch is abandoned. Real work gets half an hour; a
     # health check that waits that long just looks frozen.
     timeout: float = DISPATCH_TIMEOUT
-    # (an --mcp-config, the tools of it allowed): given in place of the project's
-    # own services - the notifier's one tool of her chosen service.
-    services: tuple[dict[str, Any], list[str]] | None = None
+    # The exact service tools allowed, in place of the project's own services -
+    # the notifier's one tool of her chosen service.
+    services: list[str] | None = None
 
 
 @dataclass
@@ -390,17 +401,26 @@ def _build(dispatch: Dispatch, executable: str) -> tuple[list[str], Path]:
     argv = ["-p", "--output-format", "json", "--model", model, "--effort", effort]
 
     leave_out = (cfg.get("dispatch") or {}).get("leave_out_my_setup", True)
-    services, service_tools, service_refused = None, [], []
+    service_tools: list[str] = []
+    service_refused: list[str] = []
+    from . import connections                # it reads HOST_SESSION from here
     if dispatch.services is not None:
-        services, service_tools = dispatch.services
+        service_tools = list(dispatch.services)
+        service_refused = connections.refuse_others(service_tools)
     elif leave_out:
-        from . import connections            # it reads HOST_SESSION from here
-        services, service_tools, service_refused = connections.for_dispatch(cfg)
+        service_tools, service_refused = connections.for_dispatch(cfg)
+    services = bool(service_tools)
 
-    if services and not any(tool.startswith(BARE_BASH) for tool in dispatch.tools):
-        # A job given a service keeps her settings (its sign-in lives there), and
-        # with them her own allowances; a role with no command of its own gets none.
-        service_refused = [*service_refused, BARE_BASH]
+    if services:
+        # A job given a service loads her setup (its sign-in lives there), and with
+        # it her own allowances: proved live, a reading job started a helper agent.
+        # Whatever built-in tool its role lacks, it is refused by name.
+        offered = dict.fromkeys([*BUILT_IN_TOOLS, *connections.setup_tools()])
+        service_refused = [*service_refused,
+                           *(tool for tool in offered
+                             if tool not in connections.KEEP_TOOLS
+                             and not any(have == tool or have.startswith(tool + "(")
+                                         for have in dispatch.tools))]
 
     if dispatch.resume:
         argv += ["--resume", dispatch.resume]
@@ -425,18 +445,13 @@ def _build(dispatch: Dispatch, executable: str) -> tuple[list[str], Path]:
         argv += ["--json-schema", json.dumps(dispatch.schema)]
     if dispatch.agents is not None:
         argv += ["--agents", json.dumps(dispatch.agents)]
-    if leave_out or dispatch.services is not None:
+    if leave_out and not services:
         # No connected service and none of her own plugins in a job's reach. Not
         # --safe-mode: that also drops the project's CLAUDE.md, skills and hooks.
-        argv += ["--strict-mcp-config"]
-        if services:
-            # Only what this project allows (Task 5's measurement: under strict,
-            # a service named here is loaded, and nothing else is). Her own
-            # settings stay in: measured live, a claude.ai service reports that it
-            # needs sign-in when they are left out.
-            argv += ["--mcp-config", json.dumps(services)]
-        else:
-            argv += ["--setting-sources", "project,local"]
+        argv += ["--strict-mcp-config", "--setting-sources", "project,local"]
+    # A job given a service loads her setup as usual: proved live (2026-10-03), a
+    # claude.ai service's sign-in reaches a job no other way. What it may use is
+    # said above, by exact tool names; every other service is refused by name.
     if dispatch.unattended:
         argv += ["--permission-mode", "dontAsk"]
         if dispatch.supports_permission_prompts:

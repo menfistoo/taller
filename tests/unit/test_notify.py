@@ -36,6 +36,8 @@ def project(tmp_home: Path, identity, stub_claude, monkeypatch) -> Path:
     monkeypatch.setattr(connections, "_run_list",
                         lambda: subprocess.CompletedProcess(["claude"], 0, LISTING, ""))
     connections.forget()
+    # The job's own record showing its tool answered (test_notify_evidence.py reads one).
+    monkeypatch.setattr(notify, "_tool_answered", lambda tool, session: True)
     # A notifier that answers it added the note.
     monkeypatch.setenv("STUB_CLAUDE_RESPONSE", json.dumps(
         {"type": "result", "subtype": "success", "is_error": False, "result": "",
@@ -95,9 +97,10 @@ def test_the_notifier_is_allowed_one_tool_only(project, stub_claude):
     notify.tell("toolshed", at_review(project), "needs_you")
 
     call = dispatched(stub_claude)[0]
-    assert call[call.index("--allowedTools") + 1] == "mcp__todoist__add_tasks"
-    given = json.loads(call[call.index("--mcp-config") + 1])["mcpServers"]
-    assert list(given) == ["todoist"]
+    assert call[call.index("--allowedTools") + 1] == "mcp__claude_ai_Todoist__add_tasks"
+    refused = call[call.index("--disallowedTools") + 1].split(",")
+    assert "mcp__claude_ai_Google_Calendar__*" in refused
+    assert "mcp__claude_ai_Todoist__*" not in refused
 
 
 def test_a_calendar_note_uses_the_calendar(project, stub_claude):
@@ -106,7 +109,7 @@ def test_a_calendar_note_uses_the_calendar(project, stub_claude):
     notify.tell("toolshed", at_review(project), "needs_you")
 
     call = dispatched(stub_claude)[0]
-    assert call[call.index("--allowedTools") + 1] == "mcp__google_calendar__create_event"
+    assert call[call.index("--allowedTools") + 1] == "mcp__claude_ai_Google_Calendar__create_event"
 
 
 def test_only_the_moments_she_ticked_are_told(project, stub_claude):

@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping
 
-from . import config, connections, inference, locking, paths, registry, settings, tickets
+from . import config, connections, inference, locking, paths, registry, tickets
 from .errors import ConfigError
 
 # channel -> (the service it uses, the words a fitting tool's name has)
@@ -33,19 +33,30 @@ ADDED_SCHEMA = {"type": "object", "properties": {"added": {"type": "boolean"}},
 NOTIFY_TIMEOUT = 120
 
 
+def choice_file() -> Path:
+    """Her notice choice - on this computer only. In Taller's shared settings it
+    reached every project's published snapshot (found live, 2026-10-03)."""
+    return paths.run_dir() / "notify-choice.json"
+
+
 def configured() -> dict[str, Any]:
-    given = config.load_hub_config().get("notify") or {}
+    try:
+        given = json.loads(choice_file().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        given = {}
+    if not isinstance(given, dict):
+        given = {}
     return {"channel": given.get("channel") if given.get("channel") in CHANNELS else None,
-            "when": [w for w in (given.get("when") or []) if w in MOMENTS]}
+            "when": [w for w in given.get("when", list(MOMENTS)) if w in MOMENTS]}
 
 
 def choose(channel: str | None, when: list[str]) -> list[str]:
-    """Her choice, in the hub: one channel or none, and which moments to tell."""
+    """Her choice, on this computer: one channel or none, and which moments to tell."""
     chosen = channel if channel in CHANNELS else None
     if chosen and not connections.WORK_USE_READY:
         raise ConfigError(connections.NOT_READY)
     moments = [moment for moment in MOMENTS if moment in when]
-    settings.set_value("notify", json.dumps({"channel": chosen, "when": moments}))
+    locking.atomic_write_text(choice_file(), json.dumps({"channel": chosen, "when": moments}))
     return ["Saved."]
 
 
@@ -78,23 +89,59 @@ def tell(project_name: str, ticket: Mapping[str, Any], why: str) -> dict[str, An
     connected = connections.present().get(service)
     if tool is None or connected is None:
         return _failed(NOT_AVAILABLE.format(service=named))
+    tool_id = f"mcp__{connections.tool_prefix(connected['raw'])}__{tool}"
+    # Its exact name: told only "your one tool", a notice job looked for one and
+    # took another (live, 2026-10-03).
     dispatch = inference.Dispatch(
         role="notifier", config=config.load_hub_config(), timeout=NOTIFY_TIMEOUT,
-        schema=ADDED_SCHEMA,
-        prompt=("Use your one tool once, to add a note for me with exactly this text and "
-                "nothing else. Add no guests, attendees or recipients of any kind. Then "
-                "answer whether it was added.\n\n"
+        schema=ADDED_SCHEMA, cwd=_cwd(),
+        prompt=(f"Use the tool {tool_id} once - load it by that exact name if you need to - "
+                "to add a note for me with exactly this text and nothing else. Add no "
+                "guests, attendees or recipients of any kind. Use no other tool to do it. "
+                "Then answer whether it was added.\n\n"
                 f"{notice(project_name, ticket, why)}\n"),
-        services=({"mcpServers": {service: connections._server(connected["target"])}},
-                  [f"mcp__{service}__{tool}"]))
+        services=[tool_id])
     try:
         result = inference.infer(dispatch)
     except Exception:                         # a notice never stops the work
         return _failed(NOT_ADDED)
-    if not result.ok or not isinstance(result.value, Mapping) \
-            or result.value.get("added") is not True:
+    # The record, not the answer: live, a job that added nothing answered "added".
+    if not result.ok or not _tool_answered(tool_id, result.session_id):
         return _failed(NOT_ADDED)
     return {"sent": True, "problem": ""}
+
+
+def _cwd() -> Path:
+    """Where a notice job runs: the dispatch scratch folder, made if missing."""
+    cwd = paths.scratch_cwd()
+    cwd.mkdir(parents=True, exist_ok=True)
+    return cwd
+
+
+def _tool_answered(tool_id: str, session_id: str) -> bool:
+    """Did the job's own transcript call this tool, and did it answer without error?"""
+    from . import spend
+
+    root = spend.TRANSCRIPTS_ROOT or Path.home() / ".claude" / "projects"
+    record = root / spend.transcript_slug(_cwd()) / f"{session_id}.jsonl"
+    if not session_id or not record.is_file():
+        return False
+    calls, answered = set(), set()
+    for line in record.read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        content = (event.get("message") or {}).get("content") \
+            if isinstance(event.get("message"), dict) else None
+        for part in content if isinstance(content, list) else []:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") == "tool_use" and part.get("name") == tool_id:
+                calls.add(part.get("id"))
+            elif part.get("type") == "tool_result" and not part.get("is_error"):
+                answered.add(part.get("tool_use_id"))
+    return bool(calls & answered)
 
 
 def last_problem() -> str:
