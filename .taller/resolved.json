@@ -4,8 +4,8 @@
   },
   "brand": null,
   "budget": {
-    "per_ticket_stop": 1200000,
-    "per_ticket_warn": 400000
+    "per_ticket_stop": 4000000,
+    "per_ticket_warn": 1200000
   },
   "ci": {
     "taller_source": "."
@@ -14,6 +14,9 @@
   "concurrency": {
     "max_parallel_gates": 3,
     "max_parallel_thinker": 1
+  },
+  "dispatch": {
+    "leave_out_my_setup": true
   },
   "effort": {
     "architect": "high",
@@ -26,7 +29,7 @@
     "implementer": "medium"
   },
   "fallback": "worker",
-  "hub_sha": "a3cb0bf402eacc8cff4458b5745288e48ac3b120",
+  "hub_sha": "cfd4c6b309ca5076205f000c644cf38aacc0fb62",
   "language": {
     "code": "en",
     "commits": "en",
@@ -48,6 +51,7 @@
     "gate_security": "thinker",
     "gate_ux": "worker",
     "implementer": "worker",
+    "notifier": "cheap",
     "scribe": "cheap",
     "summariser": "cheap"
   },
@@ -67,8 +71,9 @@
     "ui": []
   },
   "pricing": {
-    "as_of": "2026-06-24",
+    "as_of": "2026-10-01",
     "claude-fable-5-1": {
+      "cache_read": 0.25,
       "input": 10.0,
       "output": 50.0
     },
@@ -80,7 +85,16 @@
       "input": 5.0,
       "output": 25.0
     },
+    "claude-opus-5-5": {
+      "cache_read": 0.2,
+      "input": 4.0,
+      "output": 20.0
+    },
     "claude-sonnet-5": {
+      "input": 2.0,
+      "output": 10.0
+    },
+    "claude-sonnet-5-5": {
       "input": 2.0,
       "output": 10.0
     }
