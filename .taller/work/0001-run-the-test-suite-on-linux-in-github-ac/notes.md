@@ -6,3 +6,4 @@
 - 2026-09-29T20:17:59 — ② triage → ③ design (lane full); explorer: .github/workflows/test-suite.yml; full because a file is added or deleted
 - 2026-09-29T20:18:04 — branch ticket/0001-run-the-test-suite-on-linux-in-github-ac opened
 - 2026-09-29T20:20:16 — ③ plan written; waiting for your approval
+- 2026-10-16T18:28:29 — abandoned at ③ design: Done another way: the full test suite now runs on Linux in GitHub Actions (taller-ci runs the tests gate on every push since e7f506e).; worktree removed, branch ticket/0001-run-the-test-suite-on-linux-in-github-ac kept: not merged; GitHub issue #3 is closed when you publish
