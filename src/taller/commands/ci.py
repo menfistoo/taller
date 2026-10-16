@@ -27,6 +27,8 @@ from .common import project_path
 
 EXIT_PASS, EXIT_FINDINGS, EXIT_ERROR = 0, 1, 2
 SNAPSHOT_FILES = (".taller/resolved.json", ".taller/constitution/00-index.md")
+# What `taller resolve` titles its own commits on main.
+RESOLVE_SUBJECT = "taller: resolve"
 TICKET_FILES = ".taller/work/"
 # What a finding looks like to GitHub: an annotation on the line it is about.
 SEVERITY_LEVEL = {"BLOCKER": "error", "HIGH": "error", "MEDIUM": "warning",
@@ -82,6 +84,7 @@ def run(args: Any, prompter: Prompter) -> int:
         prompter.say(f"This branch changes {', '.join(carried)}, which only `taller resolve` "
                      f"writes on main (spec 4.6). Drop it from the branch; nothing is lost.")
         return EXIT_ERROR
+    change = _without_taller_s_own_refreshes(project, change)
     try:
         ruleset = constitution.load_snapshot(project)
     except TallerError as exc:
@@ -151,9 +154,31 @@ def _generated_edited_on_the_branch(project: Path, base: str, head: str) -> list
     for path in SNAPSHOT_FILES:
         commits = gate_diff._git(project, "log", "--format=%H", f"{base}..{head}", "--",
                                  path).decode("utf-8", errors="replace").split()
-        if commits:
+        if [commit for commit in commits if not _taller_s_own_refresh(project, commit)]:
             edited.append(path)
     return edited
+
+
+def _without_taller_s_own_refreshes(project: Path, change: dict[str, Any]) -> dict[str, Any]:
+    """The change, less what `taller resolve` wrote on main: the gates judge the
+    owner's work, and the snapshot files were only refreshed (checked above)."""
+    commits = [commit for commit in change.get("commits") or []
+               if not _taller_s_own_refresh(project, str(commit.get("sha", "")))]
+    if len(commits) == len(change.get("commits") or []):
+        return change
+    files = [f for f in change["files"] if f["path"] not in SNAPSHOT_FILES]
+    return {**change, "commits": commits, "files": files}
+
+
+def _taller_s_own_refresh(project: Path, commit: str) -> bool:
+    """A `taller resolve` commit on main: its own subject, and nothing but the files
+    it generates. With publishing held, one push carries several commits, these
+    among them (found on GitHub, 2026-10-06); a commit that also changes anything
+    else is a branch carrying the snapshot, and is still refused."""
+    subject = gate_diff._git(project, "log", "-1", "--format=%s", commit)         .decode("utf-8", errors="replace").strip()
+    changed = gate_diff._git(project, "show", "--name-only", "--format=", commit)         .decode("utf-8", errors="replace").split()
+    return subject.startswith(RESOLVE_SUBJECT) and all(path in SNAPSHOT_FILES
+                                                       for path in changed)
 
 
 def _safely(name: str, runner: Any) -> dict[str, Any]:

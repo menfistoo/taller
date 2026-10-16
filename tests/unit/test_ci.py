@@ -139,6 +139,38 @@ def test_a_branch_carrying_the_snapshot_is_an_error(checkout, capsys):
     assert code == 2 and "resolved.json" in out
 
 
+def taller_s_own_refresh(checkout: Path, subject: str = "taller: resolve after a hub change",
+                         also: str | None = None) -> None:
+    snapshot = checkout / ".taller" / "resolved.json"
+    data = json.loads(snapshot.read_text(encoding="utf-8"))
+    data["hub_sha"] = "1" * 40
+    support.write(snapshot, json.dumps(data))
+    if also:
+        support.write(checkout / also, CLEAN)
+    git(checkout, "add", "--all")
+    git(checkout, "commit", "-q", "-m", subject)
+
+
+def test_a_push_carrying_taller_s_own_refresh_on_main_is_checked_not_refused(checkout, capsys):
+    """Found on GitHub (2026-10-06): with publishing held, one push carries several
+    commits - Taller's own `taller resolve` commits on main among them."""
+    change(checkout, CLEAN)
+    taller_s_own_refresh(checkout)
+
+    code, out = run_ci(checkout, capsys=capsys)
+
+    assert code == 0, out
+    assert "only `taller resolve`" not in out
+
+
+def test_a_refresh_that_also_changes_the_application_is_still_refused(checkout, capsys):
+    taller_s_own_refresh(checkout, also="static/css/app.css")
+
+    code, out = run_ci(checkout, capsys=capsys)
+
+    assert code == 2 and "resolved.json" in out
+
+
 def test_ci_needs_no_hub_and_no_key(checkout, capsys, monkeypatch, tmp_path):
     change(checkout, CLEAN)
     monkeypatch.setenv("HOME", str(tmp_path / "nowhere"))
